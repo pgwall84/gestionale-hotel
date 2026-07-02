@@ -9,3 +9,5 @@ build/
 *.sql.gz
 backups/
 *.log
+backend/uploads/
+frontend/.next/

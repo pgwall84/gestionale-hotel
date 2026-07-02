@@ -1,0 +1,68 @@
+@import "tailwindcss";
+
+/* === HOTEL GESTIONALE — Design Tokens === */
+:root {
+  /* Colori brand */
+  --hotel-navy: #1B3A5C;
+  --hotel-navy-hover: #16304d;
+  --hotel-amber: #C98A3A;
+  --hotel-amber-light: #FAEEDA;
+  --hotel-amber-dark: #854F0B;
+
+  /* Sidebar */
+  --sidebar-bg: #1B3A5C;
+  --sidebar-text: rgba(255, 255, 255, 0.6);
+  --sidebar-text-active: #E8A84A;
+  --sidebar-item-active: rgba(201, 138, 58, 0.25);
+  --sidebar-item-hover: rgba(255, 255, 255, 0.07);
+  --sidebar-border: rgba(255, 255, 255, 0.1);
+  --sidebar-label: rgba(255, 255, 255, 0.35);
+  --sidebar-width: 220px;
+
+  /* Topbar */
+  --topbar-height: 60px;
+
+  /* Colori semantici per stati */
+  --status-green-bg: #EAF3DE;
+  --status-green-text: #3B6D11;
+  --status-amber-bg: #FAEEDA;
+  --status-amber-text: #854F0B;
+  --status-red-bg: #FCEBEB;
+  --status-red-text: #A32D2D;
+  --status-blue-bg: #E6F1FB;
+  --status-blue-text: #185FA5;
+
+  /* Tipografia */
+  --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;
+
+  /* Superfici (usate da shadcn e componenti custom) */
+  --background: #F4F6F8;
+  --foreground: #111827;
+  --card: #ffffff;
+  --card-foreground: #111827;
+  --border: #E2E8F0;
+  --muted-foreground: #6B7280;
+  --primary: var(--hotel-amber);
+  --primary-foreground: #ffffff;
+  --ring: var(--hotel-amber);
+}
+
+/* Rimuove il dark mode automatico — il gestionale è sempre in light mode */
+
+@theme inline {
+  --color-background: var(--background);
+  --color-foreground: var(--foreground);
+  --font-sans: var(--font-primary);
+}
+
+body {
+  background: var(--background);
+  color: var(--foreground);
+  font-family: var(--font-primary);
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Scrollbar sottile per sidebar e tabelle */
+::-webkit-scrollbar { width: 4px; height: 4px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: var(--border); border-radius: 4px; }
