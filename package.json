@@ -1,0 +1,19 @@
+{
+  "name": "gestionale-hotel",
+  "version": "1.0.0",
+  "description": "Gestionale Hotel del Golfo — test runner radice",
+  "private": true,
+  "scripts": {
+    "test": "jest",
+    "test:api": "jest tests/api --forceExit",
+    "test:e2e": "playwright test",
+    "test:modulo": "node tests/agent/genera-test.js"
+  },
+  "devDependencies": {
+    "@anthropic-ai/sdk": "^0.54.0",
+    "@playwright/test": "^1.49.0",
+    "dotenv": "^17.4.2",
+    "jest": "^29.7.0",
+    "supertest": "^7.0.0"
+  }
+}

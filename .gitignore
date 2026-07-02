@@ -1,0 +1,11 @@
+node_modules/
+.env
+.env.local
+.env.production
+*.env
+.next/
+dist/
+build/
+*.sql.gz
+backups/
+*.log
