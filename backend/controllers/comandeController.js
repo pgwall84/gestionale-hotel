@@ -1,17 +1,24 @@
 // Controller comande — gestione comande, righe e monitor cucina SSE.
 // Flusso: cameriere apre comanda → aggiunge piatti → cucina aggiorna stati → cameriere serve → chiudi.
-// SSE: il tablet cucina rimane connesso su /cucina/stream e riceve push a ogni cambio stato.
+// SSE cucina:    tablet a parete su /cucina/stream — tutti i cambi stato
+// SSE cameriere: telefono cameriere su /sala/stream — solo evento 'riga_pronta'
 
 const pool = require('../config/db');
 
-// Set di client SSE connessi al monitor cucina
-// Ogni client è un oggetto { res, id } — viene aggiunto su connessione, rimosso su chiusura
-const clientiCucina = new Set();
+// Set di client SSE per canale cucina e canale sala (camerieri)
+const clientiCucina    = new Set();
+const clientiCameriere = new Set();
 
-// Invia un evento SSE a tutti i client cucina connessi
 function broadcastCucina(evento, dati) {
   const payload = `data: ${JSON.stringify({ evento, ...dati })}\n\n`;
   for (const client of clientiCucina) {
+    try { client.res.write(payload); } catch (_) {}
+  }
+}
+
+function broadcastCameriere(evento, dati) {
+  const payload = `data: ${JSON.stringify({ evento, ...dati })}\n\n`;
+  for (const client of clientiCameriere) {
     try { client.res.write(payload); } catch (_) {}
   }
 }
@@ -59,6 +66,47 @@ async function streamCucina(req, res) {
   req.on('close', () => {
     clearInterval(heartbeat);
     clientiCucina.delete(client);
+  });
+}
+
+// GET /api/ristorante/sala/stream — SSE per camerieri
+// Invia stato iniziale (righe pronte non ancora servite) + eventi riga_pronta e comanda_chiusa.
+// Accessibile a: cameriere, titolare, admin, receptionist
+async function streamSala(req, res) {
+  res.setHeader('Content-Type', 'text/event-stream');
+  res.setHeader('Cache-Control', 'no-cache');
+  res.setHeader('Connection', 'keep-alive');
+  res.setHeader('X-Accel-Buffering', 'no');
+  res.flushHeaders();
+
+  // Stato iniziale: righe già pronte che attendono il cameriere
+  try {
+    const r = await pool.query(`
+      SELECT cr.id, cr.comanda_id, cr.quantita, cr.stato,
+             mp.nome AS piatto_nome,
+             t.numero AS tavolo_numero
+      FROM comande_righe cr
+      JOIN comande c ON c.id = cr.comanda_id AND c.stato = 'aperta'
+      JOIN tavoli t ON t.id = c.tavolo_id
+      JOIN menu_piatti mp ON mp.id = cr.piatto_id
+      WHERE cr.stato = 'pronto'
+      ORDER BY cr.timestamp_pronto
+    `);
+    res.write(`data: ${JSON.stringify({ evento: 'stato_iniziale', righe: r.rows })}\n\n`);
+  } catch (err) {
+    console.error('SSE sala stato iniziale error:', err);
+  }
+
+  const client = { res, id: Date.now() };
+  clientiCameriere.add(client);
+
+  const heartbeat = setInterval(() => {
+    try { res.write(': heartbeat\n\n'); } catch (_) {}
+  }, 30000);
+
+  req.on('close', () => {
+    clearInterval(heartbeat);
+    clientiCameriere.delete(client);
   });
 }
 
@@ -274,6 +322,22 @@ async function aggiornaStatoRiga(req, res) {
     }
 
     broadcastCucina('stato_riga_aggiornato', { riga: r.rows[0] });
+
+    // Notifica i camerieri solo quando un piatto è pronto da servire
+    if (stato === 'pronto') {
+      const info = await pool.query(`
+        SELECT mp.nome AS piatto_nome, t.numero AS tavolo_numero, cr.quantita, cr.comanda_id
+        FROM comande_righe cr
+        JOIN comande c ON c.id = cr.comanda_id
+        JOIN tavoli t ON t.id = c.tavolo_id
+        JOIN menu_piatti mp ON mp.id = cr.piatto_id
+        WHERE cr.id = $1
+      `, [req.params.rigaId]);
+      if (info.rows.length) {
+        broadcastCameriere('riga_pronta', { riga: { ...r.rows[0], ...info.rows[0] } });
+      }
+    }
+
     res.json({ riga: r.rows[0] });
   } catch (err) {
     console.error('aggiornaStatoRiga error:', err.message, err.detail);
@@ -382,6 +446,7 @@ async function chiudiComanda(req, res) {
       [req.params.id]
     );
     broadcastCucina('comanda_chiusa', { comanda_id: req.params.id });
+    broadcastCameriere('comanda_chiusa', { comanda_id: req.params.id });
     res.json({ comanda: r.rows[0], messaggio: 'Comanda chiusa.' });
   } catch (err) {
     console.error('chiudiComanda error:', err);
@@ -390,7 +455,8 @@ async function chiudiComanda(req, res) {
 }
 
 module.exports = {
-  streamCucina,
+  streamCucina, streamSala,
+  broadcastCameriere,
   listaComande, apriComanda, dettaglioComanda, chiudiComanda,
   aggiungiRiga, rimuoviRiga, aggiornaStatoRiga, tipoSpecialeRiga,
   conto,

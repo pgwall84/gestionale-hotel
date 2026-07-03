@@ -328,6 +328,15 @@ blocco chiusura con piatti non serviti, check duplicato tavolo,
 blocco eliminazione tavolo occupato, distinzione 404/400 rimozione riga.
 77 test verdi. Commit: bf3b320.
 
+**Nota 1.6 — patch UX post-release:** Fix 4 gap operativi su /sala e /ristorante.
+- Fix 1: bottom sheet su tavolo libero ("Apri e aggiungi piatti" / "Solo segna occupato").
+- Fix 2: window.location.href → router.push() (no full page reload).
+- Fix 3: "← Sala" torna direttamente a /sala in 1 tap invece di 2.
+- Fix 4: SSE attivo su /sala/stream (camerieri), polling rimosso da /sala e /ristorante,
+  notifiche "piatto pronto" implementate (banner visivo + suono AudioContext + document.title),
+  sblocco AudioContext preventivo al primo tap (compatibilità iOS/Android).
+  Nuovo endpoint GET /api/ristorante/sala/stream. 79 test verdi.
+
 **Nota 1.6 → 1.7:** Il ristorante va prima del magazzino perché le comande alimentano il food cost del magazzino.
 **Nota 1.11:** Il sito è completamente indipendente — può partire in qualsiasi momento in parallelo. Nella Fase 1 usa ancora il widget TS per le prenotazioni camere.
 

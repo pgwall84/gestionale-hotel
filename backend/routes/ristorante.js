@@ -27,6 +27,7 @@ const PREN_W   = ['admin', 'titolare', 'receptionist', 'portiere_notte'];
 const CMD_W    = ['admin', 'titolare', 'cameriere'];
 const CUCINA   = ['admin', 'titolare', 'cuoco', 'cameriere'];
 const SPECIALE = ['admin', 'titolare'];
+const SALA_R   = ['admin', 'titolare', 'cameriere', 'receptionist'];
 
 // ── SSE cucina ────────────────────────────────────────────────────────────────
 // GET /api/ristorante/cucina/stream
@@ -34,6 +35,14 @@ router.get('/cucina/stream',
   verificaToken,
   ruoli('admin', 'titolare', 'cuoco', 'portiere_notte'),
   comande.streamCucina
+);
+
+// ── SSE sala (camerieri) ──────────────────────────────────────────────────────
+// GET /api/ristorante/sala/stream — eventi riga_pronta e comanda_chiusa
+router.get('/sala/stream',
+  verificaToken,
+  ruoli(...SALA_R),
+  comande.streamSala
 );
 
 // ── Configurazioni sala ───────────────────────────────────────────────────────
