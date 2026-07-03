@@ -316,12 +316,17 @@ WEBHOOK_SECRET_ACUBE
 | 1.3 | Camere — anagrafica + stato giornaliero | ✅ Fatto |
 | 1.4 | ZTL — targhe 6 stati + import Excel + OCR | ✅ Fatto |
 | 1.5 | Menu — categorie, piatti, allergeni, QR pubblico, stampa | ✅ Fatto |
-| 1.6 | **Ristorante** — prenotazioni, sala, comande, monitor cucina SSE, conto | Da fare |
+| 1.6 | **Ristorante** — prenotazioni, sala, comande, monitor cucina SSE, conto | ✅ Fatto |
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | Da fare |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | Da fare |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | Da fare |
 | 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | Da fare (parallelo) |
 | 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | Da fare (parallelo) |
+
+**Nota 1.6 completato:** Fix trovati dai test: validazione transizioni stati comanda,
+blocco chiusura con piatti non serviti, check duplicato tavolo,
+blocco eliminazione tavolo occupato, distinzione 404/400 rimozione riga.
+77 test verdi. Commit: bf3b320.
 
 **Nota 1.6 → 1.7:** Il ristorante va prima del magazzino perché le comande alimentano il food cost del magazzino.
 **Nota 1.11:** Il sito è completamente indipendente — può partire in qualsiasi momento in parallelo. Nella Fase 1 usa ancora il widget TS per le prenotazioni camere.
