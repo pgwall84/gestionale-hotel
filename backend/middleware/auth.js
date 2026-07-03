@@ -9,13 +9,18 @@ const { puoAccedere } = require('../../shared/ruoli');
 // Tutte le route protette devono passare per questo middleware.
 // Il token viene inviato dal frontend nell'header: Authorization: Bearer <token>
 function verificaToken(req, res, next) {
+  // SSE: EventSource non supporta header personalizzati — accetta token anche via ?token=
   const authHeader = req.headers['authorization'];
+  const tokenDaQuery = req.query.token;
 
-  if (!authHeader || !authHeader.startsWith('Bearer ')) {
+  let token;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    token = authHeader.split(' ')[1];
+  } else if (tokenDaQuery) {
+    token = tokenDaQuery;
+  } else {
     return res.status(401).json({ errore: 'Token mancante. Effettua il login.' });
   }
-
-  const token = authHeader.split(' ')[1];
 
   try {
     // jwt.verify controlla firma e scadenza del token

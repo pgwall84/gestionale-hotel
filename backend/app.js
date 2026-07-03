@@ -15,7 +15,8 @@ const hrRoutes        = require('./routes/hr');
 const camereRoutes    = require('./routes/camere');
 const ztlRoutes       = require('./routes/ztl');
 const menuRoutes      = require('./routes/menu');
-const dashboardRoutes = require('./routes/dashboard');
+const dashboardRoutes    = require('./routes/dashboard');
+const ristoranteRoutes   = require('./routes/ristorante');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -55,7 +56,8 @@ app.use('/api/hr',        hrRoutes);
 app.use('/api/camere',    camereRoutes);
 app.use('/api/ztl',       ztlRoutes);
 app.use('/api/menu',      menuRoutes);
-app.use('/api/dashboard', dashboardRoutes);
+app.use('/api/dashboard',  dashboardRoutes);
+app.use('/api/ristorante', ristoranteRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));
