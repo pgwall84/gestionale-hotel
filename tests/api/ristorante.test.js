@@ -109,17 +109,31 @@ beforeAll(async () => {
 });
 
 afterAll(async () => {
-  // Pulizia rispettando vincoli FK
-  await pulisci('DELETE FROM comande_righe WHERE comanda_id IN (SELECT id FROM comande WHERE tavolo_id = ANY($1::int[]))', [[tavoloId, tavoloId2].filter(Boolean)]);
-  await pulisci('DELETE FROM comande WHERE tavolo_id = ANY($1::int[])', [[tavoloId, tavoloId2].filter(Boolean)]);
+  // ⚠️  REGOLA: eliminare SOLO i record creati in questo test (per id).
+  //     Mai usare DELETE senza WHERE o con pattern che possono colpire dati reali.
+  //     La config "Standard" e i suoi tavoli NON vanno mai toccati.
+
+  // 1. Righe comande dei tavoli di test
+  await pulisci(
+    'DELETE FROM comande_righe WHERE comanda_id IN (SELECT id FROM comande WHERE tavolo_id = ANY($1::int[]))',
+    [[tavoloId, tavoloId2].filter(Boolean)]
+  );
+  // 2. Comande dei tavoli di test
+  await pulisci(
+    'DELETE FROM comande WHERE tavolo_id = ANY($1::int[])',
+    [[tavoloId, tavoloId2].filter(Boolean)]
+  );
+  // 3. Tavoli creati in questo test (per id specifico)
   if (tavoloId)  await pulisci('DELETE FROM tavoli WHERE id = $1', [tavoloId]);
   if (tavoloId2) await pulisci('DELETE FROM tavoli WHERE id = $1', [tavoloId2]);
-  // Prenotazioni collegate alla config
-  await pulisci('DELETE FROM prenotazioni_ristorante WHERE nome LIKE $1', ['%TestBatt%']);
+  // 4. Prenotazioni create in questo test (per nome prefisso test)
+  await pulisci("DELETE FROM prenotazioni_ristorante WHERE nome LIKE 'TestBatt%'");
+  // 5. Configurazioni create in questo test (per id specifico — MAI per nome generico)
   if (configId)  await pulisci('DELETE FROM configurazioni_sala WHERE id = $1', [configId]);
   if (configId2) await pulisci('DELETE FROM configurazioni_sala WHERE id = $1', [configId2]);
-  // Ripristina la config Standard come attiva
-  await pulisci("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard' LIMIT 1");
+  // 6. Ripristina Standard come attiva (i test possono averla disattivata)
+  await pulisci("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard'");
+  // 7. Piatti e categoria di test (per id specifico)
   if (piattoId)  await pulisci('DELETE FROM menu_piatti WHERE id = $1', [piattoId]);
   if (piatto2Id) await pulisci('DELETE FROM menu_piatti WHERE id = $1', [piatto2Id]);
   await pulisci("DELETE FROM menu_categorie WHERE titolo = 'Cat Test Batteria'");
@@ -297,6 +311,11 @@ describe('PUT /api/ristorante/tavoli/:id', () => {
 });
 
 describe('DELETE /api/ristorante/tavoli/:id', () => {
+  afterAll(async () => {
+    // Rimuove il record fisico del tavolo 920 soft-deleted nel test 21
+    if (configId) await pulisci('DELETE FROM tavoli WHERE numero = 920 AND configurazione_id = $1', [configId]);
+  });
+
   it('20. 400 tavolo con comanda aperta non si può eliminare', async () => {
     // Apri comanda sul tavoloId2
     await request(app).post('/api/ristorante/comande')
@@ -960,7 +979,7 @@ describe('Flusso end-to-end: serata completa', () => {
     await pulisci(`DELETE FROM prenotazioni_ristorante WHERE nome = 'TestBatt Bianchi'`);
     await pulisci(`DELETE FROM tavoli WHERE configurazione_id = $1`, [e2eConfigId]);
     await pulisci(`DELETE FROM configurazioni_sala WHERE id = $1`, [e2eConfigId]);
-    // Ripristina config principale
-    await request(app).patch(`/api/ristorante/config/${configId}/attiva`).set(authHeader.titolare());
+    // Ripristina Standard come attiva — MAI eliminare la config Standard
+    await pulisci("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard'");
   });
 });
