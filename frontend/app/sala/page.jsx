@@ -73,9 +73,19 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
     else onLibero(tavolo);
   };
 
+  // Stato leggibile per test E2E
+  const statoTavolo = modalitaAssegna ? (occupato ? 'occupato' : 'libero')
+    : inPreparazione ? 'in-preparazione'
+    : occupato ? 'occupato'
+    : haEtichetta ? 'prenotato'
+    : 'libero';
+
   return (
     <div
       onClick={handleClick}
+      data-tavolo-id={tavolo.id}
+      data-tavolo-numero={tavolo.numero}
+      data-stato={statoTavolo}
       className="rounded-xl p-2.5 flex flex-col gap-1 select-none transition-all active:scale-95"
       style={{
         background: bg,
@@ -402,7 +412,8 @@ export default function SalaPage() {
 
         {/* Banner notifica piatto pronto */}
         {notifica && (
-          <div className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
+          <div data-testid="notifica-banner"
+               className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
                style={{ background: 'var(--status-green-bg)', border: '2px solid var(--status-green-text)' }}>
             <span className="text-lg">🔔</span>
             <span className="text-sm font-bold flex-1" style={{ color: 'var(--status-green-text)' }}>{notifica}</span>

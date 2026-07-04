@@ -5,6 +5,7 @@
 
 'use client'; // necessario per i Context in Next.js App Router
 
+import dynamic from 'next/dynamic';
 import { createContext, useContext, useState, useEffect } from 'react';
 import Cookies from 'js-cookie';
 import api from '@/lib/api';
@@ -18,7 +19,7 @@ const AuthContext = createContext({
 });
 
 // Provider: avvolge tutta l'app e mette i dati utente a disposizione di tutti i figli
-export function AuthProvider({ children }) {
+function AuthProviderInner({ children }) {
   const [utente, setUtente] = useState(null);       // dati utente loggato (null = non loggato)
   const [loading, setLoading] = useState(true);      // true mentre verifichiamo il token al caricamento
 
@@ -31,14 +32,17 @@ export function AuthProvider({ children }) {
       return;
     }
 
-    // Verifica il token chiamando /api/auth/me
+    // Verifica il token chiamando /api/auth/me.
+    // Rimuove il cookie solo su 401 (token non valido) — non su errori di rete,
+    // altrimenti un backend temporaneamente irraggiungibile disconnette l'utente.
     api.get('/auth/me')
       .then((res) => {
         setUtente(res.data.utente);
       })
-      .catch(() => {
-        // Token non valido o scaduto: rimuove il cookie
-        Cookies.remove('token');
+      .catch((err) => {
+        if (err?.response?.status === 401) {
+          Cookies.remove('token');
+        }
       })
       .finally(() => {
         setLoading(false);
@@ -50,17 +54,14 @@ export function AuthProvider({ children }) {
     const res = await api.post('/auth/login', { email, password });
     const { token, utente: datiUtente } = res.data;
 
-    // Salva il token in un cookie.
-    // expires: 1 = scade dopo 1 giorno (il backend lo rifiuterà prima se impostato a 8h)
-    // secure: true in produzione = solo HTTPS
     Cookies.set('token', token, {
       expires: 1,
       secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
+      sameSite: process.env.NODE_ENV === 'production' ? 'strict' : 'lax',
     });
 
     setUtente(datiUtente);
-    return datiUtente; // ritorna i dati così il componente login può fare il redirect
+    return datiUtente;
   }
 
   // Funzione di logout: rimuove il token e azzera lo stato utente
@@ -75,6 +76,9 @@ export function AuthProvider({ children }) {
     </AuthContext.Provider>
   );
 }
+
+// AuthProvider wrappato con dynamic ssr:false — non viene mai eseguito lato server
+export const AuthProvider = dynamic(() => Promise.resolve(AuthProviderInner), { ssr: false });
 
 // Hook personalizzato per usare il contesto nei componenti.
 // Uso: const { utente, login, logout } = useAuth();

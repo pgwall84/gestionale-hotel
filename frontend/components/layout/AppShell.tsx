@@ -4,7 +4,9 @@
 // Tutte le pagine della dashboard usano questo componente.
 // Layout desktop: sidebar fissa sinistra | topbar + contenuto scrollabile a destra.
 // Layout mobile: contenuto fullwidth + bottom nav fissa in basso.
+// Wrappato con dynamic ssr:false per garantire idratazione corretta su IP locale.
 
+import dynamic from 'next/dynamic';
 import { useEffect } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
@@ -20,7 +22,7 @@ interface AppShellProps {
   alertCount?: number;
 }
 
-export default function AppShell({ children, titolo, sottotitolo, azioneLabel, onAzione, alertCount }: AppShellProps) {
+function AppShellInner({ children, titolo, sottotitolo, azioneLabel, onAzione, alertCount }: AppShellProps) {
   const { utente, loading } = useAuth();
   const router = useRouter();
 
@@ -70,3 +72,5 @@ export default function AppShell({ children, titolo, sottotitolo, azioneLabel, o
     </div>
   );
 }
+
+export default dynamic(() => Promise.resolve(AppShellInner), { ssr: false });

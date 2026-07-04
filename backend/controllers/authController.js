@@ -21,10 +21,11 @@ async function salvaRefreshToken(userId, rawToken) {
 }
 
 function setRefreshCookie(res, rawToken, expiresAt) {
+  const isProd = process.env.NODE_ENV === 'production';
   res.cookie('refresh_token', rawToken, {
     httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    sameSite: 'strict',
+    secure: isProd,
+    sameSite: isProd ? 'strict' : 'lax',
     expires: expiresAt,
     path: '/api/auth',
   });

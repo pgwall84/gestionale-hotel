@@ -276,7 +276,8 @@ function RistoranteInner() {
 
           {/* Banner notifica */}
           {notifica && (
-            <div className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
+            <div data-testid="notifica-banner"
+                 className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
                  style={{ background: 'var(--status-green-bg)', border: '2px solid var(--status-green-text)' }}>
               <span className="text-lg">🔔</span>
               <span className="text-sm font-bold flex-1" style={{ color: 'var(--status-green-text)' }}>{notifica}</span>
@@ -318,7 +319,11 @@ function RistoranteInner() {
           ) : (
             <div className="flex flex-col gap-2">
               {righe.map(r => (
-                <div key={r.id} className="flex items-center justify-between rounded-xl px-3 py-2"
+                <div key={r.id}
+                     data-testid="riga-comanda"
+                     data-riga-id={r.id}
+                     data-stato={r.stato}
+                     className="flex items-center justify-between rounded-xl px-3 py-2"
                      style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
                   <div className="flex-1 min-w-0">
                     <p className="text-sm font-medium truncate" style={{ color: 'var(--foreground)' }}>
@@ -333,6 +338,9 @@ function RistoranteInner() {
                   <div className="flex items-center gap-2 ml-2 shrink-0">
                     {prossimoStato(r.stato) && (
                       <button onClick={() => aggiornaStatoRiga(r.id, prossimoStato(r.stato))}
+                              data-testid="btn-avanza-stato"
+                              data-stato-corrente={r.stato}
+                              data-stato-prossimo={prossimoStato(r.stato)}
                               className="text-xs px-2 py-1 rounded"
                               style={{ background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }}>
                         <CheckCircle size={14} />
@@ -440,7 +448,8 @@ function RistoranteInner() {
 
         {/* Banner notifica */}
         {notifica && (
-          <div className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
+          <div data-testid="notifica-banner"
+               className="fixed top-4 left-4 right-4 z-50 rounded-xl px-4 py-3 flex items-center gap-3 shadow-lg max-w-xl mx-auto"
                style={{ background: 'var(--status-green-bg)', border: '2px solid var(--status-green-text)' }}>
             <span className="text-lg">🔔</span>
             <span className="text-sm font-bold flex-1" style={{ color: 'var(--status-green-text)' }}>{notifica}</span>

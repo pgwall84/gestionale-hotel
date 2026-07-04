@@ -35,7 +35,10 @@ function CardPiatto({ riga, onAvanza }) {
     : null;
 
   return (
-    <div className="rounded-xl p-3 flex flex-col gap-2"
+    <div data-testid="comanda-card"
+         data-riga-id={riga.id}
+         data-stato={riga.stato}
+         className="rounded-xl p-3 flex flex-col gap-2"
          style={{ background: 'var(--card)', border: `2px solid ${border}` }}>
       <div className="flex justify-between items-start">
         <div className="flex-1">
@@ -64,6 +67,8 @@ function CardPiatto({ riga, onAvanza }) {
       {s.btnLabel && (
         <button
           onClick={() => onAvanza(riga.id, riga.stato === 'in_attesa' ? 'in_preparazione' : 'pronto')}
+          data-testid="btn-avanza-cucina"
+          data-stato-corrente={riga.stato}
           className="w-full py-2 rounded-lg text-sm font-bold"
           style={{ background: s.btnBg, color: s.btnColor }}
         >
