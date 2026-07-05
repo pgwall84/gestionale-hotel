@@ -253,9 +253,9 @@ export default function SalaPage() {
         const dati = JSON.parse(e.data);
         if (dati.evento === 'riga_pronta') {
           mostraNotifica(`Tavolo ${dati.riga.tavolo_numero} — ${dati.riga.piatto_nome} PRONTO`);
-          carica(); // aggiorna badge giallo sulla card
-        } else if (dati.evento === 'comanda_chiusa') {
-          carica(); // libera il tavolo immediatamente
+          carica();
+        } else if (dati.evento === 'comanda_chiusa' || dati.evento === 'comanda_aperta') {
+          carica(); // aggiorna mappa sala (tavolo libero/occupato)
         }
       } catch (_) {}
     };

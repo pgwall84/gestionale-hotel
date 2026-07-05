@@ -692,6 +692,10 @@ Menu pubblico:
 ## 14. EVOLUTIVE FUTURE — NON SVILUPPARE ORA
 
 ```
+Modulo 1.6 — Ristorante (gap noti, da completare prima del go-live):
+  Eliminazione configurazione sala: bloccare se ha tavoli associati,
+  consentire solo se vuota. (eliminaConfigurazione non implementata)
+
 Fase 2 (dopo go-live e test in produzione):
   2.1 Anagrafica ospiti completa + OCR documenti identità
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive

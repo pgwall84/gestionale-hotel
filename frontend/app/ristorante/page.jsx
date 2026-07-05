@@ -57,6 +57,7 @@ function RistoranteInner() {
   const [righe, setRighe]                       = useState([]);
   const [categorie, setCategorie]               = useState([]);
   const [piatti, setPiatti]                     = useState([]);
+  const [notePerPiatto, setNotePerPiatto]       = useState({});
   const [categoriaAperta, setCategoriaAperta]   = useState(null);
   const [loading, setLoading]                   = useState(true);
   const [loadingRighe, setLoadingRighe]         = useState(false);
@@ -202,8 +203,14 @@ function RistoranteInner() {
   const aggiungiPiatto = async (piatto) => {
     if (!comandaSelezionata || aggiungendo) return;
     setAggiungendo(piatto.id);
+    const note = notePerPiatto[piatto.id] || '';
     try {
-      await api.post(`/ristorante/comande/${comandaSelezionata.id}/righe`, { piatto_id: piatto.id, quantita: 1 });
+      await api.post(`/ristorante/comande/${comandaSelezionata.id}/righe`, {
+        piatto_id: piatto.id,
+        quantita: 1,
+        ...(note ? { note } : {}),
+      });
+      setNotePerPiatto(prev => { const n = { ...prev }; delete n[piatto.id]; return n; });
       await caricaDettaglio(comandaSelezionata.id);
     } catch (err) {
       alert(err.message);
@@ -376,15 +383,25 @@ function RistoranteInner() {
                       {piattiDaMenu.length === 0 ? (
                         <p className="px-3 py-2 text-xs" style={{ color: 'var(--muted-foreground)' }}>Nessun piatto disponibile.</p>
                       ) : piattiDaMenu.map(p => (
-                        <button key={p.id} onClick={() => aggiungiPiatto(p)} disabled={aggiungendo === p.id}
-                                className="flex justify-between items-center px-3 py-2 text-sm text-left w-full"
-                                style={{ color: 'var(--foreground)', opacity: aggiungendo === p.id ? 0.5 : 1 }}>
-                          <span>{p.nome}</span>
-                          <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--primary)' }}>
-                            {p.prezzo ? `€${parseFloat(p.prezzo).toFixed(2)}` : ''}
-                            <Plus size={14} />
-                          </span>
-                        </button>
+                        <div key={p.id} className="flex flex-col" style={{ borderBottom: '1px solid var(--border)' }}>
+                          <button onClick={() => aggiungiPiatto(p)} disabled={aggiungendo === p.id}
+                                  className="flex justify-between items-center px-3 py-2 text-sm text-left w-full"
+                                  style={{ color: 'var(--foreground)', opacity: aggiungendo === p.id ? 0.5 : 1 }}>
+                            <span>{p.nome}</span>
+                            <span className="flex items-center gap-1 text-xs" style={{ color: 'var(--primary)' }}>
+                              {p.prezzo ? `€${parseFloat(p.prezzo).toFixed(2)}` : ''}
+                              <Plus size={14} />
+                            </span>
+                          </button>
+                          <input
+                            type="text"
+                            placeholder="Note (es. al dente, senza cipolla...)"
+                            value={notePerPiatto[p.id] || ''}
+                            onChange={e => setNotePerPiatto(prev => ({ ...prev, [p.id]: e.target.value }))}
+                            className="px-3 py-1.5 text-xs w-full outline-none"
+                            style={{ background: 'var(--muted)', color: 'var(--foreground)', borderTop: '1px solid var(--border)' }}
+                          />
+                        </div>
                       ))}
                     </div>
                   )}

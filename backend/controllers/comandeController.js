@@ -161,7 +161,8 @@ async function apriComanda(req, res) {
        VALUES ($1, $2, 'aperta', $3) RETURNING *`,
       [tavolo_id, req.utente.id, ospite_hotel ?? false]
     );
-    broadcastCucina('comanda_aperta', { comanda: r.rows[0] });
+    broadcastCucina('comanda_aperta',    { comanda: r.rows[0] });
+    broadcastCameriere('comanda_aperta', { comanda: r.rows[0] });
     res.status(201).json({ comanda: r.rows[0] });
   } catch (err) {
     console.error('apriComanda error:', err);
@@ -231,9 +232,11 @@ async function aggiungiRiga(req, res) {
     `, [piatto_id, req.params.id]);
 
     broadcastCucina('nuova_riga', {
-      riga: r.rows[0],
-      piatto_nome: info.rows[0]?.piatto_nome,
-      tavolo_numero: info.rows[0]?.tavolo_numero,
+      riga: {
+        ...r.rows[0],
+        piatto_nome:   info.rows[0]?.piatto_nome,
+        tavolo_numero: info.rows[0]?.tavolo_numero,
+      },
     });
 
     res.status(201).json({ riga: r.rows[0] });
