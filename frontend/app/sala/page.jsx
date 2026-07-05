@@ -46,24 +46,28 @@ function suonaBip(audioCtxRef) {
 // ── Card tavolo ───────────────────────────────────────────────────────────────
 
 function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, aprendoId }) {
-  const occupato      = !!tavolo.comanda_stato;
-  const haEtichetta   = !!tavolo.etichetta;
-  const inPreparazione = parseInt(tavolo.piatti_in_attesa) > 0;
-  const caricando     = aprendoId === tavolo.id;
+  const occupato       = !!tavolo.comanda_stato;
+  const haEtichetta    = !!tavolo.etichetta;
+  const haPiattiPronti = parseInt(tavolo.piatti_pronti) > 0;
+  const haPiattiInCorso = parseInt(tavolo.piatti_in_attesa) > 0;
+  const caricando      = aprendoId === tavolo.id;
 
-  let bg, border, labelColor;
+  let bg, border, labelColor, pulse;
   if (modalitaAssegna) {
     bg = occupato ? 'var(--muted)' : 'var(--status-green-bg)';
     border = occupato ? 'var(--border)' : 'var(--status-green-text)';
     labelColor = occupato ? 'var(--muted-foreground)' : 'var(--status-green-text)';
-  } else if (inPreparazione) {
-    bg = 'var(--status-amber-bg)'; border = 'var(--status-amber-text)'; labelColor = 'var(--status-amber-text)';
+    pulse = false;
+  } else if (haPiattiPronti) {
+    // Arancione pulsante: almeno 1 piatto pronto da servire
+    bg = 'var(--status-amber-bg)'; border = 'var(--status-amber-text)'; labelColor = 'var(--status-amber-text)'; pulse = true;
   } else if (occupato) {
-    bg = 'var(--status-green-bg)'; border = 'var(--status-green-text)'; labelColor = 'var(--status-green-text)';
+    // Rosso: tavolo occupato ma nessun piatto pronto
+    bg = 'var(--status-red-bg)'; border = 'var(--status-red-text)'; labelColor = 'var(--status-red-text)'; pulse = false;
   } else if (haEtichetta) {
-    bg = 'var(--status-blue-bg)'; border = 'var(--status-blue-text)'; labelColor = 'var(--status-blue-text)';
+    bg = 'var(--status-blue-bg)'; border = 'var(--status-blue-text)'; labelColor = 'var(--status-blue-text)'; pulse = false;
   } else {
-    bg = 'var(--card)'; border = 'var(--border)'; labelColor = 'var(--muted-foreground)';
+    bg = 'var(--card)'; border = 'var(--border)'; labelColor = 'var(--muted-foreground)'; pulse = false;
   }
 
   const handleClick = () => {
@@ -75,7 +79,7 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
 
   // Stato leggibile per test E2E
   const statoTavolo = modalitaAssegna ? (occupato ? 'occupato' : 'libero')
-    : inPreparazione ? 'in-preparazione'
+    : haPiattiPronti ? 'piatti-pronti'
     : occupato ? 'occupato'
     : haEtichetta ? 'prenotato'
     : 'libero';
@@ -86,7 +90,7 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
       data-tavolo-id={tavolo.id}
       data-tavolo-numero={tavolo.numero}
       data-stato={statoTavolo}
-      className="rounded-xl p-2.5 flex flex-col gap-1 select-none transition-all active:scale-95"
+      className={`rounded-xl p-2.5 flex flex-col gap-1 select-none transition-all active:scale-95${pulse ? ' animate-pulse' : ''}`}
       style={{
         background: bg,
         border: `2px solid ${border}`,
@@ -105,14 +109,20 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
         </span>
       )}
       <div className="flex items-center gap-1">
-        {inPreparazione && (
+        {haPiattiPronti && (
           <span className="text-xs px-1 rounded-full font-bold"
                 style={{ background: 'var(--status-amber-text)', color: '#fff' }}>
+            {tavolo.piatti_pronti} ✓
+          </span>
+        )}
+        {!haPiattiPronti && haPiattiInCorso && (
+          <span className="text-xs px-1 rounded-full font-bold"
+                style={{ background: 'var(--status-red-text)', color: '#fff' }}>
             {tavolo.piatti_in_attesa}
           </span>
         )}
         <span className="text-xs" style={{ color: labelColor }}>
-          {caricando ? '...' : modalitaAssegna && !occupato ? 'Seleziona' : occupato ? (inPreparazione ? 'In prep.' : 'Occupato') : haEtichetta ? 'Prenotato' : 'Libero'}
+          {caricando ? '...' : modalitaAssegna && !occupato ? 'Seleziona' : haPiattiPronti ? 'Pronti!' : occupato ? 'Occupato' : haEtichetta ? 'Prenotato' : 'Libero'}
         </span>
       </div>
     </div>
@@ -254,8 +264,12 @@ export default function SalaPage() {
         if (dati.evento === 'riga_pronta') {
           mostraNotifica(`Tavolo ${dati.riga.tavolo_numero} — ${dati.riga.piatto_nome} PRONTO`);
           carica();
-        } else if (dati.evento === 'comanda_chiusa' || dati.evento === 'comanda_aperta') {
-          carica(); // aggiorna mappa sala (tavolo libero/occupato)
+        } else if (
+          dati.evento === 'riga_servita' ||
+          dati.evento === 'comanda_chiusa' ||
+          dati.evento === 'comanda_aperta'
+        ) {
+          carica(); // aggiorna conteggi piatti e stato tavolo
         }
       } catch (_) {}
     };

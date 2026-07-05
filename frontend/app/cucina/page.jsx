@@ -13,9 +13,9 @@ import api from '@/lib/api';
 const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
 
 const STATI = {
-  in_attesa:       { label: 'In attesa',       color: 'var(--muted-foreground)', btnBg: 'var(--status-amber-bg)',  btnColor: 'var(--status-amber-text)', btnLabel: 'Inizia' },
-  in_preparazione: { label: 'In preparazione', color: 'var(--status-amber-text)', btnBg: 'var(--status-green-bg)', btnColor: 'var(--status-green-text)', btnLabel: 'Pronto ✓' },
-  pronto:          { label: 'Pronto',           color: 'var(--status-green-text)', btnBg: null, btnLabel: null },
+  in_attesa:       { label: 'In attesa',       color: 'var(--muted-foreground)',  btnBg: 'var(--hotel-amber)',       btnColor: '#fff',                     btnLabel: '▶ Inizia' },
+  in_preparazione: { label: 'In preparazione', color: 'var(--status-amber-text)', btnBg: 'var(--primary)',           btnColor: 'var(--primary-foreground)', btnLabel: '✓ Segna pronto' },
+  pronto:          { label: 'Pronto',           color: 'var(--status-green-text)', btnBg: null,                      btnLabel: null },
 };
 
 const BORDI = {

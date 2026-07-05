@@ -326,8 +326,8 @@ async function aggiornaStatoRiga(req, res) {
 
     broadcastCucina('stato_riga_aggiornato', { riga: r.rows[0] });
 
-    // Notifica i camerieri solo quando un piatto è pronto da servire
-    if (stato === 'pronto') {
+    // Notifica i camerieri quando un piatto è pronto o viene servito
+    if (stato === 'pronto' || stato === 'servito') {
       const info = await pool.query(`
         SELECT mp.nome AS piatto_nome, t.numero AS tavolo_numero, cr.quantita, cr.comanda_id
         FROM comande_righe cr
@@ -337,7 +337,8 @@ async function aggiornaStatoRiga(req, res) {
         WHERE cr.id = $1
       `, [req.params.rigaId]);
       if (info.rows.length) {
-        broadcastCameriere('riga_pronta', { riga: { ...r.rows[0], ...info.rows[0] } });
+        const evento = stato === 'pronto' ? 'riga_pronta' : 'riga_servita';
+        broadcastCameriere(evento, { riga: { ...r.rows[0], ...info.rows[0] } });
       }
     }
 

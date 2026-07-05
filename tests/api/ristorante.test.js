@@ -1065,3 +1065,55 @@ describe('GET /api/ristorante/sala/stream (SSE camerieri)', () => {
     await chiudiTutteComande();
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 12. STATO TAVOLO — piatti_pronti in GET /tavoli
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('GET /api/ristorante/tavoli — piatti_pronti', () => {
+  let ptComandaId, ptRigaId;
+
+  beforeAll(async () => {
+    // Riattiva configId (può essere stata disattivata dall'e2e precedente)
+    await pool.query('UPDATE configurazioni_sala SET attiva = false');
+    await pool.query('UPDATE configurazioni_sala SET attiva = true WHERE id = $1', [configId]);
+    await chiudiTutteComande();
+    ptComandaId = await apriComandaTest();
+    const r = await request(app)
+      .post(`/api/ristorante/comande/${ptComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piattoId, quantita: 1 });
+    ptRigaId = r.body.riga.id;
+  });
+
+  afterAll(async () => {
+    await chiudiTutteComande();
+    // Ripristina Standard come attiva — l'outer afterAll lo fa già ma per sicurezza
+    await pool.query("UPDATE configurazioni_sala SET attiva = false");
+    await pool.query("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard'");
+  });
+
+  it('80. dopo cuoco segna pronto, GET /tavoli → piatti_pronti = 1', async () => {
+    await request(app).patch(`/api/ristorante/comande/righe/${ptRigaId}/stato`)
+      .set(authHeader.cuoco()).send({ stato: 'in_preparazione' });
+    await request(app).patch(`/api/ristorante/comande/righe/${ptRigaId}/stato`)
+      .set(authHeader.cuoco()).send({ stato: 'pronto' });
+
+    const r = await request(app).get('/api/ristorante/tavoli').set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    const tavolo = r.body.tavoli.find(t => t.id === tavoloId);
+    expect(tavolo).toBeDefined();
+    expect(parseInt(tavolo.piatti_pronti)).toBe(1);
+  });
+
+  it('81. dopo cameriere segna servito, GET /tavoli → piatti_pronti = 0', async () => {
+    await request(app).patch(`/api/ristorante/comande/righe/${ptRigaId}/stato`)
+      .set(authHeader.cameriere()).send({ stato: 'servito' });
+
+    const r = await request(app).get('/api/ristorante/tavoli').set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    const tavolo = r.body.tavoli.find(t => t.id === tavoloId);
+    expect(tavolo).toBeDefined();
+    expect(parseInt(tavolo.piatti_pronti)).toBe(0);
+  });
+});

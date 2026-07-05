@@ -66,7 +66,8 @@ async function listaTavoli(req, res) {
         c.stato         AS comanda_stato,
         c.ospite_hotel  AS comanda_ospite_hotel,
         c.timestamp_apertura,
-        COUNT(cr.id) FILTER (WHERE cr.stato = 'in_attesa') AS piatti_in_attesa
+        COUNT(cr.id) FILTER (WHERE cr.stato IN ('in_attesa','in_preparazione')) AS piatti_in_attesa,
+        COUNT(cr.id) FILTER (WHERE cr.stato = 'pronto') AS piatti_pronti
       FROM tavoli t
       JOIN configurazioni_sala cs ON cs.id = t.configurazione_id AND cs.attiva = true
       LEFT JOIN prenotazioni_ristorante p ON p.id = t.prenotazione_id

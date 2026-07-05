@@ -398,8 +398,15 @@ function RistoranteInner() {
                             placeholder="Note (es. al dente, senza cipolla...)"
                             value={notePerPiatto[p.id] || ''}
                             onChange={e => setNotePerPiatto(prev => ({ ...prev, [p.id]: e.target.value }))}
-                            className="px-3 py-1.5 text-xs w-full outline-none"
-                            style={{ background: 'var(--muted)', color: 'var(--foreground)', borderTop: '1px solid var(--border)' }}
+                            className="px-3 w-full outline-none"
+                            style={{
+                              background: 'var(--muted)',
+                              color: 'var(--foreground)',
+                              borderTop: '1px solid var(--border)',
+                              minHeight: '44px',
+                              fontSize: '16px',
+                              lineHeight: '1.25',
+                            }}
                           />
                         </div>
                       ))}
