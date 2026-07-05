@@ -241,7 +241,10 @@ export default function SalaPage() {
     if (!token) return;
     if (esRef.current) esRef.current.close();
 
-    const url = `${BASE_URL}/ristorante/sala/stream?token=${encodeURIComponent(token)}`;
+    // URL calcolato a runtime per funzionare su IP locale e ngrok
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    const url = `${protocol}//${hostname}:7001/api/ristorante/sala/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
 

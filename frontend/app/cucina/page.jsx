@@ -106,8 +106,10 @@ export default function CucinaPage() {
       esRef.current.close();
     }
 
-    // EventSource nativo — token via query param perché il browser non supporta header su SSE
-    const url = `${BASE_URL}/ristorante/cucina/stream?token=${encodeURIComponent(token)}`;
+    // EventSource nativo — URL calcolato a runtime per funzionare su IP locale e ngrok
+    const hostname = window.location.hostname;
+    const protocol = window.location.protocol;
+    const url = `${protocol}//${hostname}:7001/api/ristorante/cucina/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
 
