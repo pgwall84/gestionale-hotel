@@ -1117,3 +1117,123 @@ describe('GET /api/ristorante/tavoli — piatti_pronti', () => {
     expect(parseInt(tavolo.piatti_pronti)).toBe(0);
   });
 });
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 13. TUTTO PRONTO — POST /comande/:id/tutto-pronto
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('POST /api/ristorante/comande/:id/tutto-pronto', () => {
+  let tpComandaId, tpRiga1, tpRiga2;
+
+  beforeAll(async () => {
+    await pool.query('UPDATE configurazioni_sala SET attiva = false');
+    await pool.query('UPDATE configurazioni_sala SET attiva = true WHERE id = $1', [configId]);
+    await chiudiTutteComande();
+    tpComandaId = await apriComandaTest();
+    const r1 = await request(app)
+      .post(`/api/ristorante/comande/${tpComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piattoId, quantita: 1 });
+    tpRiga1 = r1.body.riga.id;
+    const r2 = await request(app)
+      .post(`/api/ristorante/comande/${tpComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piatto2Id, quantita: 1 });
+    tpRiga2 = r2.body.riga.id;
+  });
+
+  afterAll(async () => {
+    await chiudiTutteComande();
+    await pool.query("UPDATE configurazioni_sala SET attiva = false");
+    await pool.query("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard'");
+  });
+
+  it('82. senza token → 401', async () => {
+    const r = await request(app).post(`/api/ristorante/comande/${tpComandaId}/tutto-pronto`);
+    expect(r.status).toBe(401);
+  });
+
+  it('83. receptionist → 403', async () => {
+    const r = await request(app)
+      .post(`/api/ristorante/comande/${tpComandaId}/tutto-pronto`)
+      .set(authHeader.receptionist());
+    expect(r.status).toBe(403);
+  });
+
+  it('84. cuoco su comanda aperta → 200, tutte le righe diventano pronto', async () => {
+    const r = await request(app)
+      .post(`/api/ristorante/comande/${tpComandaId}/tutto-pronto`)
+      .set(authHeader.cuoco());
+    expect(r.status).toBe(200);
+
+    // Verifica che entrambe le righe siano ora pronte
+    const c = await request(app)
+      .get(`/api/ristorante/comande/${tpComandaId}`)
+      .set(authHeader.cuoco());
+    expect(c.status).toBe(200);
+    for (const riga of c.body.righe) {
+      expect(riga.stato).toBe('pronto');
+    }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// 14. ALLERGENI — note_allergie_oggi in GET /tavoli e allergeni in GET /comande
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('Allergeni — note_allergie_oggi e allergeni righe', () => {
+  let alComandaId, alRigaId;
+
+  beforeAll(async () => {
+    await pool.query('UPDATE configurazioni_sala SET attiva = false');
+    await pool.query('UPDATE configurazioni_sala SET attiva = true WHERE id = $1', [configId]);
+    await chiudiTutteComande();
+    alComandaId = await apriComandaTest();
+    const r = await request(app)
+      .post(`/api/ristorante/comande/${alComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piattoId, quantita: 1, note: 'senza cipolla' });
+    alRigaId = r.body.riga?.id;
+  });
+
+  afterAll(async () => {
+    await chiudiTutteComande();
+    await pool.query("UPDATE configurazioni_sala SET attiva = false");
+    await pool.query("UPDATE configurazioni_sala SET attiva = true WHERE nome = 'Standard'");
+  });
+
+  it('85. GET /tavoli include note_allergie_oggi (null se nessun record ospiti_giornalieri oggi)', async () => {
+    const r = await request(app).get('/api/ristorante/tavoli').set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    expect(r.body.tavoli).toBeDefined();
+    // Il campo deve esistere su ogni tavolo (null se nessun record oggi)
+    for (const t of r.body.tavoli) {
+      expect(Object.keys(t)).toContain('note_allergie_oggi');
+    }
+  });
+
+  it('86. GET /comande/:id include allergeni per ogni riga', async () => {
+    const r = await request(app)
+      .get(`/api/ristorante/comande/${alComandaId}`)
+      .set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    expect(r.body.righe.length).toBeGreaterThan(0);
+    for (const riga of r.body.righe) {
+      // allergeni è un array (può essere vuoto ma deve esistere)
+      expect(Array.isArray(riga.allergeni)).toBe(true);
+    }
+  });
+
+  it('87. GET /tavoli senza ospiti_giornalieri oggi non restituisce errore', async () => {
+    // Elimina eventuale record di oggi per simulare assenza
+    await pool.query(
+      "DELETE FROM ospiti_giornalieri WHERE data = CURRENT_DATE"
+    );
+    const r = await request(app).get('/api/ristorante/tavoli').set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    // note_allergie_oggi deve essere null, non un errore
+    for (const t of r.body.tavoli) {
+      expect(t.note_allergie_oggi).toBeNull();
+    }
+  });
+});

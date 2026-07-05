@@ -36,20 +36,27 @@ async function streamCucina(req, res) {
 
   // Invia subito lo stato attuale delle comande aperte
   try {
-    const r = await pool.query(`
-      SELECT cr.id, cr.comanda_id, cr.quantita, cr.note, cr.stato,
-             cr.tipo_speciale, cr.motivo_speciale, cr.timestamp_pronto,
-             mp.nome AS piatto_nome,
-             t.numero AS tavolo_numero,
-             c.timestamp_apertura
-      FROM comande_righe cr
-      JOIN comande c ON c.id = cr.comanda_id AND c.stato = 'aperta'
-      JOIN tavoli t ON t.id = c.tavolo_id
-      JOIN menu_piatti mp ON mp.id = cr.piatto_id
-      WHERE cr.stato != 'servito'
-      ORDER BY c.timestamp_apertura, cr.id
-    `);
-    res.write(`data: ${JSON.stringify({ evento: 'stato_iniziale', righe: r.rows })}\n\n`);
+    const [rRighe, rAllergie] = await Promise.all([
+      pool.query(`
+        SELECT cr.id, cr.comanda_id, cr.quantita, cr.note, cr.stato,
+               cr.tipo_speciale, cr.motivo_speciale, cr.timestamp_pronto,
+               mp.nome AS piatto_nome,
+               mp.allergeni,
+               t.numero AS tavolo_numero,
+               c.timestamp_apertura
+        FROM comande_righe cr
+        JOIN comande c ON c.id = cr.comanda_id AND c.stato = 'aperta'
+        JOIN tavoli t ON t.id = c.tavolo_id
+        JOIN menu_piatti mp ON mp.id = cr.piatto_id
+        WHERE cr.stato != 'servito'
+        ORDER BY c.timestamp_apertura, cr.id
+      `),
+      pool.query(
+        'SELECT note_allergie FROM ospiti_giornalieri WHERE data = CURRENT_DATE LIMIT 1'
+      ),
+    ]);
+    const note_allergie_oggi = rAllergie.rows[0]?.note_allergie || null;
+    res.write(`data: ${JSON.stringify({ evento: 'stato_iniziale', righe: rRighe.rows, note_allergie_oggi })}\n\n`);
   } catch (err) {
     console.error('SSE stato iniziale error:', err);
   }
@@ -186,7 +193,8 @@ async function dettaglioComanda(req, res) {
     const righe = await pool.query(`
       SELECT cr.id, cr.piatto_id, cr.quantita, cr.note, cr.stato,
              cr.tipo_speciale, cr.motivo_speciale, cr.timestamp_pronto,
-             mp.nome AS piatto_nome, mp.prezzo, mp.allergeni
+             mp.nome AS piatto_nome, mp.prezzo, mp.allergeni,
+             mp.descrizione
       FROM comande_righe cr
       JOIN menu_piatti mp ON mp.id = cr.piatto_id
       WHERE cr.comanda_id = $1
@@ -222,9 +230,9 @@ async function aggiungiRiga(req, res) {
       [req.params.id, piatto_id, quantita ?? 1, note || null]
     );
 
-    // Recupera nome piatto e numero tavolo per il broadcast SSE
+    // Recupera nome piatto, allergeni e numero tavolo per il broadcast SSE
     const info = await pool.query(`
-      SELECT mp.nome AS piatto_nome, t.numero AS tavolo_numero
+      SELECT mp.nome AS piatto_nome, mp.allergeni, t.numero AS tavolo_numero
       FROM comande c
       JOIN tavoli t ON t.id = c.tavolo_id
       JOIN menu_piatti mp ON mp.id = $1
@@ -235,6 +243,7 @@ async function aggiungiRiga(req, res) {
       riga: {
         ...r.rows[0],
         piatto_nome:   info.rows[0]?.piatto_nome,
+        allergeni:     info.rows[0]?.allergeni,
         tavolo_numero: info.rows[0]?.tavolo_numero,
       },
     });
@@ -415,6 +424,60 @@ async function conto(req, res) {
   }
 }
 
+// POST /api/ristorante/comande/:id/tutto-pronto — segna come pronto tutte le righe non ancora pronte
+// Accessibile a: cuoco, cameriere, titolare, admin
+async function tuttoProonto(req, res) {
+  const { id } = req.params;
+  try {
+    const comanda = await pool.query(
+      'SELECT id, stato FROM comande WHERE id = $1',
+      [id]
+    );
+    if (!comanda.rows.length) return res.status(404).json({ errore: 'Comanda non trovata.' });
+    if (comanda.rows[0].stato !== 'aperta') {
+      return res.status(400).json({ errore: 'Comanda non aperta.' });
+    }
+
+    await pool.query(
+      `UPDATE comande_righe
+       SET stato = 'pronto', timestamp_pronto = NOW()
+       WHERE comanda_id = $1 AND stato NOT IN ('pronto', 'servito')`,
+      [id]
+    );
+
+    // Broadcast stato aggiornato a tutti i client cucina
+    const [r, rAllergie] = await Promise.all([
+      pool.query(`
+        SELECT cr.id, cr.comanda_id, cr.quantita, cr.note, cr.stato,
+               cr.tipo_speciale, cr.motivo_speciale, cr.timestamp_pronto,
+               mp.nome AS piatto_nome,
+               mp.allergeni,
+               t.numero AS tavolo_numero,
+               c.timestamp_apertura
+        FROM comande_righe cr
+        JOIN comande c ON c.id = cr.comanda_id AND c.stato = 'aperta'
+        JOIN tavoli t ON t.id = c.tavolo_id
+        JOIN menu_piatti mp ON mp.id = cr.piatto_id
+        WHERE cr.stato != 'servito'
+        ORDER BY c.timestamp_apertura, cr.id
+      `),
+      pool.query(
+        'SELECT note_allergie FROM ospiti_giornalieri WHERE data = CURRENT_DATE LIMIT 1'
+      ),
+    ]);
+    const note_allergie_oggi = rAllergie.rows[0]?.note_allergie || null;
+    broadcastCucina('stato_iniziale', { righe: r.rows, note_allergie_oggi });
+
+    // Notifica camerieri: un piatto per riga aggiornata
+    broadcastCameriere('riga_pronta', { comanda_id: parseInt(id) });
+
+    res.json({ messaggio: 'Tutti i piatti segnati come pronti.' });
+  } catch (err) {
+    console.error('tuttoProonto error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
 // PATCH /api/ristorante/comande/:id/chiudi — chiude la comanda
 // Accessibile a: cameriere, titolare, admin
 // Prerequisito: tutti i piatti devono essere in stato 'servito'
@@ -463,5 +526,6 @@ module.exports = {
   broadcastCameriere,
   listaComande, apriComanda, dettaglioComanda, chiudiComanda,
   aggiungiRiga, rimuoviRiga, aggiornaStatoRiga, tipoSpecialeRiga,
+  tuttoProonto,
   conto,
 };

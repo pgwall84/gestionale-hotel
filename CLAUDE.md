@@ -328,6 +328,33 @@ blocco chiusura con piatti non serviti, check duplicato tavolo,
 blocco eliminazione tavolo occupato, distinzione 404/400 rimozione riga.
 77 test verdi. Commit: bf3b320.
 
+**Nota 1.6 — redesign comanda cameriere + allergeni:**
+- Frontend /ristorante: layout 3 zone (topbar / selezione piatti / carrello fisso).
+  Topbar: badge ⚠ Allergie se note_allergie_oggi non vuote.
+  Categorie verticale 72px + lista piatti con badge allergeni grigi/rossi,
+  card rossa e banner avviso se match con allergia ospite.
+  Carrello: qty +/-, nota 16px (no iOS zoom), nota rossa se parole chiave allergia.
+  Pulsante "Invia alla cucina" → POST batch righe.
+  BASE_URL module-level rimosso; SSE URL a runtime.
+- Backend salaController: listaTavoli aggiunge note_allergie_oggi via subquery scalare.
+- Backend comandeController: SSE stato_iniziale include mp.allergeni + note_allergie_oggi;
+  nuova_riga broadcast include allergeni; dettaglioComanda include allergeni e descrizione.
+- Frontend /cucina: CardRiga mostra badge allergeni rossi/grigi, nota in box rosso
+  se parole chiave allergia, sfondo riga #FFF8F8 se match. note_allergie_oggi
+  estratto da evento stato_iniziale SSE.
+- KEYWORD_MAP e hasMatch() implementati in entrambe le pagine (no shared file).
+  87 test verdi.
+
+**Nota 1.6 — redesign monitor cucina + mappa sala:**
+- Monitor cucina: card per comanda (non per singolo piatto), timer verde/giallo/rosso,
+  pulsante "Tutto pronto" per comanda → POST /comande/:id/tutto-pronto.
+  Nuovo endpoint nel controller + route.
+- Mappa sala: card quadrate (aspect-ratio 1), colori esatti con hex fissi
+  (LIBERO #F5F5F5, OCCUPATO #FCEBEB, PRONTO #FAEEDA), pulse dot amber 8px.
+  Griglia auto-fill minmax(90px,1fr), legenda a 3 stati.
+  BASE_URL module-level rimosso (era inutilizzato).
+  84 test verdi.
+
 **Nota 1.6 — patch UX post-release:** Fix 4 gap operativi su /sala e /ristorante.
 - Fix 1: bottom sheet su tavolo libero ("Apri e aggiungi piatti" / "Solo segna occupato").
 - Fix 2: window.location.href → router.push() (no full page reload).
@@ -512,6 +539,201 @@ Stima:
 5. Quando il modulo è completo: esegui `node tests/agent/genera-test.js [modulo]`
 6. Mostra il report dei test in italiano
 7. Se tutti i test passano: modulo completato, aggiorna questo CLAUDE.md marcando il modulo come ✅
+
+---
+
+## 10b. PIANO COMPLETATO — Redesign Monitor Cucina + Mappa Sala ✅
+
+```
+PIANO — Redesign Monitor Cucina + Mappa Sala — Modulo 1.6
+
+File da creare:
+  - Nessuno
+
+File da modificare:
+  1. backend/controllers/comandeController.js
+     → aggiunge funzione tuttoProonto(req, res): UPDATE comande_righe
+       SET stato = 'pronto' WHERE comanda_id = $1 AND stato NOT IN ('pronto','servito')
+       poi broadcast SSE 'stato_iniziale' aggiornato a tutti clientiCucina.
+     → aggiornaStatoRiga: nessuna modifica, già broadcast corretto.
+
+  2. backend/routes/ristorante.js
+     → aggiunge route PRIMA di /comande/:id/chiudi:
+       POST /comande/:id/tutto-pronto → ruoli CUCINA → comande.tuttoProonto
+
+  3. frontend/app/cucina/page.jsx  [REDESIGN COMPLETO]
+     → STATE: righe[] invariato, connesso/errore invariati
+     → LOGICA: raggruppa righe per comanda_id in oggetto { comanda_id, tavolo_numero,
+       timestamp_apertura, righe[] }. Ordina per timestamp_apertura ASC.
+     → TIMER: Math.floor((Date.now() - new Date(ts).getTime()) / 60000)
+       Verde 0–7min, Giallo 8–11min, Rosso ≥12min.
+     → CARD COMANDA:
+       Header: "Tavolo N  ⏱ Xmin" con sfondo timer-colore; badge "Tutto pronto" se
+       almeno 1 riga è in_attesa o in_preparazione → POST /comande/:id/tutto-pronto.
+       Body: elenco righe con stato individuale e pulsante avanza (stato ≠ pronto).
+       Scompare client-side quando tutte le righe sono 'servito'.
+     → SEZIONI: "Da preparare" (comande con ≥1 riga non pronta) | "Pronti" (tutte pronte).
+     → Mantiene: SSE URL a runtime in connetti(), riconnessione 5s, eventi esistenti.
+
+  4. frontend/app/sala/page.jsx  [REDESIGN COMPLETO]
+     → Mappa compatta: griglia CSS auto-fill minmax(90px,1fr), card quadrate aspect-ratio 1.
+     → Colori esatti per stato:
+         LIBERO:   background #F5F5F5  border #D4D4D4  text #737373
+         OCCUPATO: background #FCEBEB  border #F09595  text #A32D2D
+         PRONTO:   background #FAEEDA  border #EF9F27  text #633806
+                   + pulse dot 8px amber in alto a destra
+     → Logica stati: libero = comanda_id nullo; pronto = piatti_pronti > 0;
+       occupato = comanda_id presente E piatti_pronti === 0.
+     → Contenuto card: numero tavolo (bold), etichetta (se c'è), badge piatti.
+     → Legenda: 3 quadratini colorati con label in basso alla mappa.
+     → Mantiene: SSE URL a runtime, eventi riga_pronta/riga_servita/comanda_chiusa/
+       comanda_aperta, notifiche audio, logica tap su tavolo invariata.
+
+  5. tests/api/ristorante.test.js
+     → Test 82: POST /comande/:id/tutto-pronto senza token → 401
+     → Test 83: POST /comande/:id/tutto-pronto con ruolo wrong (receptionist) → 403
+     → Test 84: POST /comande/:id/tutto-pronto con cuoco su comanda aperta →
+       200, tutte le righe non-servite diventano pronto
+     → (timestamp_apertura già presente in DB da migration precedente)
+
+Migration necessaria:
+  - Nessuna (timestamp_apertura esiste già in comande)
+
+Dipendenze nuove:
+  - Nessuna
+
+Flusso dati endpoint nuovo:
+  Cucina tocca "Tutto pronto" → POST /api/ristorante/comande/:id/tutto-pronto
+  → tuttoProonto controller → UPDATE comande_righe (non pronto e non servito → pronto)
+  → broadcastCucina('stato_iniziale', righe aggiornate) → cucina/page.jsx riceve SSE
+
+Permessi per ruolo endpoint nuovo:
+  - cuoco, cameriere, titolare, admin: accesso
+  - receptionist, portiere_notte, dipendente: 403
+
+Rischi identificati:
+  - Card comanda deve sparire solo lato client (evento 'servito' arriva già via SSE
+    riga_rimossa o stato_riga_aggiornato); nessun nuovo evento da creare.
+  - Turbopack cache: se il frontend non ricarica correttamente, eliminare .next.
+  - Timer usa Date.now() al render — aggiornare ogni minuto con setInterval in useEffect.
+
+Sequenza di esecuzione:
+  1. backend/controllers/comandeController.js (aggiunge tuttoProonto)
+  2. backend/routes/ristorante.js (aggiunge route)
+  3. frontend/app/cucina/page.jsx (redesign completo)
+  4. frontend/app/sala/page.jsx (redesign completo)
+  5. tests/api/ristorante.test.js (test 82–84)
+  6. npm test → verifica tutti i test verdi
+  7. Aggiorna CLAUDE.md
+
+Stima:
+  - 5 file, ~30 minuti
+```
+
+---
+
+## 10c. PIANO COMPLETATO — Redesign comanda cameriere + allergeni cucina ✅
+
+```
+PIANO — Redesign schermata comanda + integrazione allergeni — Modulo 1.6
+
+File da creare:
+  - Nessuno
+
+File da modificare:
+  1. backend/controllers/salaController.js
+     → listaTavoli: aggiunge note_allergie ospiti del giorno
+       via subquery scalare:
+       (SELECT note_allergie FROM ospiti_giornalieri
+        WHERE data = CURRENT_DATE LIMIT 1) AS note_allergie_oggi
+       Nessun JOIN extra — subquery scalare restituisce NULL se
+       il record non esiste (no crash).
+
+  2. backend/controllers/comandeController.js
+     → streamCucina (query stato_iniziale): aggiunge mp.allergeni
+       alla SELECT delle righe.
+     → streamCucina: aggiunge campo note_allergie_oggi nel payload
+       stato_iniziale: recupera con query separata su ospiti_giornalieri.
+     → nuova_riga broadcast: aggiunge allergeni al payload riga
+       (già recupera info piatto — basta aggiungere mp.allergeni).
+     → dettaglioComanda: aggiunge mp.allergeni alla query righe.
+
+  3. frontend/app/ristorante/page.jsx  [REDESIGN COMPLETO]
+     → Rimuove BASE_URL module-level (inutilizzato).
+     → Aggiunge KEYWORD_MAP e hasMatch() per match allergie.
+     → Carica note_allergie_oggi da GET /ristorante/tavoli
+       (risposta include il campo per il tavolo selezionato).
+     → Nuovo layout a 3 zone (full-height, overflow controllato):
+         ZONA 1 — Topbar: "Tavolo X" + coperti + badge ⚠ Allergie
+         ZONA 2 — Selezione piatti:
+           Sinistra 72px: lista categorie verticale con emoji
+           Destra flex-1: lista piatti con badge allergeni
+             + card rossa se match con ospite + banner avviso
+         ZONA 3 — Carrello fisso in basso:
+           Header: icona + "Ordine" + badge count + totale €
+           Righe: qty -/N/+ | nome | prezzo + nota input 16px
+           Footer: "Invia alla cucina" → POST batch righe
+     → Mantiene: modale conto, chiudi comanda, SSE notifiche,
+       vista lista comande invariata.
+
+  4. frontend/app/cucina/page.jsx
+     → CardRiga: aggiunge sotto nome piatto:
+         - Badge allergeni (grigi/rossi basati su hasMatch)
+         - Nota: grigia normale, box rosso #FCEBEB se parole
+           chiave allergia nella nota
+       Sfondo riga #FFF8F8 se almeno 1 match allergene.
+     → Estrae note_allergie_oggi dal payload SSE stato_iniziale
+       (nuovo campo nel broadcast cucina).
+     → hasMatch() e KEYWORD_MAP estratte in module scope condiviso
+       (copiate in entrambe le pagine — non serve file shared).
+
+  5. tests/api/ristorante.test.js
+     → Test 85: GET /tavoli include note_allergie_oggi
+       (null se nessun record ospiti_giornalieri oggi)
+     → Test 86: GET /comande/:id include allergeni per ogni riga
+     → Test 87: ospiti_giornalieri senza record oggi → 
+       GET /tavoli non restituisce errore (note_allergie_oggi = null)
+
+Migration necessaria:
+  - Nessuna (allergeni in menu_piatti già esistente,
+    note_allergie in ospiti_giornalieri già esistente)
+
+Dipendenze nuove:
+  - Nessuna
+
+Flusso dati allergie (frontend):
+  GET /ristorante/tavoli → note_allergie_oggi nel tavolo
+  GET /menu/piatti       → allergeni[] per ogni piatto
+  hasMatch(allergeniPiatto, note_allergie_oggi) → array match
+  match.length > 0 → card rossa + badge rossi
+
+Flusso dati allergie (cucina SSE):
+  stato_iniziale → { righe: [..., allergeni: [...]], note_allergie_oggi }
+  nuova_riga     → { riga: { ..., allergeni: [...] } }
+  → CardRiga usa note_allergie_oggi dallo state globale cucina
+
+Permessi: nessuna modifica ai ruoli
+
+Rischi identificati:
+  - ospiti_giornalieri potrebbe avere 0 righe oggi → subquery
+    scalare restituisce NULL → hasMatch([...], null) → [] → OK.
+  - allergeni in PostgreSQL è array — serializato come JSON array
+    in risposta API (già funziona con altri array nel progetto).
+  - BASE_URL in ristorante/page.jsx era usato per SSE (riga 137):
+    la URL SSE va corretta a runtime come in sala/page.jsx.
+
+Sequenza di esecuzione:
+  1. backend/controllers/salaController.js
+  2. backend/controllers/comandeController.js
+  3. frontend/app/ristorante/page.jsx
+  4. frontend/app/cucina/page.jsx
+  5. tests/api/ristorante.test.js
+  6. npm test → verifica tutti e 87 test verdi
+  7. git commit + aggiorna CLAUDE.md
+
+Stima:
+  - 5 file, ~45 minuti
+```
 
 ---
 
