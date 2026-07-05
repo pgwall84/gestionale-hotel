@@ -478,13 +478,59 @@ async function tuttoProonto(req, res) {
   }
 }
 
-// PATCH /api/ristorante/comande/:id/chiudi — chiude la comanda
+// DELETE /api/ristorante/comande/:id — elimina comanda senza righe (es. tavolo aperto per errore)
 // Accessibile a: cameriere, titolare, admin
-// Prerequisito: tutti i piatti devono essere in stato 'servito'
-async function chiudiComanda(req, res) {
+async function eliminaComanda(req, res) {
   try {
     const comanda = await pool.query(
-      'SELECT id, stato FROM comande WHERE id = $1',
+      'SELECT id, stato, tavolo_id FROM comande WHERE id = $1',
+      [req.params.id]
+    );
+    if (!comanda.rows.length) return res.status(404).json({ errore: 'Comanda non trovata.' });
+    if (comanda.rows[0].stato !== 'aperta') {
+      return res.status(400).json({ errore: 'Solo le comande aperte possono essere eliminate.' });
+    }
+
+    const righe = await pool.query(
+      'SELECT COUNT(*) AS n FROM comande_righe WHERE comanda_id = $1',
+      [req.params.id]
+    );
+    if (parseInt(righe.rows[0].n) > 0) {
+      return res.status(400).json({ errore: 'Comanda con ordini non eliminabile.' });
+    }
+
+    await pool.query('DELETE FROM comande WHERE id = $1', [req.params.id]);
+    broadcastCucina('comanda_eliminata', { comanda_id: req.params.id });
+    broadcastCameriere('comanda_eliminata', { comanda_id: req.params.id });
+    res.json({ messaggio: 'Comanda eliminata.' });
+  } catch (err) {
+    console.error('eliminaComanda error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// PATCH /api/ristorante/comande/:id/chiudi — chiude la comanda
+// tipo normale: cameriere, titolare, admin (default se omesso)
+// tipo omaggio/autoconsumo: solo titolare, admin
+async function chiudiComanda(req, res) {
+  const tipo = req.body?.tipo || 'normale';
+  const ruolo = req.utente.ruolo;
+  const RUOLI_SPECIALI = ['admin', 'titolare'];
+
+  if ((tipo === 'omaggio' || tipo === 'autoconsumo') && !RUOLI_SPECIALI.includes(ruolo)) {
+    return res.status(403).json({ errore: `Il ruolo '${ruolo}' non può chiudere una comanda come ${tipo}.` });
+  }
+
+  if (tipo === 'omaggio' && !req.body?.motivo?.trim()) {
+    return res.status(400).json({ errore: 'Il motivo è obbligatorio per un omaggio.' });
+  }
+  if (tipo === 'autoconsumo' && (!req.body?.user_id || !req.body?.valore_costo)) {
+    return res.status(400).json({ errore: 'user_id e valore_costo sono obbligatori per un autoconsumo.' });
+  }
+
+  try {
+    const comanda = await pool.query(
+      'SELECT id, stato, tavolo_id FROM comande WHERE id = $1',
       [req.params.id]
     );
     if (!comanda.rows.length) {
@@ -507,10 +553,38 @@ async function chiudiComanda(req, res) {
       });
     }
 
+    const { tavolo_id } = comanda.rows[0];
+
+    // Calcola totale comanda per storico
+    const totaleRes = await pool.query(`
+      SELECT COALESCE(SUM(
+        CASE WHEN cr.tipo_speciale IN ('omaggio','autoconsumo') THEN 0
+             ELSE COALESCE(mp.prezzo, 0) * cr.quantita END
+      ), 0) AS totale
+      FROM comande_righe cr
+      JOIN menu_piatti mp ON mp.id = cr.piatto_id
+      WHERE cr.comanda_id = $1
+    `, [req.params.id]);
+    const totale = parseFloat(totaleRes.rows[0].totale);
+
+    if (tipo === 'omaggio') {
+      await pool.query(
+        `INSERT INTO omaggi (comanda_id, tavolo_id, motivo, valore_omaggio, user_id)
+         VALUES ($1, $2, $3, $4, $5)`,
+        [req.params.id, tavolo_id, req.body.motivo.trim(), totale, req.utente.id]
+      );
+    } else if (tipo === 'autoconsumo') {
+      await pool.query(
+        `INSERT INTO autoconsumi (comanda_id, tavolo_id, consumatore_id, valore_costo, valore_listino, autorizzato_da)
+         VALUES ($1, $2, $3, $4, $5, $6)`,
+        [req.params.id, tavolo_id, req.body.user_id, req.body.valore_costo, totale, req.utente.id]
+      );
+    }
+
     const r = await pool.query(
-      `UPDATE comande SET stato = 'chiusa', timestamp_chiusura = NOW()
+      `UPDATE comande SET stato = 'chiusa', timestamp_chiusura = NOW(), tipo_chiusura = $2
        WHERE id = $1 RETURNING *`,
-      [req.params.id]
+      [req.params.id, tipo]
     );
     broadcastCucina('comanda_chiusa', { comanda_id: req.params.id });
     broadcastCameriere('comanda_chiusa', { comanda_id: req.params.id });
@@ -524,7 +598,8 @@ async function chiudiComanda(req, res) {
 module.exports = {
   streamCucina, streamSala,
   broadcastCameriere,
-  listaComande, apriComanda, dettaglioComanda, chiudiComanda,
+  listaComande, apriComanda, dettaglioComanda,
+  eliminaComanda, chiudiComanda,
   aggiungiRiga, rimuoviRiga, aggiornaStatoRiga, tipoSpecialeRiga,
   tuttoProonto,
   conto,

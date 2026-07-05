@@ -737,6 +737,100 @@ Stima:
 
 ---
 
+## 10d. PIANO ATTIVO — Fix 1 libera tavolo, Fix 2 chiusura con tipo
+
+```
+PIANO — Libera tavolo + Chiusura comanda tipizzata — Modulo 1.6
+
+File da creare:
+  - database/migrations/011_omaggi_autoconsumi.sql
+
+File da modificare:
+  1. backend/controllers/comandeController.js
+     → nuova funzione eliminaComanda:
+         DELETE /api/ristorante/comande/:id
+         Solo se nessuna riga. Broadcast 'comanda_eliminata'.
+     → chiudiComanda: aggiunge gestione tipo (normale/omaggio/autoconsumo).
+         tipo omaggio  → ruolo in [titolare,admin], motivo obbligatorio,
+                         INSERT omaggi, UPDATE comande.tipo_chiusura
+         tipo autoconsumo → ruolo in [titolare,admin], user_id+valore_costo,
+                         INSERT autoconsumi, UPDATE comande.tipo_chiusura
+         tipo normale  → invariato
+
+  2. backend/routes/ristorante.js
+     → aggiunge DELETE /comande/:id → ruoli CMD_W → eliminaComanda
+       (PRIMA di /comande/:id — stessa sezione delle route per id)
+
+  3. frontend/app/sala/page.jsx
+     → vaiAComanda: invece di navigare direttamente, apre un
+       nuovo BottomSheetTavoloOccupato che carica il dettaglio
+       comanda (GET /comande/:id) per sapere se ha righe.
+     → BottomSheetTavoloOccupato:
+         se righe.length === 0: "Vedi comanda" | "Libera tavolo" | "Annulla"
+         se righe.length > 0:  "Vedi comanda" | "Annulla"
+       "Libera tavolo" → DELETE /comande/:id → carica() → chiudi sheet
+     → Nasconde "Libera tavolo" a cuoco/portiere_notte/dipendente
+       (solo se utente ha ruolo in [admin, titolare, cameriere])
+
+  4. frontend/app/ristorante/page.jsx
+     → Sostituisce la logica "Chiudi comanda" con un
+       BottomSheetChiusuraComanda.
+     → Componente con 3 opzioni visibili in base al ruolo:
+         Conto normale: sempre visibile
+         Omaggio: solo titolare/admin
+         Autoconsumo: solo titolare/admin
+     → Omaggio: campo motivo obbligatorio (disabled se vuoto)
+     → Autoconsumo: select utenti attivi (GET /api/users)
+                    + input numerico valore_costo
+     → Tutti e 3 → PATCH /comande/:id/chiudi con { tipo, ... }
+     → Successo → router.push('/sala')
+
+  5. tests/api/ristorante.test.js
+     → Test 88: DELETE comanda vuota → 200
+     → Test 89: DELETE comanda con righe → 400
+     → Test 90: chiudi omaggio senza motivo → 400
+     → Test 91: chiudi omaggio con motivo → 200 + INSERT omaggi
+     → Test 92: chiudi autoconsumo → 200 + INSERT autoconsumi
+     → Test 93: cameriere tenta omaggio → 403
+     → Test 94: cameriere tenta autoconsumo → 403
+
+Migration necessaria:
+  - 011_omaggi_autoconsumi.sql:
+    CREATE TABLE omaggi (id, comanda_id, tavolo_id, motivo,
+      valore_omaggio, user_id, data, created_at)
+    CREATE TABLE autoconsumi (id, comanda_id, tavolo_id,
+      consumatore_id, valore_costo, valore_listino,
+      autorizzato_da, data, created_at)
+    ALTER TABLE comande ADD COLUMN IF NOT EXISTS tipo_chiusura
+
+Dipendenze nuove: Nessuna
+
+Rischi identificati:
+  - DELETE /comande/:id ha lo stesso pattern di /comande/righe/:id —
+    va dichiarata DOPO le route /righe per non catturarle.
+    In Express, DELETE /comande/:id NON cattura /comande/righe/X
+    perché "righe" non è un numero, ma per sicurezza la mettiamo
+    dopo le route /righe esistenti e prima di /comande/:id.
+  - GET /api/users per la select autoconsumo: verificare che la
+    route esista e restituisca utenti attivi. Se filtra solo attivi
+    con WHERE attivo=true, altrimenti aggiungere il filtro lato frontend.
+  - chiudiComanda: i test esistenti (63-65) non passano tipo →
+    il campo tipo deve default a 'normale' se non presente.
+
+Sequenza di esecuzione: COMPLETATA (2026-07-05)
+  ✓ 1. Migration 011
+  ✓ 2. backend/controllers/comandeController.js
+  ✓ 3. backend/routes/ristorante.js
+  ✓ 4. frontend/app/sala/page.jsx
+  ✓ 5. frontend/app/ristorante/page.jsx
+  ✓ 6. tests/api/ristorante.test.js
+  ✓ 7. npm test → 94/94 verdi
+  ✓ 8. CLAUDE.md aggiornato
+  ✓ 9. git commit
+```
+
+---
+
 ## 11. SPECIFICHE FUNZIONALI MODULI DA COMPLETARE
 
 ### Modulo 1.6 — Ristorante
@@ -774,9 +868,11 @@ Conto:
   Ospiti hotel: nessun conto — prezzo incluso nella camera
 
 Omaggi e autoconsumo:
-  Pulsante "Tipo speciale": Omaggio / Autoconsumo / Tariffa scontata
-  Omaggio: motivo obbligatorio, documento commerciale a zero
-  Autoconsumo: registrazione interna senza documento fiscale
+  Omaggio: titolare/admin, motivo obbligatorio → INSERT omaggi + tipo_chiusura='omaggio'
+  Autoconsumo: titolare/admin, user_id + valore_costo → INSERT autoconsumi + tipo_chiusura='autoconsumo'
+  Chiusura normale: tutti i ruoli abilitati alla comanda, tipo_chiusura='normale' (default)
+  NOTA FUTURA: la select autoconsumo usa user_id numerico — considerare GET /api/users per
+    mostrare nomi nel bottom sheet (post integrazione A-Cube, modulo 3.1)
 ```
 
 ### Modulo 1.7 — Magazzino

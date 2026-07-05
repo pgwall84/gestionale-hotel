@@ -14,8 +14,6 @@ import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 import Cookies from 'js-cookie';
 
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-
 const RUOLI_ADMIN  = ['admin', 'titolare'];
 const RUOLI_ASSEGNA = ['admin', 'titolare', 'receptionist', 'cameriere'];
 
@@ -43,31 +41,36 @@ function suonaBip(audioCtxRef) {
   } catch (_) {}
 }
 
+// ── Colori esatti per stato tavolo ───────────────────────────────────────────
+// LIBERO:   sfondo chiaro neutro
+// OCCUPATO: rosso tenue (nessun piatto pronto)
+// PRONTO:   ambra/arancione + pulse dot (piatti pronti da servire)
+const COLORI_STATO = {
+  libero:   { bg: '#F5F5F5', border: '#D4D4D4', text: '#737373' },
+  occupato: { bg: '#FCEBEB', border: '#F09595', text: '#A32D2D' },
+  pronto:   { bg: '#FAEEDA', border: '#EF9F27', text: '#633806' },
+  assegna:  { bg: '#F0FFF4', border: '#6EE7B7', text: '#065F46' },
+  bloccato: { bg: '#F3F4F6', border: '#D1D5DB', text: '#9CA3AF' },
+};
+
 // ── Card tavolo ───────────────────────────────────────────────────────────────
 
 function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, aprendoId }) {
-  const occupato       = !!tavolo.comanda_stato;
-  const haEtichetta    = !!tavolo.etichetta;
-  const haPiattiPronti = parseInt(tavolo.piatti_pronti) > 0;
+  const occupato        = !!tavolo.comanda_stato;
+  const haPiattiPronti  = parseInt(tavolo.piatti_pronti) > 0;
   const haPiattiInCorso = parseInt(tavolo.piatti_in_attesa) > 0;
-  const caricando      = aprendoId === tavolo.id;
+  const caricando       = aprendoId === tavolo.id;
 
-  let bg, border, labelColor, pulse;
+  let colori, pulse;
   if (modalitaAssegna) {
-    bg = occupato ? 'var(--muted)' : 'var(--status-green-bg)';
-    border = occupato ? 'var(--border)' : 'var(--status-green-text)';
-    labelColor = occupato ? 'var(--muted-foreground)' : 'var(--status-green-text)';
+    colori = occupato ? COLORI_STATO.bloccato : COLORI_STATO.assegna;
     pulse = false;
   } else if (haPiattiPronti) {
-    // Arancione pulsante: almeno 1 piatto pronto da servire
-    bg = 'var(--status-amber-bg)'; border = 'var(--status-amber-text)'; labelColor = 'var(--status-amber-text)'; pulse = true;
+    colori = COLORI_STATO.pronto; pulse = true;
   } else if (occupato) {
-    // Rosso: tavolo occupato ma nessun piatto pronto
-    bg = 'var(--status-red-bg)'; border = 'var(--status-red-text)'; labelColor = 'var(--status-red-text)'; pulse = false;
-  } else if (haEtichetta) {
-    bg = 'var(--status-blue-bg)'; border = 'var(--status-blue-text)'; labelColor = 'var(--status-blue-text)'; pulse = false;
+    colori = COLORI_STATO.occupato; pulse = false;
   } else {
-    bg = 'var(--card)'; border = 'var(--border)'; labelColor = 'var(--muted-foreground)'; pulse = false;
+    colori = COLORI_STATO.libero; pulse = false;
   }
 
   const handleClick = () => {
@@ -77,11 +80,9 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
     else onLibero(tavolo);
   };
 
-  // Stato leggibile per test E2E
   const statoTavolo = modalitaAssegna ? (occupato ? 'occupato' : 'libero')
     : haPiattiPronti ? 'piatti-pronti'
     : occupato ? 'occupato'
-    : haEtichetta ? 'prenotato'
     : 'libero';
 
   return (
@@ -90,40 +91,47 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
       data-tavolo-id={tavolo.id}
       data-tavolo-numero={tavolo.numero}
       data-stato={statoTavolo}
-      className={`rounded-xl p-2.5 flex flex-col gap-1 select-none transition-all active:scale-95${pulse ? ' animate-pulse' : ''}`}
+      className="rounded-xl select-none transition-all active:scale-95 relative flex flex-col justify-between p-2"
       style={{
-        background: bg,
-        border: `2px solid ${border}`,
-        cursor: caricando ? 'wait' : (modalitaAssegna && occupato) ? 'not-allowed' : 'pointer',
-        opacity: caricando ? 0.5 : (modalitaAssegna && occupato) ? 0.4 : 1,
-        minHeight: 72,
+        background:    colori.bg,
+        border:        `2px solid ${colori.border}`,
+        cursor:        caricando ? 'wait' : (modalitaAssegna && occupato) ? 'not-allowed' : 'pointer',
+        opacity:       caricando ? 0.5 : (modalitaAssegna && occupato) ? 0.4 : 1,
+        aspectRatio:   '1',
       }}
     >
-      <div className="flex justify-between items-center">
-        <span className="font-bold text-base" style={{ color: 'var(--foreground)' }}>T{tavolo.numero}</span>
-        <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>{tavolo.coperti}p</span>
-      </div>
+      {/* Pulse dot per piatti pronti */}
+      {pulse && (
+        <span className="absolute top-1.5 right-1.5 w-2 h-2 rounded-full animate-pulse"
+              style={{ background: '#EF9F27' }} />
+      )}
+
+      {/* Numero tavolo */}
+      <span className="font-bold text-sm leading-none" style={{ color: 'var(--foreground)' }}>
+        T{tavolo.numero}
+      </span>
+
+      {/* Etichetta (prenotazione) */}
       {tavolo.etichetta && (
-        <span className="text-xs font-semibold truncate" style={{ color: labelColor }}>
-          {tavolo.etichetta}{tavolo.prenotazione_ora && ` ${tavolo.prenotazione_ora.slice(0,5)}`}
+        <span className="text-xs font-medium truncate leading-none" style={{ color: colori.text }}>
+          {tavolo.etichetta}
         </span>
       )}
-      <div className="flex items-center gap-1">
+
+      {/* Badge piatti */}
+      <div className="flex items-center gap-1 mt-auto">
         {haPiattiPronti && (
-          <span className="text-xs px-1 rounded-full font-bold"
-                style={{ background: 'var(--status-amber-text)', color: '#fff' }}>
-            {tavolo.piatti_pronti} ✓
+          <span className="text-xs px-1 rounded font-bold leading-none py-0.5"
+                style={{ background: '#EF9F27', color: '#fff' }}>
+            {tavolo.piatti_pronti}✓
           </span>
         )}
         {!haPiattiPronti && haPiattiInCorso && (
-          <span className="text-xs px-1 rounded-full font-bold"
-                style={{ background: 'var(--status-red-text)', color: '#fff' }}>
+          <span className="text-xs px-1 rounded font-bold leading-none py-0.5"
+                style={{ background: colori.border, color: colori.text }}>
             {tavolo.piatti_in_attesa}
           </span>
         )}
-        <span className="text-xs" style={{ color: labelColor }}>
-          {caricando ? '...' : modalitaAssegna && !occupato ? 'Seleziona' : haPiattiPronti ? 'Pronti!' : occupato ? 'Occupato' : haEtichetta ? 'Prenotato' : 'Libero'}
-        </span>
       </div>
     </div>
   );
@@ -170,6 +178,46 @@ function BottomSheetTavoloLibero({ tavolo, onApriEVai, onSoloSegna, onAnnulla, l
   );
 }
 
+function BottomSheetTavoloOccupato({ tavolo, onVai, onLibera, onAnnulla, loadingLibera, puoLiberare }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.45)' }}
+         onClick={onAnnulla}>
+      <div className="w-full max-w-xl rounded-t-2xl p-5 flex flex-col gap-3"
+           style={{ background: 'var(--card)' }}
+           onClick={e => e.stopPropagation()}>
+        <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>
+          Tavolo {tavolo.numero} — occupato
+        </p>
+        <button
+          onClick={onVai}
+          className="w-full py-3.5 rounded-xl font-bold text-base"
+          style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+        >
+          Vai alla comanda →
+        </button>
+        {puoLiberare && (
+          <button
+            onClick={onLibera}
+            disabled={loadingLibera}
+            className="w-full py-3 rounded-xl font-medium text-sm"
+            style={{ background: '#FEF2F2', color: '#DC2626', border: '1px solid #FCA5A5', opacity: loadingLibera ? 0.6 : 1 }}
+          >
+            {loadingLibera ? 'Liberando...' : 'Libera tavolo'}
+          </button>
+        )}
+        <button
+          onClick={onAnnulla}
+          className="w-full py-2 text-sm"
+          style={{ color: 'var(--muted-foreground)' }}
+        >
+          Annulla
+        </button>
+      </div>
+    </div>
+  );
+}
+
 // ── Pagina principale ─────────────────────────────────────────────────────────
 
 const FORM_TAVOLO_VUOTO = { numero: '', coperti: 2 };
@@ -185,9 +233,13 @@ export default function SalaPage() {
   const [errore, setErrore]             = useState(null);
   const [aprendoId, setAprendoId]       = useState(null);
 
-  // Fix 1: tavolo libero selezionato → bottom sheet
-  const [tavoloInScelta, setTavoloInScelta] = useState(null);
-  const [loadingScelta, setLoadingScelta]   = useState(false);
+  // Tavolo libero selezionato → bottom sheet
+  const [tavoloInScelta, setTavoloInScelta]     = useState(null);
+  const [loadingScelta, setLoadingScelta]       = useState(false);
+
+  // Tavolo occupato selezionato → bottom sheet
+  const [tavoloOccupato, setTavoloOccupato]     = useState(null);
+  const [loadingLibera, setLoadingLibera]       = useState(false);
 
   // Fix 4: notifica banner
   const [notifica, setNotifica]    = useState(null);
@@ -363,9 +415,22 @@ export default function SalaPage() {
     }
   };
 
-  // Fix 2: useRouter invece di window.location.href
-  const vaiAComanda = (tavolo) => {
-    router.push(`/ristorante?comanda=${tavolo.comanda_id}`);
+  const apriBottomSheetOccupato = (tavolo) => {
+    setTavoloOccupato(tavolo);
+  };
+
+  const liberaTavolo = async () => {
+    if (!tavoloOccupato?.comanda_id) return;
+    setLoadingLibera(true);
+    try {
+      await api.delete(`/ristorante/comande/${tavoloOccupato.comanda_id}`);
+      setTavoloOccupato(null);
+      await carica();
+    } catch (err) {
+      alert(err.response?.data?.errore || err.message);
+    } finally {
+      setLoadingLibera(false);
+    }
   };
 
   const assegnaTavolo = async (tavolo) => {
@@ -572,7 +637,7 @@ export default function SalaPage() {
             )}
           </div>
         ) : (
-          <div className="grid grid-cols-4 gap-2">
+          <div className="grid gap-2" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(90px, 1fr))' }}>
             {tavoli.map(t => (
               <CardTavolo
                 key={t.id}
@@ -581,7 +646,7 @@ export default function SalaPage() {
                 aprendoId={aprendoId}
                 onAssegna={assegnaTavolo}
                 onLibero={handleLibero}
-                onOccupato={vaiAComanda}
+                onOccupato={apriBottomSheetOccupato}
               />
             ))}
           </div>
@@ -589,11 +654,18 @@ export default function SalaPage() {
 
         {/* Legenda */}
         {!prenotazioneInAssegna && tavoli.length > 0 && (
-          <div className="flex gap-3 text-xs flex-wrap justify-center" style={{ color: 'var(--muted-foreground)' }}>
-            <span>⬜ Libero</span>
-            <span style={{ color: 'var(--status-blue-text)' }}>🔵 Prenotato</span>
-            <span style={{ color: 'var(--status-green-text)' }}>🟩 Occupato</span>
-            <span style={{ color: 'var(--status-amber-text)' }}>🟨 In prep.</span>
+          <div className="flex gap-4 text-xs flex-wrap justify-center items-center">
+            {[
+              { ...COLORI_STATO.libero,   label: 'Libero' },
+              { ...COLORI_STATO.occupato, label: 'Occupato' },
+              { ...COLORI_STATO.pronto,   label: 'Pronto ✓' },
+            ].map(({ bg, border, text, label }) => (
+              <div key={label} className="flex items-center gap-1.5">
+                <span className="w-3.5 h-3.5 rounded-sm shrink-0"
+                      style={{ background: bg, border: `2px solid ${border}` }} />
+                <span style={{ color: text }}>{label}</span>
+              </div>
+            ))}
           </div>
         )}
 
@@ -645,7 +717,6 @@ export default function SalaPage() {
 
       </div>
 
-      {/* Fix 1: Bottom sheet tavolo libero */}
       {tavoloInScelta && (
         <BottomSheetTavoloLibero
           tavolo={tavoloInScelta}
@@ -653,6 +724,17 @@ export default function SalaPage() {
           onSoloSegna={soloSegnaOccupato}
           onAnnulla={() => setTavoloInScelta(null)}
           loading={loadingScelta}
+        />
+      )}
+
+      {tavoloOccupato && (
+        <BottomSheetTavoloOccupato
+          tavolo={tavoloOccupato}
+          onVai={() => { setTavoloOccupato(null); router.push(`/ristorante?comanda=${tavoloOccupato.comanda_id}`); }}
+          onLibera={liberaTavolo}
+          onAnnulla={() => setTavoloOccupato(null)}
+          loadingLibera={loadingLibera}
+          puoLiberare={!tavoloOccupato.ha_righe}
         />
       )}
     </AppShell>

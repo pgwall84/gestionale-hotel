@@ -327,18 +327,20 @@ function RistoranteInner() {
     }
   };
 
-  const chiudiComanda = async () => {
-    if (!confirm('Chiudere la comanda?')) return;
+  const [mostraChiusura, setMostraChiusura] = useState(false);
+
+  const chiudiConTipo = async ({ tipo, motivo, user_id, valore_costo }) => {
     setChiudendo(true);
     try {
-      await api.patch(`/ristorante/comande/${comandaSelezionata.id}/chiudi`);
+      await api.patch(`/ristorante/comande/${comandaSelezionata.id}/chiudi`, { tipo, motivo, user_id, valore_costo });
+      setMostraChiusura(false);
       setComandarSelezionata(null);
       setRighe([]);
       setMostraConto(false);
       setConto(null);
       router.push('/sala');
     } catch (err) {
-      alert(err.message);
+      alert(err.response?.data?.errore || err.message);
     } finally {
       setChiudendo(false);
     }
@@ -673,10 +675,10 @@ function RistoranteInner() {
                   Ospite hotel — conto incluso nella camera
                 </p>
               )}
-              <button onClick={chiudiComanda} disabled={chiudendo}
+              <button onClick={() => setMostraChiusura(true)} disabled={chiudendo}
                       className="w-full py-3 rounded-xl font-bold mt-1"
                       style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: chiudendo ? 0.6 : 1 }}>
-                {chiudendo ? 'Chiusura...' : 'Chiudi comanda'}
+                Chiudi comanda
               </button>
               <button onClick={() => setMostraConto(false)}
                       className="w-full py-2 rounded-xl text-sm"
@@ -752,7 +754,100 @@ function RistoranteInner() {
           </div>
         )}
       </div>
+
+      {mostraChiusura && (
+        <BottomSheetChiusuraComanda
+          onChiudi={chiudiConTipo}
+          onAnnulla={() => setMostraChiusura(false)}
+          loading={chiudendo}
+          isAdmin={isAdmin}
+        />
+      )}
     </AppShell>
+  );
+}
+
+function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
+  const [tipo, setTipo] = useState('normale');
+  const [motivo, setMotivo] = useState('');
+  const [userId, setUserId] = useState('');
+  const [valoreCosto, setValoreCosto] = useState('');
+
+  const valido = tipo === 'normale'
+    || (tipo === 'omaggio' && motivo.trim())
+    || (tipo === 'autoconsumo' && userId && valoreCosto);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.45)' }}
+         onClick={onAnnulla}>
+      <div className="w-full max-w-xl rounded-t-2xl p-5 flex flex-col gap-3"
+           style={{ background: 'var(--card)' }}
+           onClick={e => e.stopPropagation()}>
+        <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>Chiudi comanda</p>
+
+        {/* Tipo di chiusura */}
+        <div className="flex gap-2">
+          {['normale', ...(isAdmin ? ['omaggio', 'autoconsumo'] : [])].map(t => (
+            <button key={t}
+              onClick={() => setTipo(t)}
+              className="flex-1 py-2 rounded-xl text-sm font-medium capitalize"
+              style={{
+                background: tipo === t ? 'var(--primary)' : 'var(--muted)',
+                color: tipo === t ? 'var(--primary-foreground)' : 'var(--foreground)',
+              }}>
+              {t}
+            </button>
+          ))}
+        </div>
+
+        {tipo === 'omaggio' && (
+          <textarea
+            value={motivo}
+            onChange={e => setMotivo(e.target.value)}
+            placeholder="Motivo dell'omaggio…"
+            rows={2}
+            className="w-full rounded-xl p-3 text-sm"
+            style={{ background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)', resize: 'none' }}
+          />
+        )}
+
+        {tipo === 'autoconsumo' && (
+          <div className="flex flex-col gap-2">
+            <input
+              type="number"
+              value={userId}
+              onChange={e => setUserId(e.target.value)}
+              placeholder="ID consumatore (user_id)"
+              className="w-full rounded-xl p-3 text-sm"
+              style={{ background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+            />
+            <input
+              type="number"
+              step="0.01"
+              value={valoreCosto}
+              onChange={e => setValoreCosto(e.target.value)}
+              placeholder="Valore a costo (€)"
+              className="w-full rounded-xl p-3 text-sm"
+              style={{ background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
+            />
+          </div>
+        )}
+
+        <button
+          onClick={() => onChiudi({ tipo, motivo: motivo.trim(), user_id: userId ? parseInt(userId) : undefined, valore_costo: valoreCosto ? parseFloat(valoreCosto) : undefined })}
+          disabled={loading || !valido}
+          className="w-full py-3.5 rounded-xl font-bold text-base"
+          style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: (loading || !valido) ? 0.6 : 1 }}>
+          {loading ? 'Chiusura...' : 'Conferma chiusura'}
+        </button>
+        <button onClick={onAnnulla}
+                className="w-full py-2 text-sm"
+                style={{ color: 'var(--muted-foreground)' }}>
+          Annulla
+        </button>
+      </div>
+    </div>
   );
 }
 

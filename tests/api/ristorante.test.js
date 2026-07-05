@@ -118,6 +118,15 @@ afterAll(async () => {
     'DELETE FROM comande_righe WHERE comanda_id IN (SELECT id FROM comande WHERE tavolo_id = ANY($1::int[]))',
     [[tavoloId, tavoloId2].filter(Boolean)]
   );
+  // 1b. Storico omaggi e autoconsumi dei tavoli di test
+  await pulisci(
+    'DELETE FROM omaggi WHERE tavolo_id = ANY($1::int[])',
+    [[tavoloId, tavoloId2].filter(Boolean)]
+  );
+  await pulisci(
+    'DELETE FROM autoconsumi WHERE tavolo_id = ANY($1::int[])',
+    [[tavoloId, tavoloId2].filter(Boolean)]
+  );
   // 2. Comande dei tavoli di test
   await pulisci(
     'DELETE FROM comande WHERE tavolo_id = ANY($1::int[])',
@@ -1235,5 +1244,126 @@ describe('Allergeni — note_allergie_oggi e allergeni righe', () => {
     for (const t of r.body.tavoli) {
       expect(t.note_allergie_oggi).toBeNull();
     }
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// DELETE /api/ristorante/comande/:id — Libera tavolo (Fix 1)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('DELETE /api/ristorante/comande/:id', () => {
+  let delComandaId;
+
+  beforeEach(async () => {
+    await chiudiTutteComande();
+    delComandaId = await apriComandaTest();
+  });
+
+  afterEach(async () => {
+    await chiudiTutteComande();
+  });
+
+  it('88. 401 senza token', async () => {
+    const r = await request(app).delete(`/api/ristorante/comande/${delComandaId}`);
+    expect(r.status).toBe(401);
+  });
+
+  it('89. 403 cuoco non autorizzato', async () => {
+    const r = await request(app)
+      .delete(`/api/ristorante/comande/${delComandaId}`)
+      .set(authHeader.cuoco());
+    expect(r.status).toBe(403);
+  });
+
+  it('90. 200 comanda senza righe eliminata', async () => {
+    const r = await request(app)
+      .delete(`/api/ristorante/comande/${delComandaId}`)
+      .set(authHeader.cameriere());
+    expect(r.status).toBe(200);
+    expect(r.body.messaggio).toBeDefined();
+    // Comanda non esiste più
+    const check = await pool.query('SELECT id FROM comande WHERE id = $1', [delComandaId]);
+    expect(check.rows.length).toBe(0);
+  });
+
+  it('91. 400 comanda con righe non eliminabile', async () => {
+    // Aggiunge una riga
+    await request(app)
+      .post(`/api/ristorante/comande/${delComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piattoId, quantita: 1 });
+    const r = await request(app)
+      .delete(`/api/ristorante/comande/${delComandaId}`)
+      .set(authHeader.cameriere());
+    expect(r.status).toBe(400);
+    expect(r.body.errore).toMatch(/ordini/i);
+  });
+});
+
+// ══════════════════════════════════════════════════════════════════════════════
+// PATCH /api/ristorante/comande/:id/chiudi — tipo omaggio / autoconsumo (Fix 2)
+// ══════════════════════════════════════════════════════════════════════════════
+
+describe('PATCH /api/ristorante/comande/:id/chiudi — tipo speciale', () => {
+  let tipoComandaId;
+
+  // Apre comanda, aggiunge riga, la porta a servito
+  async function preparaComandaChiudibile() {
+    await chiudiTutteComande();
+    tipoComandaId = await apriComandaTest();
+    const rigaR = await request(app)
+      .post(`/api/ristorante/comande/${tipoComandaId}/righe`)
+      .set(authHeader.cameriere())
+      .send({ piatto_id: piattoId, quantita: 1 });
+    const rId = rigaR.body.riga?.id;
+    // Avanza: cuoco porta in_preparazione → pronto; cameriere porta pronto → servito
+    for (const stato of ['in_preparazione', 'pronto']) {
+      await request(app)
+        .patch(`/api/ristorante/comande/righe/${rId}/stato`)
+        .set(authHeader.cuoco())
+        .send({ stato });
+    }
+    await request(app)
+      .patch(`/api/ristorante/comande/righe/${rId}/stato`)
+      .set(authHeader.cameriere())
+      .send({ stato: 'servito' });
+  }
+
+  afterEach(async () => {
+    await chiudiTutteComande();
+    // Pulizia storico speciale
+    await pulisci('DELETE FROM omaggi WHERE comanda_id = $1', [tipoComandaId]);
+    await pulisci('DELETE FROM autoconsumi WHERE comanda_id = $1', [tipoComandaId]);
+  });
+
+  it('92. 403 cameriere non può chiudere come omaggio', async () => {
+    await preparaComandaChiudibile();
+    const r = await request(app)
+      .patch(`/api/ristorante/comande/${tipoComandaId}/chiudi`)
+      .set(authHeader.cameriere())
+      .send({ tipo: 'omaggio', motivo: 'Test' });
+    expect(r.status).toBe(403);
+  });
+
+  it('93. 400 omaggio senza motivo → errore', async () => {
+    await preparaComandaChiudibile();
+    const r = await request(app)
+      .patch(`/api/ristorante/comande/${tipoComandaId}/chiudi`)
+      .set(authHeader.titolare())
+      .send({ tipo: 'omaggio', motivo: '' });
+    expect(r.status).toBe(400);
+    expect(r.body.errore).toMatch(/motivo/i);
+  });
+
+  it('94. 200 titolare chiude come omaggio — record inserito in omaggi', async () => {
+    await preparaComandaChiudibile();
+    const r = await request(app)
+      .patch(`/api/ristorante/comande/${tipoComandaId}/chiudi`)
+      .set(authHeader.titolare())
+      .send({ tipo: 'omaggio', motivo: 'Cliente abituale' });
+    expect(r.status).toBe(200);
+    expect(r.body.comanda.tipo_chiusura).toBe('omaggio');
+    const storico = await pool.query('SELECT id FROM omaggi WHERE comanda_id = $1', [tipoComandaId]);
+    expect(storico.rows.length).toBe(1);
   });
 });

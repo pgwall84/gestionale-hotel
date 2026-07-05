@@ -87,9 +87,11 @@ router.patch('/comande/righe/:rigaId/tipo-speciale',
 );
 
 // ── Comande per ID — DOPO le route /righe ────────────────────────────────────
-router.get('/comande/:id',          verificaToken, ruoli(...TUTTI_OP), comande.dettaglioComanda);
-router.patch('/comande/:id/chiudi', verificaToken, ruoli(...CMD_W),    comande.chiudiComanda);
-router.post('/comande/:id/righe',   verificaToken, ruoli(...CMD_W),    comande.aggiungiRiga);
+router.get('/comande/:id',                verificaToken, ruoli(...TUTTI_OP), comande.dettaglioComanda);
+router.delete('/comande/:id',             verificaToken, ruoli(...CMD_W),    comande.eliminaComanda);
+router.patch('/comande/:id/chiudi',       verificaToken, ruoli(...CMD_W),    comande.chiudiComanda);
+router.post('/comande/:id/righe',         verificaToken, ruoli(...CMD_W),    comande.aggiungiRiga);
+router.post('/comande/:id/tutto-pronto',  verificaToken, ruoli(...CUCINA),   comande.tuttoProonto);
 
 // ── Conto ─────────────────────────────────────────────────────────────────────
 router.get('/conto/:id', verificaToken, ruoli(...CMD_W), comande.conto);
