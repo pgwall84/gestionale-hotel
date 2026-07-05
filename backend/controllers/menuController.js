@@ -15,12 +15,12 @@ async function listCategorie(req, res) {
 }
 
 async function creaCategoria(req, res) {
-  const { titolo, ordine } = req.body;
+  const { titolo, ordine, emoji } = req.body;
   if (!titolo) return res.status(400).json({ errore: 'titolo obbligatorio.' });
   try {
     const r = await pool.query(
-      'INSERT INTO menu_categorie (titolo, ordine) VALUES ($1, $2) RETURNING *',
-      [titolo, ordine ?? 0]
+      'INSERT INTO menu_categorie (titolo, ordine, emoji) VALUES ($1, $2, $3) RETURNING *',
+      [titolo, ordine ?? 0, emoji || '🍽️']
     );
     res.status(201).json({ categoria: r.rows[0] });
   } catch (err) {
@@ -30,11 +30,11 @@ async function creaCategoria(req, res) {
 }
 
 async function modificaCategoria(req, res) {
-  const { titolo, ordine, attivo } = req.body;
+  const { titolo, ordine, attivo, emoji } = req.body;
   try {
     const r = await pool.query(
-      'UPDATE menu_categorie SET titolo=COALESCE($1,titolo), ordine=COALESCE($2,ordine), attivo=COALESCE($3,attivo) WHERE id=$4 RETURNING *',
-      [titolo ?? null, ordine ?? null, attivo ?? null, req.params.id]
+      'UPDATE menu_categorie SET titolo=COALESCE($1,titolo), ordine=COALESCE($2,ordine), attivo=COALESCE($3,attivo), emoji=COALESCE($4,emoji) WHERE id=$5 RETURNING *',
+      [titolo ?? null, ordine ?? null, attivo ?? null, emoji ?? null, req.params.id]
     );
     res.json({ categoria: r.rows[0] });
   } catch (err) {

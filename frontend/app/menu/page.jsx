@@ -33,7 +33,7 @@ function Badge({ label, color = 'default' }) {
 
 // ── Modal categoria ────────────────────────────────────────────────────────────
 function ModalCategoria({ cat, onSalva, onChiudi }) {
-  const [form, setForm] = useState({ titolo: cat?.titolo || '', ordine: cat?.ordine ?? 0 });
+  const [form, setForm] = useState({ titolo: cat?.titolo || '', ordine: cat?.ordine ?? 0, emoji: cat?.emoji || '' });
   const [inv, setInv] = useState(false);
 
   async function salva(e) {
@@ -58,12 +58,24 @@ function ModalCategoria({ cat, onSalva, onChiudi }) {
                  onChange={e => setForm({ ...form, titolo: e.target.value })}
                  className="w-full px-3 rounded-lg text-sm outline-none"
                  style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
-          <div>
-            <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Ordine</label>
-            <input type="number" value={form.ordine} onChange={e => setForm({ ...form, ordine: Number(e.target.value) })}
-                   className="w-24 px-3 rounded-lg text-sm outline-none"
-                   style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
+          <div className="flex gap-3 items-end">
+            <div>
+              <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Emoji categoria</label>
+              <input type="text" placeholder="🍽️" value={form.emoji}
+                     onChange={e => setForm({ ...form, emoji: e.target.value })}
+                     className="px-3 rounded-lg text-lg outline-none text-center"
+                     style={{ width: 80, height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
+            </div>
+            <div>
+              <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Ordine</label>
+              <input type="number" value={form.ordine} onChange={e => setForm({ ...form, ordine: Number(e.target.value) })}
+                     className="w-24 px-3 rounded-lg text-sm outline-none"
+                     style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
+            </div>
           </div>
+          <p className="text-[10px]" style={{ color: 'var(--muted-foreground)', marginTop: -8 }}>
+            Inserisci una emoji per identificare la categoria nella vista cameriere
+          </p>
           <button type="submit" disabled={inv} className="py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60"
                   style={{ background: 'var(--hotel-navy)' }}>
             {inv ? 'Salvataggio...' : 'Salva'}

@@ -423,10 +423,10 @@ function RistoranteInner() {
                             background: attiva ? 'var(--surface-2, var(--muted))' : 'transparent',
                             color: attiva ? '#16344b' : 'var(--muted-foreground)',
                           }}>
-                    <span style={{ fontSize: 18 }}>{cat.icona || '🍽'}</span>
-                    <span style={{ fontSize: 10, textAlign: 'center', lineHeight: '1.2',
-                                   wordBreak: 'break-word', color: 'inherit' }}>
-                      {cat.nome}
+                    <span style={{ fontSize: 20 }}>{cat.emoji || '🍽️'}</span>
+                    <span style={{ fontSize: 10, fontWeight: 500, textAlign: 'center',
+                                   lineHeight: '1.2', wordBreak: 'break-word', color: 'inherit' }}>
+                      {cat.titolo}
                     </span>
                   </button>
                 );
