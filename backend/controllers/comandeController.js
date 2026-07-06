@@ -438,10 +438,11 @@ async function tuttoProonto(req, res) {
       return res.status(400).json({ errore: 'Comanda non aperta.' });
     }
 
-    await pool.query(
+    const righeAggiornate = await pool.query(
       `UPDATE comande_righe
        SET stato = 'pronto', timestamp_pronto = NOW()
-       WHERE comanda_id = $1 AND stato NOT IN ('pronto', 'servito')`,
+       WHERE comanda_id = $1 AND stato NOT IN ('pronto', 'servito')
+       RETURNING id`,
       [id]
     );
 
@@ -468,8 +469,22 @@ async function tuttoProonto(req, res) {
     const note_allergie_oggi = rAllergie.rows[0]?.note_allergie || null;
     broadcastCucina('stato_iniziale', { righe: r.rows, note_allergie_oggi });
 
-    // Notifica camerieri: un piatto per riga aggiornata
-    broadcastCameriere('riga_pronta', { comanda_id: parseInt(id) });
+    // Notifica camerieri: un evento riga_pronta per ogni piatto appena segnato pronto
+    // (tavolo_numero già disponibile dalla JOIN comande→tavoli della query sopra)
+    const idAggiornati = new Set(righeAggiornate.rows.map(riga => riga.id));
+    for (const riga of r.rows) {
+      if (idAggiornati.has(riga.id)) {
+        broadcastCameriere('riga_pronta', {
+          riga: {
+            id: riga.id,
+            piatto_nome: riga.piatto_nome,
+            tavolo_numero: riga.tavolo_numero,
+            comanda_id: riga.comanda_id,
+            quantita: riga.quantita,
+          },
+        });
+      }
+    }
 
     res.json({ messaggio: 'Tutti i piatti segnati come pronti.' });
   } catch (err) {

@@ -328,6 +328,15 @@ function RistoranteInner() {
   };
 
   const [mostraChiusura, setMostraChiusura] = useState(false);
+  const [menuAperto, setMenuAperto]         = useState(true);
+  const [segnandoServito, setSegnandoServito] = useState(false);
+
+  // Il menu parte aperto se la comanda è vuota, collassato se ha già righe.
+  // Ricalcolato solo quando cambia la comanda selezionata (non ad ogni refresh righe).
+  useEffect(() => {
+    if (comandaSelezionata) setMenuAperto(righe.length === 0);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [comandaSelezionata?.id]);
 
   const chiudiConTipo = async ({ tipo, motivo, user_id, valore_costo }) => {
     setChiudendo(true);
@@ -351,6 +360,26 @@ function RistoranteInner() {
     return seq[stato] || null;
   };
 
+  // Segna in batch tutte le righe 'pronto' come 'servito'.
+  // Usa allSettled: se una riga fallisce, le altre restano aggiornate.
+  const segnaTuttoServito = async () => {
+    const righePronte = righe.filter(r => r.stato === 'pronto');
+    if (righePronte.length === 0 || segnandoServito) return;
+    setSegnandoServito(true);
+    try {
+      const risultati = await Promise.allSettled(
+        righePronte.map(r => api.patch(`/ristorante/comande/righe/${r.id}/stato`, { stato: 'servito' }))
+      );
+      const falliti = risultati.filter(r => r.status === 'rejected').length;
+      await caricaDettaglio(comandaSelezionata.id);
+      if (falliti > 0) {
+        alert(`${falliti} piatti non aggiornati correttamente. Riprova.`);
+      }
+    } finally {
+      setSegnandoServito(false);
+    }
+  };
+
   // ── VISTA DETTAGLIO COMANDA ─────────────────────────────────────────────────
 
   if (comandaSelezionata) {
@@ -358,6 +387,7 @@ function RistoranteInner() {
       p.categoria_id === categoriaAttiva && p.disponibile
     );
     const haAllergie = !!(noteAllergie?.trim());
+    const haRighePronte = righe.some(r => r.stato === 'pronto');
 
     return (
       <AppShell>
@@ -375,10 +405,10 @@ function RistoranteInner() {
           </div>
         )}
 
-        <div className="flex flex-col h-[100dvh] overflow-hidden max-w-xl mx-auto">
+        <div className="flex flex-col max-w-xl mx-auto">
 
-          {/* ── ZONA 1: TOPBAR ─────────────────────────────────────────────── */}
-          <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2"
+          {/* ── ZONA 1: TOPBAR ─── sticky: -top-4/-top-6 compensano il padding di AppShell <main> ── */}
+          <div className="sticky -top-4 md:-top-6 z-10 shrink-0 px-3 py-2 flex items-center justify-between gap-2"
                style={{ background: 'var(--card)', borderBottom: '1px solid var(--border)' }}>
             <button onClick={() => router.push('/sala')}
                     className="text-sm shrink-0" style={{ color: 'var(--primary)' }}>
@@ -408,11 +438,73 @@ function RistoranteInner() {
             </div>
           </div>
 
-          {/* ── ZONA 2: SELEZIONE PIATTI ───────────────────────────────────── */}
-          <div className="flex flex-1 min-h-0 overflow-hidden">
+          {/* ── SEZIONE PIATTI ORDINATI (in cima, solo se la comanda ha righe) ── */}
+          {righe.length > 0 && (
+            <div className="shrink-0 overflow-y-auto"
+                 style={{
+                   maxHeight: '38vh',
+                   background: haRighePronte ? '#FAEEDA' : 'var(--card)',
+                   borderBottom: '2px solid var(--border)',
+                 }}>
+              <div className="px-3 py-2 flex items-center justify-between">
+                <p className="font-bold text-sm"
+                   style={{ color: haRighePronte ? '#633806' : 'var(--foreground)' }}>
+                  {haRighePronte ? '⚡ Da servire' : 'Piatti ordinati'} ({righe.length})
+                </p>
+                {haRighePronte && (
+                  <button onClick={segnaTuttoServito} disabled={segnandoServito}
+                          className="text-xs font-bold px-3 py-1.5 rounded-lg"
+                          style={{ background: '#16344b', color: '#fff', opacity: segnandoServito ? 0.5 : 1 }}>
+                    {segnandoServito ? '...' : 'Tutto servito'}
+                  </button>
+                )}
+              </div>
+              <div className="px-3 pb-2 flex flex-col gap-1">
+                {righe.map(r => {
+                  const s = STATI_RIGA[r.stato] || STATI_RIGA.in_attesa;
+                  return (
+                    <div key={r.id}
+                         data-testid="riga-comanda"
+                         data-riga-id={r.id}
+                         data-stato={r.stato}
+                         className="flex items-center gap-2 text-xs py-0.5">
+                      <span style={{ color: 'var(--foreground)', flex: 1 }} className="truncate">
+                        {r.quantita}× {r.piatto_nome}
+                        {r.note && <span className="italic ml-1" style={{ color: 'var(--muted-foreground)' }}>{r.note}</span>}
+                      </span>
+                      <span style={{ color: s.color }}>{s.label}</span>
+                      {prossimoStato(r.stato) && (
+                        <button onClick={() => aggiornaStatoRiga(r.id, prossimoStato(r.stato))}
+                                data-testid="btn-avanza-stato"
+                                data-stato-corrente={r.stato}
+                                data-stato-prossimo={prossimoStato(r.stato)}>
+                          <CheckCircle size={14} style={{ color: 'var(--status-green-text)' }} />
+                        </button>
+                      )}
+                      {r.stato === 'in_attesa' && isCamerier && (
+                        <button onClick={() => rimuoviRiga(r.id)}>
+                          <X size={14} style={{ color: 'var(--status-red-text)' }} />
+                        </button>
+                      )}
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          )}
+
+          {/* ── ZONA 2: AGGIUNGI PIATTI (collassabile — aperta di default se comanda vuota) ── */}
+          <button onClick={() => setMenuAperto(o => !o)}
+                  className="shrink-0 flex items-center justify-between px-3 py-2 text-sm font-semibold"
+                  style={{ background: 'var(--muted)', color: 'var(--foreground)', borderBottom: '1px solid var(--border)' }}>
+            <span>Aggiungi piatti</span>
+            <span>{menuAperto ? '▲' : '▼'}</span>
+          </button>
+          {menuAperto && (
+          <div className="flex">
 
             {/* Colonna categorie */}
-            <div className="shrink-0 overflow-y-auto flex flex-col"
+            <div className="shrink-0 flex flex-col"
                  style={{ width: 72, background: 'var(--card)', borderRight: '1px solid var(--border)' }}>
               {categorie.map(cat => {
                 const attiva = categoriaAttiva === cat.id;
@@ -507,9 +599,10 @@ function RistoranteInner() {
               )}
             </div>
           </div>
+          )}
 
-          {/* ── ZONA 3: CARRELLO ───────────────────────────────────────────── */}
-          <div className="shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
+          {/* ── ZONA 3: CARRELLO ─── sticky: -bottom-20/-bottom-6 compensano pb-20/pb-6 di AppShell <main> ── */}
+          <div className="sticky -bottom-20 md:-bottom-6 z-10 shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
 
             {/* Header carrello */}
             <div className="flex items-center justify-between px-3 py-2">
@@ -605,44 +698,6 @@ function RistoranteInner() {
                 {inviando ? 'Invio...' : 'Invia alla cucina'}
               </button>
             </div>
-
-            {/* Righe comanda attive (riepilogo sotto) */}
-            {righe.length > 0 && (
-              <div className="px-3 pb-2 flex flex-col gap-1">
-                <p className="text-xs font-semibold" style={{ color: 'var(--muted-foreground)' }}>
-                  In cucina ({righe.length})
-                </p>
-                {righe.map(r => {
-                  const s = STATI_RIGA[r.stato] || STATI_RIGA.in_attesa;
-                  return (
-                    <div key={r.id}
-                         data-testid="riga-comanda"
-                         data-riga-id={r.id}
-                         data-stato={r.stato}
-                         className="flex items-center gap-2 text-xs py-0.5">
-                      <span style={{ color: 'var(--foreground)', flex: 1 }} className="truncate">
-                        {r.quantita}× {r.piatto_nome}
-                        {r.note && <span className="italic ml-1" style={{ color: 'var(--muted-foreground)' }}>{r.note}</span>}
-                      </span>
-                      <span style={{ color: s.color, shrink: 0 }}>{s.label}</span>
-                      {prossimoStato(r.stato) && (
-                        <button onClick={() => aggiornaStatoRiga(r.id, prossimoStato(r.stato))}
-                                data-testid="btn-avanza-stato"
-                                data-stato-corrente={r.stato}
-                                data-stato-prossimo={prossimoStato(r.stato)}>
-                          <CheckCircle size={14} style={{ color: 'var(--status-green-text)' }} />
-                        </button>
-                      )}
-                      {r.stato === 'in_attesa' && isCamerier && (
-                        <button onClick={() => rimuoviRiga(r.id)}>
-                          <X size={14} style={{ color: 'var(--status-red-text)' }} />
-                        </button>
-                      )}
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
 
@@ -687,6 +742,15 @@ function RistoranteInner() {
               </button>
             </div>
           </div>
+        )}
+
+        {mostraChiusura && (
+          <BottomSheetChiusuraComanda
+            onChiudi={chiudiConTipo}
+            onAnnulla={() => setMostraChiusura(false)}
+            loading={chiudendo}
+            isAdmin={isAdmin}
+          />
         )}
       </AppShell>
     );
@@ -754,18 +818,12 @@ function RistoranteInner() {
           </div>
         )}
       </div>
-
-      {mostraChiusura && (
-        <BottomSheetChiusuraComanda
-          onChiudi={chiudiConTipo}
-          onAnnulla={() => setMostraChiusura(false)}
-          loading={chiudendo}
-          isAdmin={isAdmin}
-        />
-      )}
     </AppShell>
   );
 }
+
+// Etichette leggibili per i pulsanti tipo chiusura (il valore inviato al backend resta invariato)
+const ETICHETTE_TIPO = { normale: 'Chiudi e incassa', omaggio: 'Omaggio', autoconsumo: 'Autoconsumo' };
 
 function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
   const [tipo, setTipo] = useState('normale');
@@ -791,12 +849,12 @@ function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
           {['normale', ...(isAdmin ? ['omaggio', 'autoconsumo'] : [])].map(t => (
             <button key={t}
               onClick={() => setTipo(t)}
-              className="flex-1 py-2 rounded-xl text-sm font-medium capitalize"
+              className="flex-1 py-2 rounded-xl text-sm font-medium"
               style={{
                 background: tipo === t ? 'var(--primary)' : 'var(--muted)',
                 color: tipo === t ? 'var(--primary-foreground)' : 'var(--foreground)',
               }}>
-              {t}
+              {ETICHETTE_TIPO[t]}
             </button>
           ))}
         </div>

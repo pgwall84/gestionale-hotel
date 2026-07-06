@@ -123,13 +123,13 @@ function CardTavolo({ tavolo, modalitaAssegna, onAssegna, onLibero, onOccupato, 
         {haPiattiPronti && (
           <span className="text-xs px-1 rounded font-bold leading-none py-0.5"
                 style={{ background: '#EF9F27', color: '#fff' }}>
-            {tavolo.piatti_pronti}✓
+            {tavolo.piatti_pronti} pronti
           </span>
         )}
         {!haPiattiPronti && haPiattiInCorso && (
           <span className="text-xs px-1 rounded font-bold leading-none py-0.5"
                 style={{ background: colori.border, color: colori.text }}>
-            {tavolo.piatti_in_attesa}
+            {tavolo.piatti_in_attesa} in corso
           </span>
         )}
       </div>
@@ -178,7 +178,7 @@ function BottomSheetTavoloLibero({ tavolo, onApriEVai, onSoloSegna, onAnnulla, l
   );
 }
 
-function BottomSheetTavoloOccupato({ tavolo, onVai, onLibera, onAnnulla, loadingLibera, puoLiberare }) {
+function BottomSheetTavoloOccupato({ tavolo, onLibera, onAnnulla, loadingLibera, puoLiberare }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center"
          style={{ background: 'rgba(0,0,0,0.45)' }}
@@ -187,15 +187,8 @@ function BottomSheetTavoloOccupato({ tavolo, onVai, onLibera, onAnnulla, loading
            style={{ background: 'var(--card)' }}
            onClick={e => e.stopPropagation()}>
         <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>
-          Tavolo {tavolo.numero} — occupato
+          Tavolo {tavolo.numero} — occupato, comanda vuota
         </p>
-        <button
-          onClick={onVai}
-          className="w-full py-3.5 rounded-xl font-bold text-base"
-          style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
-        >
-          Vai alla comanda →
-        </button>
         {puoLiberare && (
           <button
             onClick={onLibera}
@@ -416,6 +409,12 @@ export default function SalaPage() {
   };
 
   const apriBottomSheetOccupato = (tavolo) => {
+    // Comanda con piatti già ordinati → vai direttamente, nessun tap intermedio
+    if (tavolo.ha_righe) {
+      router.push(`/ristorante?comanda=${tavolo.comanda_id}`);
+      return;
+    }
+    // Comanda vuota → bottom sheet con "Libera tavolo" / "Annulla"
     setTavoloOccupato(tavolo);
   };
 
@@ -730,7 +729,6 @@ export default function SalaPage() {
       {tavoloOccupato && (
         <BottomSheetTavoloOccupato
           tavolo={tavoloOccupato}
-          onVai={() => { setTavoloOccupato(null); router.push(`/ristorante?comanda=${tavoloOccupato.comanda_id}`); }}
           onLibera={liberaTavolo}
           onAnnulla={() => setTavoloOccupato(null)}
           loadingLibera={loadingLibera}
