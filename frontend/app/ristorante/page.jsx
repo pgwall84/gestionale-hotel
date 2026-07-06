@@ -856,20 +856,22 @@ function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
            onClick={e => e.stopPropagation()}>
         <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>Chiudi comanda</p>
 
-        {/* Tipo di chiusura */}
-        <div className="flex gap-2">
-          {['normale', ...(isAdmin ? ['omaggio', 'autoconsumo'] : [])].map(t => (
-            <button key={t}
-              onClick={() => setTipo(t)}
-              className="flex-1 py-2 rounded-xl text-sm font-medium"
-              style={{
-                background: tipo === t ? 'var(--primary)' : 'var(--muted)',
-                color: tipo === t ? 'var(--primary-foreground)' : 'var(--foreground)',
-              }}>
-              {ETICHETTE_TIPO[t]}
-            </button>
-          ))}
-        </div>
+        {/* Tipo di chiusura — solo per titolare/admin. Il cameriere chiude sempre normale, un tap solo. */}
+        {isAdmin && (
+          <div className="flex gap-2">
+            {['normale', 'omaggio', 'autoconsumo'].map(t => (
+              <button key={t}
+                onClick={() => setTipo(t)}
+                className="flex-1 py-2 rounded-xl text-sm font-medium"
+                style={{
+                  background: tipo === t ? 'var(--primary)' : 'var(--muted)',
+                  color: tipo === t ? 'var(--primary-foreground)' : 'var(--foreground)',
+                }}>
+                {ETICHETTE_TIPO[t]}
+              </button>
+            ))}
+          </div>
+        )}
 
         {tipo === 'omaggio' && (
           <textarea

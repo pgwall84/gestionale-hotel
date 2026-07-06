@@ -44,7 +44,7 @@ function AppShellInner({ children, titolo, sottotitolo, azioneLabel, onAzione, a
   if (!utente) return null;
 
   return (
-    <div className="flex h-screen overflow-hidden" style={{ background: 'var(--background)' }}>
+    <div className="flex h-[100dvh] overflow-hidden" style={{ background: 'var(--background)' }}>
 
       {/* Sidebar fissa a sinistra (desktop) / bottom nav (mobile) */}
       <Sidebar />
