@@ -178,7 +178,7 @@ function BottomSheetTavoloLibero({ tavolo, onApriEVai, onSoloSegna, onAnnulla, l
   );
 }
 
-function BottomSheetTavoloOccupato({ tavolo, onLibera, onAnnulla, loadingLibera, puoLiberare }) {
+function BottomSheetTavoloOccupato({ tavolo, onAggiungiPiatti, onLibera, onAnnulla, loadingLibera, puoLiberare }) {
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center"
          style={{ background: 'rgba(0,0,0,0.45)' }}
@@ -189,6 +189,13 @@ function BottomSheetTavoloOccupato({ tavolo, onLibera, onAnnulla, loadingLibera,
         <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>
           Tavolo {tavolo.numero} — occupato, comanda vuota
         </p>
+        <button
+          onClick={onAggiungiPiatti}
+          className="w-full py-3.5 rounded-xl font-bold text-base"
+          style={{ background: 'var(--primary)', color: 'var(--primary-foreground)' }}
+        >
+          Aggiungi piatti →
+        </button>
         {puoLiberare && (
           <button
             onClick={onLibera}
@@ -729,6 +736,10 @@ export default function SalaPage() {
       {tavoloOccupato && (
         <BottomSheetTavoloOccupato
           tavolo={tavoloOccupato}
+          onAggiungiPiatti={() => {
+            setTavoloOccupato(null);
+            router.push(`/ristorante?comanda=${tavoloOccupato.comanda_id}`);
+          }}
           onLibera={liberaTavolo}
           onAnnulla={() => setTavoloOccupato(null)}
           loadingLibera={loadingLibera}

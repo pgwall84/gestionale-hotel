@@ -405,10 +405,17 @@ function RistoranteInner() {
           </div>
         )}
 
-        <div className="flex flex-col max-w-xl mx-auto">
+        {/*
+          -mt-4/-mb-20 (md: -mt-6/-mb-6) annullano il padding verticale di
+          AppShell <main> (p-4 md:p-6 pb-20 md:pb-6 — vedi AppShell.tsx:66).
+          L'altezza recupera esattamente lo spazio annullato, così il box
+          combacia con lo spazio visibile reale senza scroll esterno.
+          Se il padding di AppShell cambia, questi valori vanno aggiornati insieme.
+        */}
+        <div className="flex flex-col overflow-hidden max-w-xl mx-auto -mt-4 md:-mt-6 -mb-20 md:-mb-6 h-[calc(100%+6rem)] md:h-[calc(100%+3rem)]">
 
-          {/* ── ZONA 1: TOPBAR ─── sticky: -top-4/-top-6 compensano il padding di AppShell <main> ── */}
-          <div className="sticky -top-4 md:-top-6 z-10 shrink-0 px-3 py-2 flex items-center justify-between gap-2"
+          {/* ── ZONA 1: TOPBAR ─────────────────────────────────────────────── */}
+          <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2"
                style={{ background: 'var(--card)', borderBottom: '1px solid var(--border)' }}>
             <button onClick={() => router.push('/sala')}
                     className="text-sm shrink-0" style={{ color: 'var(--primary)' }}>
@@ -438,11 +445,12 @@ function RistoranteInner() {
             </div>
           </div>
 
-          {/* ── SEZIONE PIATTI ORDINATI (in cima, solo se la comanda ha righe) ── */}
+          {/* ── ZONA 2: PIATTI ORDINATI + AGGIUNGI PIATTI (unica area scrollabile) ── */}
+          <div className="flex-1 overflow-y-auto">
+
+          {/* Piatti ordinati — in cima, solo se la comanda ha righe */}
           {righe.length > 0 && (
-            <div className="shrink-0 overflow-y-auto"
-                 style={{
-                   maxHeight: '38vh',
+            <div style={{
                    background: haRighePronte ? '#FAEEDA' : 'var(--card)',
                    borderBottom: '2px solid var(--border)',
                  }}>
@@ -493,9 +501,9 @@ function RistoranteInner() {
             </div>
           )}
 
-          {/* ── ZONA 2: AGGIUNGI PIATTI (collassabile — aperta di default se comanda vuota) ── */}
+          {/* Aggiungi piatti — collassabile, aperta di default se comanda vuota */}
           <button onClick={() => setMenuAperto(o => !o)}
-                  className="shrink-0 flex items-center justify-between px-3 py-2 text-sm font-semibold"
+                  className="w-full flex items-center justify-between px-3 py-2 text-sm font-semibold"
                   style={{ background: 'var(--muted)', color: 'var(--foreground)', borderBottom: '1px solid var(--border)' }}>
             <span>Aggiungi piatti</span>
             <span>{menuAperto ? '▲' : '▼'}</span>
@@ -600,9 +608,10 @@ function RistoranteInner() {
             </div>
           </div>
           )}
+          </div>
 
-          {/* ── ZONA 3: CARRELLO ─── sticky: -bottom-20/-bottom-6 compensano pb-20/pb-6 di AppShell <main> ── */}
-          <div className="sticky -bottom-20 md:-bottom-6 z-10 shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
+          {/* ── ZONA 3: CARRELLO ───────────────────────────────────────────── */}
+          <div className="shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
 
             {/* Header carrello */}
             <div className="flex items-center justify-between px-3 py-2">
@@ -823,7 +832,10 @@ function RistoranteInner() {
 }
 
 // Etichette leggibili per i pulsanti tipo chiusura (il valore inviato al backend resta invariato)
-const ETICHETTE_TIPO = { normale: 'Chiudi e incassa', omaggio: 'Omaggio', autoconsumo: 'Autoconsumo' };
+// ETICHETTE_TIPO: testo dei pulsanti selettore (scelta del tipo, non un'azione)
+const ETICHETTE_TIPO = { normale: 'Normale', omaggio: 'Omaggio', autoconsumo: 'Autoconsumo' };
+// ETICHETTE_AZIONE: testo del pulsante che esegue davvero la chiusura, dinamico sul tipo scelto
+const ETICHETTE_AZIONE = { normale: 'Chiudi e incassa', omaggio: 'Conferma omaggio', autoconsumo: 'Conferma autoconsumo' };
 
 function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
   const [tipo, setTipo] = useState('normale');
@@ -897,7 +909,7 @@ function BottomSheetChiusuraComanda({ onChiudi, onAnnulla, loading, isAdmin }) {
           disabled={loading || !valido}
           className="w-full py-3.5 rounded-xl font-bold text-base"
           style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: (loading || !valido) ? 0.6 : 1 }}>
-          {loading ? 'Chiusura...' : 'Conferma chiusura'}
+          {loading ? 'Chiusura...' : ETICHETTE_AZIONE[tipo]}
         </button>
         <button onClick={onAnnulla}
                 className="w-full py-2 text-sm"
