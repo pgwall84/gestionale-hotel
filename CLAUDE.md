@@ -1048,13 +1048,65 @@ Dopo ogni modulo completato:
 
 ---
 
-## 16. STATO AGGIORNATO AL 06/07/2026
+## 16. STATO AGGIORNATO AL 07/07/2026
 
-### Bug critico da risolvere PRIMA di 1.7
+### Modulo 1.6 — Ristorante: COMPLETATO ✅
 
-PATCH /api/ristorante/comande/:id/chiudi non funziona
-dopo introduzione tipo_chiusura (migration 011).
-Prima cosa da fare nella prossima sessione.
+Bug risolti in questa sessione:
+- PATCH /comande/:id/chiudi non funzionava dopo migration 011 (tipo_chiusura)
+  → causa reale: bug UI (bottom sheet chiusura renderizzato nella vista
+    lista comande invece che nel dettaglio), non un bug del backend/migration
+- Notifica "Tutto pronto" non arrivava al cameriere
+  → tuttoProonto (comandeController.js) trasmetteva un evento aggregato
+    senza dati; ora un evento riga_pronta per riga con payload completo
+    (piatto_nome, tavolo_numero) — stesso formato di aggiornaStatoRiga
+- Vista comanda cameriere: piatti già ordinati nascosti sotto il menu
+  → redesign: sezione "Piatti ordinati"/"⚡ Da servire" in cima, menu
+    "Aggiungi piatti" collassabile sotto, pulsante "Tutto servito" in batch
+    (Promise.allSettled)
+- Carrello/pulsante invio non raggiungibile senza scroll su telefono reale
+  → causa reale: AppShell.tsx usava h-screen (100vh), non dinamico su mobile
+    quando la barra indirizzi del browser si apre/chiude → risolto con
+    h-[100dvh]
+  → fix finale UX: pulsante "Invia (N)" spostato dal carrello al topbar
+    (pattern Toast POS / Square); il carrello in basso resta solo
+    header (contatore + totale) + righe piatti, più compatto
+- Tab "Normale" nel bottom sheet chiusura ambigua per il cameriere
+  (sembrava un pulsante d'azione invece che un selettore)
+  → selettore tipo (Normale/Omaggio/Autoconsumo) visibile solo per
+    titolare/admin; il cameriere vede un solo pulsante "Chiudi e incassa"
+- Tap su tavolo occupato richiedeva un passaggio intermedio inutile
+  → tavolo con righe: naviga direttamente alla comanda; tavolo occupato
+    con comanda vuota: bottom sheet con "Aggiungi piatti"/"Libera tavolo"
+- Badge piatti su mappa sala poco leggibili ("2✓"/"3")
+  → testo esplicito "N pronti"/"N in corso"
+
+### Note tecniche mobile
+
+- Windows Firewall: nessuna regola in entrata per node.exe di default —
+  serve una regola TCP 7000/7001 per essere raggiungibili da telefono in LAN
+  (il server ascolta già su 0.0.0.0, il binding non è il problema).
+- `h-screen` vs `h-[100dvh]`: su mobile la barra indirizzi del browser
+  mostra/nasconde dinamicamente, cambiando l'altezza visibile reale.
+  `100vh` non si aggiorna, `100dvh` sì — usare dvh per layout full-height
+  su pagine ad uso mobile (cameriere/cucina/sala). AppShell.tsx ora usa
+  h-[100dvh]; le pagine figlie possono restare su altezze percentuali
+  (100%) relative al `<main>` di AppShell, senza bisogno di dvh anche lì.
+- `allowedDevOrigins` in `frontend/next.config.ts`: Next.js aggiorna
+  automaticamente questo campo quando rileva richieste dev da un nuovo IP
+  LAN (es. il telefono cambia IP via DHCP) — è normale vederlo cambiare
+  tra sessioni, non è un errore.
+
+### Da verificare ancora (prima cosa da fare nella prossima sessione)
+
+Verificare visivamente su telefono reale che il pulsante "Invia (N)" nel
+topbar funzioni correttamente (tap, conteggio piatti, stato disabilitato
+a carrello vuoto) — finora verificato solo in browser di anteprima desktop
+a viewport fisso, non su un dispositivo reale con barra indirizzi dinamica.
+
+### Prossimo step
+
+Modulo 1.7 — Magazzino (prodotti, QR/barcode, movimenti, alert, fornitori, food cost)
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 

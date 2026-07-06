@@ -425,9 +425,6 @@ function RistoranteInner() {
               <p className="font-medium leading-none" style={{ fontSize: 14, color: 'var(--foreground)' }}>
                 Tavolo {comandaSelezionata.tavolo_numero}
               </p>
-              <p style={{ fontSize: 11, color: 'var(--muted-foreground)' }}>
-                {comandaSelezionata.coperti ? `${comandaSelezionata.coperti} coperti` : ''}
-              </p>
             </div>
             <div className="flex items-center gap-2 shrink-0">
               {haAllergie && (
@@ -441,6 +438,16 @@ function RistoranteInner() {
                       className="px-2 py-1 rounded-lg text-xs"
                       style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
                 Conto
+              </button>
+              <button onClick={inviaOrdine}
+                      disabled={itemsCarrello.length === 0 || inviando}
+                      style={{
+                        background: '#16344b', color: '#fff',
+                        borderRadius: 8, padding: '6px 12px',
+                        fontSize: 13, fontWeight: 600,
+                        opacity: itemsCarrello.length === 0 || inviando ? 0.4 : 1,
+                      }}>
+                {inviando ? 'Invio...' : `Invia (${itemsCarrello.reduce((s, it) => s + it.qty, 0)})`}
               </button>
             </div>
           </div>
@@ -689,24 +696,6 @@ function RistoranteInner() {
                 })}
               </div>
             )}
-
-            {/* Pulsante invia */}
-            <div className="px-3 py-2">
-              <button
-                onClick={inviaOrdine}
-                disabled={itemsCarrello.length === 0 || inviando}
-                className="w-full font-semibold rounded-lg"
-                style={{
-                  background: '#16344b',
-                  color: '#fff',
-                  padding: '11px',
-                  fontSize: 14,
-                  borderRadius: 8,
-                  opacity: itemsCarrello.length === 0 || inviando ? 0.4 : 1,
-                }}>
-                {inviando ? 'Invio...' : 'Invia alla cucina'}
-              </button>
-            </div>
           </div>
         </div>
 
