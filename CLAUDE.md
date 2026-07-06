@@ -1045,3 +1045,26 @@ Dopo ogni modulo completato:
 3. Segnala se sono emerse dipendenze non previste
 
 *Documento aggiornato alla Fase 1 — Step 0.5 da completare prima di procedere.*
+
+---
+
+## 16. STATO AGGIORNATO AL 06/07/2026
+
+### Bug critico da risolvere PRIMA di 1.7
+
+PATCH /api/ristorante/comande/:id/chiudi non funziona
+dopo introduzione tipo_chiusura (migration 011).
+Prima cosa da fare nella prossima sessione.
+
+### Istruzioni per sessioni efficienti (ridurre consumo token)
+
+1. Ogni sessione ha UN solo obiettivo
+2. Messaggi brevi e specifici — no conversazioni lunghe
+3. Specificare sempre il file e la funzione esatta
+4. Usare sempre il formato plan-then-execute
+5. A fine sessione: aggiornare CLAUDE.md + commit + push
+
+### Primo messaggio per la prossima sessione
+
+"Leggi CLAUDE.md. Obiettivo: [una cosa sola].
+Piano in 5 righe, attendi conferma."
