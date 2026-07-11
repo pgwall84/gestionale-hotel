@@ -1019,6 +1019,17 @@ Modulo 1.7 — Magazzino (evolutive, non ora):
   Generazione automatica bozza ordine fornitore quando prodotto sotto soglia
   Alert scadenze progressivi (7 giorni, 3 giorni, giorno stesso)
 
+Modulo 1.1 — HR Timbrature (evolutive, non ora):
+  Verifica geolocalizzazione al momento della timbratura — navigator.geolocation
+  verifica che il dipendente sia entro X metri dall'hotel (coordinata GPS hotel
+  da configurare nelle impostazioni). Blocca la timbratura se troppo lontano
+  con messaggio "Devi essere in hotel per timbrare".
+  Notifica email al titolare ad ogni timbratura (entrata e uscita) con nome
+  dipendente, tipo e orario. Usare Brevo o SendGrid (già pianificati per email
+  automatiche Fase 2). Da sviluppare insieme al modulo email/SMS (5.3).
+  Notifica push nativa (service worker) al titolare — da sviluppare insieme
+  al service worker per notifiche cameriere ristorante.
+
 Fase 2 (dopo go-live e test in produzione):
   2.1 Anagrafica ospiti completa + OCR documenti identità
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
