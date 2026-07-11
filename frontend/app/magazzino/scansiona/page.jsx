@@ -22,6 +22,32 @@ import { Camera, ArrowLeft } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import api from '@/lib/api';
 
+// Le foto scattate da fotocamera sono spesso enormi (3000x4000px) — Html5Qrcode
+// decodifica alla risoluzione originale (nessun resize interno), il che peggiora
+// il riconoscimento dei barcode 1D (EAN). Ridimensionare prima della decodifica
+// migliora sensibilmente la percentuale di successo.
+function ridimensionaImmagine(file, latoMax = 1600) {
+  return new Promise((resolve, reject) => {
+    const img = new Image();
+    const url = URL.createObjectURL(file);
+    img.onload = () => {
+      URL.revokeObjectURL(url);
+      const scala = Math.min(1, latoMax / Math.max(img.width, img.height));
+      const w = Math.round(img.width * scala);
+      const h = Math.round(img.height * scala);
+      const canvas = document.createElement('canvas');
+      canvas.width = w; canvas.height = h;
+      canvas.getContext('2d').drawImage(img, 0, 0, w, h);
+      canvas.toBlob(blob => {
+        if (!blob) { reject(new Error('Impossibile elaborare la foto.')); return; }
+        resolve(new File([blob], file.name || 'foto.jpg', { type: 'image/jpeg' }));
+      }, 'image/jpeg', 0.9);
+    };
+    img.onerror = () => { URL.revokeObjectURL(url); reject(new Error('Impossibile caricare la foto.')); };
+    img.src = url;
+  });
+}
+
 function ScansionaInner() {
   const searchParams = useSearchParams();
   const router = useRouter();
@@ -49,9 +75,15 @@ function ScansionaInner() {
   const [quantita, setQuantita] = useState('');
 
   const [salvando, setSalvando] = useState(false);
+  const [inserimentoManuale, setInserimentoManuale] = useState(false);
+  const [codiceManuale, setCodiceManuale] = useState('');
 
   // L'utente tocca il pulsante → si apre la fotocamera nativa del telefono (capture)
-  // → alla scelta della foto, la decodifichiamo lato client con scanFile (no streaming).
+  // → alla scelta della foto, la ridimensioniamo e la decodifichiamo lato client
+  // (no streaming). formatsToSupport limita la ricerca al tipo di codice atteso
+  // (più veloce e più accurato); useBarCodeDetectorIfSupported usa il decoder
+  // nativo del browser quando disponibile — più robusto dello zxing via JS puro
+  // su foto reali, soprattutto per barcode 1D (EAN).
   const onFotoScattata = async (e) => {
     const file = e.target.files?.[0];
     e.target.value = ''; // permette di riselezionare la stessa foto in caso di retry
@@ -60,13 +92,23 @@ function ScansionaInner() {
     setLeggendoFoto(true);
     setErroreLettura(null);
     try {
-      const { Html5Qrcode } = await import('html5-qrcode');
-      const scanner = new Html5Qrcode('qr-reader');
-      const decodedText = await scanner.scanFile(file, false);
+      const fileRidotto = await ridimensionaImmagine(file);
+      const { Html5Qrcode, Html5QrcodeSupportedFormats } = await import('html5-qrcode');
+      const formati = modo === 'barcode'
+        ? [Html5QrcodeSupportedFormats.EAN_13, Html5QrcodeSupportedFormats.EAN_8,
+           Html5QrcodeSupportedFormats.UPC_A, Html5QrcodeSupportedFormats.UPC_E,
+           Html5QrcodeSupportedFormats.CODE_128, Html5QrcodeSupportedFormats.CODE_39]
+        : [Html5QrcodeSupportedFormats.QR_CODE];
+      const scanner = new Html5Qrcode('qr-reader', {
+        formatsToSupport: formati,
+        useBarCodeDetectorIfSupported: true,
+        verbose: false,
+      });
+      const decodedText = await scanner.scanFile(fileRidotto, false);
       scanner.clear();
       setScansionato(decodedText);
     } catch (err) {
-      setErroreLettura('Nessun codice leggibile nella foto. Inquadra meglio il codice e riprova.');
+      setErroreLettura('Nessun codice leggibile nella foto. Avvicinati, illumina bene e inquadra il codice ben dritto e a fuoco, poi riprova — oppure inseriscilo a mano qui sotto.');
       console.error('Errore decodifica foto:', err);
     } finally {
       setLeggendoFoto(false);
@@ -175,6 +217,28 @@ function ScansionaInner() {
                 <button onClick={riprova} className="px-4 py-2 rounded-lg text-sm font-medium"
                         style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
                   Riprova
+                </button>
+              </div>
+            )}
+
+            {/* Rete di sicurezza: se la foto continua a non decodificare, inserimento manuale */}
+            {!inserimentoManuale ? (
+              <button onClick={() => setInserimentoManuale(true)}
+                      className="text-center text-xs underline"
+                      style={{ color: 'var(--muted-foreground)' }}>
+                Il codice non si legge? Inseriscilo a mano
+              </button>
+            ) : (
+              <div className="flex gap-2">
+                <input type="text" placeholder={modo === 'barcode' ? 'Codice EAN' : 'Codice QR'}
+                       value={codiceManuale} onChange={e => setCodiceManuale(e.target.value)}
+                       className="flex-1 rounded-xl p-3 text-sm"
+                       style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+                <button onClick={() => setScansionato(codiceManuale.trim())}
+                        disabled={!codiceManuale.trim()}
+                        className="px-4 rounded-xl text-sm font-medium"
+                        style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: codiceManuale.trim() ? 1 : 0.5 }}>
+                  Cerca
                 </button>
               </div>
             )}
