@@ -75,7 +75,6 @@ function ScansionaInner() {
   const [quantita, setQuantita] = useState('');
 
   const [salvando, setSalvando] = useState(false);
-  const [inserimentoManuale, setInserimentoManuale] = useState(false);
   const [codiceManuale, setCodiceManuale] = useState('');
 
   // L'utente tocca il pulsante → si apre la fotocamera nativa del telefono (capture)
@@ -221,27 +220,22 @@ function ScansionaInner() {
               </div>
             )}
 
-            {/* Rete di sicurezza: se la foto continua a non decodificare, inserimento manuale */}
-            {!inserimentoManuale ? (
-              <button onClick={() => setInserimentoManuale(true)}
-                      className="text-center text-xs underline"
-                      style={{ color: 'var(--muted-foreground)' }}>
-                Il codice non si legge? Inseriscilo a mano
+            {/* Sempre visibile: la lettura foto di barcode 1D non è affidabile su tutti i telefoni
+                (es. iPhone/Safari non ha il decoder nativo) — inserimento manuale come via primaria,
+                non nascosta dietro un click dopo un fallimento. */}
+            <p className="text-center text-xs" style={{ color: 'var(--muted-foreground)' }}>oppure</p>
+            <div className="flex gap-2">
+              <input type="text" placeholder={modo === 'barcode' ? 'Codice EAN (da tastiera)' : 'Codice QR (da tastiera)'}
+                     value={codiceManuale} onChange={e => setCodiceManuale(e.target.value)}
+                     className="flex-1 rounded-xl p-3 text-sm"
+                     style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+              <button onClick={() => setScansionato(codiceManuale.trim())}
+                      disabled={!codiceManuale.trim()}
+                      className="px-4 rounded-xl text-sm font-medium"
+                      style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: codiceManuale.trim() ? 1 : 0.5 }}>
+                Cerca
               </button>
-            ) : (
-              <div className="flex gap-2">
-                <input type="text" placeholder={modo === 'barcode' ? 'Codice EAN' : 'Codice QR'}
-                       value={codiceManuale} onChange={e => setCodiceManuale(e.target.value)}
-                       className="flex-1 rounded-xl p-3 text-sm"
-                       style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
-                <button onClick={() => setScansionato(codiceManuale.trim())}
-                        disabled={!codiceManuale.trim()}
-                        className="px-4 rounded-xl text-sm font-medium"
-                        style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: codiceManuale.trim() ? 1 : 0.5 }}>
-                  Cerca
-                </button>
-              </div>
-            )}
+            </div>
           </>
         )}
 
