@@ -6,10 +6,19 @@
 // Il flusso è autonomo: la scansione, il form e il salvataggio avvengono tutti qui,
 // poi si torna a /magazzino. Nessuna chiamata a API esterne dal frontend (Open Food
 // Facts passa sempre dal backend, vedi magazzinoController.lookupEan).
+//
+// Acquisizione: scatto foto singolo (input file + capture="environment"), NON
+// streaming live. Html5Qrcode.start() (video live) richiede getUserMedia, che i
+// browser bloccano fuori da un contesto sicuro (HTTPS o localhost) — sul telefono
+// in LAN si accede via IP semplice (http://192.168.x.x:7000), quindi lo streaming
+// live fallisce con "camera streaming not supported". Html5Qrcode.scanFile() invece
+// decodifica un'immagine già scattata (canvas, lato client) senza toccare la
+// fotocamera live: nessun requisito di contesto sicuro. Stesso approccio già usato
+// da ZTL per l'OCR targhe (foto nativa, non live).
 
 import { useState, useEffect, useRef, Suspense } from 'react';
 import { useSearchParams, useRouter } from 'next/navigation';
-import { Camera, X, ArrowLeft } from 'lucide-react';
+import { Camera, ArrowLeft } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import api from '@/lib/api';
 
@@ -18,11 +27,12 @@ function ScansionaInner() {
   const router = useRouter();
   const modo = searchParams.get('modo') === 'barcode' ? 'barcode' : 'qr';
 
-  const [scansionato, setScansionato] = useState(null); // codice letto dalla fotocamera
+  const [scansionato, setScansionato] = useState(null); // codice decodificato dalla foto
   const [cercando, setCercando] = useState(false);
   const [erroreScan, setErroreScan] = useState(null);
-  const [erroreCamera, setErroreCamera] = useState(null);
-  const scannerRef = useRef(null);
+  const [erroreLettura, setErroreLettura] = useState(null); // nessun codice trovato nella foto
+  const [leggendoFoto, setLeggendoFoto] = useState(false);
+  const fileInputRef = useRef(null);
 
   // Dati del prodotto trovato/lookup (per il form successivo)
   const [datiProdotto, setDatiProdotto] = useState(null); // { nome, categoria } da EAN
@@ -40,35 +50,28 @@ function ScansionaInner() {
 
   const [salvando, setSalvando] = useState(false);
 
-  // Avvia la fotocamera al mount, la ferma allo smontaggio o dopo una scansione riuscita.
-  useEffect(() => {
-    let attivo = true;
-    import('html5-qrcode').then(({ Html5Qrcode }) => {
-      if (!attivo) return;
+  // L'utente tocca il pulsante → si apre la fotocamera nativa del telefono (capture)
+  // → alla scelta della foto, la decodifichiamo lato client con scanFile (no streaming).
+  const onFotoScattata = async (e) => {
+    const file = e.target.files?.[0];
+    e.target.value = ''; // permette di riselezionare la stessa foto in caso di retry
+    if (!file) return;
+
+    setLeggendoFoto(true);
+    setErroreLettura(null);
+    try {
+      const { Html5Qrcode } = await import('html5-qrcode');
       const scanner = new Html5Qrcode('qr-reader');
-      scannerRef.current = scanner;
-      scanner.start(
-        { facingMode: 'environment' },
-        { fps: 10, qrbox: { width: 250, height: 250 } },
-        (decodedText) => {
-          scanner.stop().catch(() => {});
-          setScansionato(decodedText);
-        },
-        () => {} // errore di frame singolo (nessun codice nel fotogramma) — ignorato
-      ).catch((err) => {
-        setErroreCamera('Impossibile accedere alla fotocamera. Verifica i permessi del browser.');
-        console.error('Errore avvio fotocamera:', err);
-      });
-    });
-    return () => {
-      attivo = false;
-      if (scannerRef.current) {
-        scannerRef.current.stop().catch(() => {}).finally(() => {
-          scannerRef.current?.clear?.();
-        });
-      }
-    };
-  }, []);
+      const decodedText = await scanner.scanFile(file, false);
+      scanner.clear();
+      setScansionato(decodedText);
+    } catch (err) {
+      setErroreLettura('Nessun codice leggibile nella foto. Inquadra meglio il codice e riprova.');
+      console.error('Errore decodifica foto:', err);
+    } finally {
+      setLeggendoFoto(false);
+    }
+  };
 
   // Dopo la scansione, cerca il prodotto (EAN → Open Food Facts, QR → nostro DB)
   useEffect(() => {
@@ -123,8 +126,9 @@ function ScansionaInner() {
   };
 
   const riprova = () => {
-    setScansionato(null); setErroreScan(null); setProdottoQr(null); setDatiProdotto(null);
-    window.location.reload(); // il modo più semplice per riavviare pulito la fotocamera
+    setScansionato(null); setErroreScan(null); setErroreLettura(null);
+    setProdottoQr(null); setDatiProdotto(null);
+    fileInputRef.current?.click();
   };
 
   return (
@@ -139,17 +143,41 @@ function ScansionaInner() {
           </h1>
         </div>
 
+        {/* Contenitore richiesto da Html5Qrcode anche in modalità scanFile (non mostra video live) */}
+        <div id="qr-reader" style={{ display: 'none' }} />
+
+        <input
+          ref={fileInputRef}
+          type="file"
+          accept="image/*"
+          capture="environment"
+          onChange={onFotoScattata}
+          style={{ display: 'none' }}
+        />
+
         {!scansionato && (
           <>
-            {erroreCamera ? (
-              <p className="text-center py-8 text-sm" style={{ color: 'var(--status-red-text)' }}>{erroreCamera}</p>
-            ) : (
-              <div id="qr-reader" className="w-full rounded-xl overflow-hidden" style={{ background: '#000' }} />
-            )}
+            <button onClick={() => fileInputRef.current?.click()}
+                    disabled={leggendoFoto}
+                    className="w-full py-10 rounded-xl flex flex-col items-center gap-2"
+                    style={{ background: 'var(--muted)', border: '2px dashed var(--border)', opacity: leggendoFoto ? 0.6 : 1 }}>
+              <Camera size={32} style={{ color: 'var(--primary)' }} />
+              <span className="text-sm font-medium" style={{ color: 'var(--foreground)' }}>
+                {leggendoFoto ? 'Lettura in corso...' : `Scatta foto del ${modo === 'barcode' ? 'barcode' : 'QR'}`}
+              </span>
+            </button>
             <p className="text-center text-xs" style={{ color: 'var(--muted-foreground)' }}>
-              <Camera size={14} className="inline mr-1" />
-              Inquadra il {modo === 'barcode' ? 'barcode del prodotto' : 'QR sullo scaffale'}
+              Inquadra il {modo === 'barcode' ? 'barcode del prodotto' : 'QR sullo scaffale'} ben centrato e a fuoco
             </p>
+            {erroreLettura && (
+              <div className="flex flex-col gap-3 items-center py-2">
+                <p className="text-sm text-center" style={{ color: 'var(--status-red-text)' }}>{erroreLettura}</p>
+                <button onClick={riprova} className="px-4 py-2 rounded-lg text-sm font-medium"
+                        style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
+                  Riprova
+                </button>
+              </div>
+            )}
           </>
         )}
 
