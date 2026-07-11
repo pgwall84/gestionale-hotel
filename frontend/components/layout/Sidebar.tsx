@@ -35,7 +35,7 @@ const SEZIONI_MENU = [
       { href: '/cucina',       icona: ChefHat,         testo: 'Cucina',          ruoli: [...AT,'cuoco','portiere_notte'] },
       { href: '/prenotazioni', icona: CalendarDays,    testo: 'Prenotazioni',    ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/menu',         icona: BookOpen,        testo: 'Menu',            ruoli: [...AT,'cuoco','portiere_notte'] },
-      { href: '/magazzino',    icona: Package,         testo: 'Magazzino',       ruoli: [...AT,'portiere_notte'] },
+      { href: '/magazzino',    icona: Package,         testo: 'Magazzino',       ruoli: [...AT,'cuoco','receptionist','portiere_notte'] },
     ],
   },
   {
@@ -69,6 +69,7 @@ const VOCI_MOBILE: Record<string, { href: string; icona: React.ElementType; test
     { href: '/timbratura',  icona: Clock,        testo: 'Timbratura' },
     { href: '/prenotazioni',icona: CalendarDays, testo: 'Prenotaz.' },
     { href: '/ztl',         icona: Car,          testo: 'ZTL' },
+    { href: '/magazzino',   icona: Package,      testo: 'Magazz.' },
     { href: '/archivio',    icona: Archive,      testo: 'Archivio' },
   ],
   cameriere: [

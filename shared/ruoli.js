@@ -37,8 +37,9 @@ const PERMESSI_SEZIONI = {
   // HACCP — admin, titolare, cuoco
   haccp:          [A, T, K],
 
-  // Magazzino — admin, titolare, portiere notte (supervisione scorte notturna)
-  magazzino:      [A, T, P],
+  // Magazzino — lettura e movimenti: admin, titolare, cuoco, receptionist, portiere notte
+  // (anagrafica prodotti/fornitori e food cost restano riservati a admin/titolare — soloTitolare)
+  magazzino:      [A, T, K, R, P],
 
   // Ristorante — tutte le figure operative tranne cuoco (vede cucina)
   sala:           [A, T, C, P],

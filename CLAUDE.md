@@ -317,7 +317,7 @@ WEBHOOK_SECRET_ACUBE
 | 1.4 | ZTL — targhe 6 stati + import Excel + OCR | ✅ Fatto |
 | 1.5 | Menu — categorie, piatti, allergeni, QR pubblico, stampa | ✅ Fatto |
 | 1.6 | **Ristorante** — prenotazioni, sala, comande, monitor cucina SSE, conto | ✅ Fatto |
-| 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | Da fare |
+| 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | Da fare |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | Da fare |
 | 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | Da fare (parallelo) |
@@ -1014,6 +1014,11 @@ Modulo 1.6 — Ristorante (gap noti, da completare prima del go-live):
   Eliminazione configurazione sala: bloccare se ha tavoli associati,
   consentire solo se vuota. (eliminaConfigurazione non implementata)
 
+Modulo 1.7 — Magazzino (evolutive, non ora):
+  Storico prezzi per prodotto nel tempo
+  Generazione automatica bozza ordine fornitore quando prodotto sotto soglia
+  Alert scadenze progressivi (7 giorni, 3 giorni, giorno stesso)
+
 Fase 2 (dopo go-live e test in produzione):
   2.1 Anagrafica ospiti completa + OCR documenti identità
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
@@ -1122,9 +1127,44 @@ Migration 012 idempotente (DROP+ADD CONSTRAINT, CREATE TABLE IF NOT EXISTS con s
 esatto introspezionato dal DB reale), applicata in transazione, nessun dato toccato.
 120/120 test riverificati verdi dopo l'applicazione. Commit: aad6a36.
 
+### Modulo 1.7 — Magazzino: COMPLETATO ✅ (11/07/2026)
+
+- Migration 013: aggiunto costo_unitario a movimenti_magazzino (nullable —
+  serve solo per il calcolo food cost, non blocca la registrazione movimenti
+  senza prezzo). Tabelle fornitori/prodotti/movimenti_magazzino esistevano
+  già da 004_magazzino.sql, mai usate finora (0 righe).
+- Permessi corretti rispetto al piano iniziale: lettura + movimenti
+  (carico/scarico) = admin, titolare, cuoco, receptionist, portiere_notte
+  (sezione 'magazzino' in shared/ruoli.js, ampliata da [A,T,P] a [A,T,K,R,P]);
+  anagrafica prodotti/fornitori e food-cost = solo admin/titolare (soloTitolare).
+  Aggiornati anche frontend/lib/ruoli.js (copia) e Sidebar.tsx (voci di menu
+  desktop + bottom-nav mobile receptionist, entrambi hardcoded separatamente
+  da shared/ruoli.js — occhio a questa duplicazione se si aggiungono sezioni).
+- backend/controllers/magazzinoController.js: giacenza calcolata al volo
+  (SUM carichi − SUM scarichi via LEFT JOIN, non un campo salvato) — niente
+  disallineamenti da UPDATE dimenticati.
+- Nuova dipendenza: html5-qrcode (nessuna libreria esistente scansiona QR/
+  barcode da fotocamera; qrcode.react genera soltanto, tesseract.js fa OCR
+  testo per ZTL).
+- Pagina /magazzino/scansiona: due modalità (?modo=barcode per EAN → lookup
+  Open Food Facts server-side → crea prodotto; ?modo=qr per scaffale →
+  lookup prodotto → registra movimento), interamente autonoma, nessun
+  passaggio dati via query string tra pagine.
+- Pagina /magazzino-qr-stampa: stesso pattern di /menu-stampa (CSS print
+  inline, pulsante no-print, window.print()) — il QR codifica il codice
+  interno prodotti.qr_code, non un URL (letto solo dalla fotocamera
+  dell'app stessa, non pensato per essere aperto da un telefono qualsiasi).
+- 32 nuovi test (tests/api/magazzino.test.js) + 246 test totali verdi
+  (tutte le suite, ristorante incluso).
+- Verificato manualmente nel browser: creazione prodotto → registrazione
+  consegna → giacenza aggiornata in lista, funziona end-to-end.
+- Da verificare ancora: scansione fotocamera reale (html5-qrcode) su
+  telefono — richiede permesso getUserMedia, testato finora solo il resto
+  del flusso (form, salvataggio, giacenza), non lo scan vero e proprio.
+
 ### Prossimo step
 
-Modulo 1.7 — Magazzino (prodotti, QR/barcode, movimenti, alert, fornitori, food cost)
+Modulo 1.8 — Dashboard KPI reali (dati reali, alert aggregati, confronto anno precedente)
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 

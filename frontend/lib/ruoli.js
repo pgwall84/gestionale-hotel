@@ -24,7 +24,7 @@ export const PERMESSI_SEZIONI = {
   personale:      [A, T],
   utenti:         [A, T],
   haccp:          [A, T, K],
-  magazzino:      [A, T, P],
+  magazzino:      [A, T, K, R, P],
   sala:           [A, T, C, P],
   cucina:         [A, T, K, P],
   menu:           [A, T, K, P],
