@@ -1104,6 +1104,24 @@ topbar funzioni correttamente (tap, conteggio piatti, stato disabilitato
 a carrello vuoto) — finora verificato solo in browser di anteprima desktop
 a viewport fisso, non su un dispositivo reale con barra indirizzi dinamica.
 
+### Test batteria moduli 0.1–0.5, 1.1–1.5 (esclude 1.6 Ristorante) — 08/07/2026
+
+Generate ed eseguite batterie di test complete sui moduli già sviluppati (esclusi quelli
+di ristorante su cui erano già stati fatti controlli approfonditi):
+- Aggiunti tests/api/ospiti.test.js (Modulo 1.2 — note cucina, endpoint /api/hr/ospiti)
+  e tests/api/audit.test.js (Modulo 0.2 — audit log, endpoint /api/audit), mancanti finora.
+- Rieseguita l'intera suite: 7 test suite, 120 test verdi (auth, hr, camere, ztl, menu,
+  ospiti, audit).
+
+Bug di disallineamento trovati e corretti con **database/migrations/012_fix_ruoli_e_tabelle_audit.sql**:
+- Il CHECK constraint su users.ruolo in 001_users.sql non includeva 'admin' e
+  'portiere_notte' (solo 5 ruoli su 7 — shared/ruoli.js era già corretto con 7).
+- Le tabelle audit_log e refresh_tokens (usate dal codice, elencate in CLAUDE.md sez. 6)
+  non avevano nessuna migration dedicata — create in passato fuori dal flusso migration.
+Migration 012 idempotente (DROP+ADD CONSTRAINT, CREATE TABLE IF NOT EXISTS con schema
+esatto introspezionato dal DB reale), applicata in transazione, nessun dato toccato.
+120/120 test riverificati verdi dopo l'applicazione. Commit: aad6a36.
+
 ### Prossimo step
 
 Modulo 1.7 — Magazzino (prodotti, QR/barcode, movimenti, alert, fornitori, food cost)
