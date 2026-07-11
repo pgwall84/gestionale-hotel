@@ -412,7 +412,14 @@ function RistoranteInner() {
           combacia con lo spazio visibile reale senza scroll esterno.
           Se il padding di AppShell cambia, questi valori vanno aggiornati insieme.
         */}
-        <div className="flex flex-col overflow-hidden max-w-xl mx-auto -mt-4 md:-mt-6 -mb-20 md:-mb-6 h-[calc(100%+6rem)] md:h-[calc(100%+3rem)]">
+        {/*
+          -mt-4 (md:-mt-6) annulla solo il padding TOP di AppShell <main>.
+          Il padding BOTTOM (pb-20 mobile) NON va annullato: esiste apposta
+          per lasciare spazio alla bottom-nav fissa (Sidebar.tsx, fixed
+          bottom-0) — se lo si recupera, il carrello finisce sotto la nav
+          ed è coperto. L'altezza recupera solo lo spazio tolto in alto.
+        */}
+        <div className="flex flex-col overflow-hidden max-w-xl mx-auto -mt-4 md:-mt-6 h-[calc(100%+1rem)] md:h-[calc(100%+1.5rem)]">
 
           {/* ── ZONA 1: TOPBAR ─────────────────────────────────────────────── */}
           <div className="shrink-0 px-3 py-2 flex items-center justify-between gap-2"
@@ -452,7 +459,88 @@ function RistoranteInner() {
             </div>
           </div>
 
-          {/* ── ZONA 2: PIATTI ORDINATI + AGGIUNGI PIATTI (unica area scrollabile) ── */}
+          {/* ── ORDINE (carrello) — subito sotto la topbar, sempre visibile senza scroll ── */}
+          <div className="shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
+
+            {/* Header carrello */}
+            <div className="flex items-center justify-between px-3 py-2">
+              <div className="flex items-center gap-2">
+                <ShoppingCart size={16} style={{ color: 'var(--foreground)' }} />
+                <span className="font-medium text-sm" style={{ color: 'var(--foreground)' }}>Ordine</span>
+                {itemsCarrello.length > 0 && (
+                  <span className="text-xs font-bold px-1.5 py-0.5 rounded-full"
+                        style={{ background: 'var(--hotel-amber, #EF9F27)', color: '#fff' }}>
+                    {itemsCarrello.reduce((s, it) => s + it.qty, 0)}
+                  </span>
+                )}
+              </div>
+              {totaleCarrello > 0 && (
+                <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                  €{totaleCarrello.toFixed(2)}
+                </span>
+              )}
+            </div>
+
+            {/* Righe carrello */}
+            {itemsCarrello.length > 0 && (
+              <div className="overflow-y-auto px-3 flex flex-col gap-1.5"
+                   style={{ maxHeight: 180, paddingBottom: 4 }}>
+                {itemsCarrello.map(it => {
+                  const allerta = notaEAllerta(it.nota);
+                  return (
+                    <div key={it.piatto.id}>
+                      {/* Riga qty + nome */}
+                      <div className="flex items-center gap-1.5">
+                        <button onClick={() => cambiaQty(it.piatto.id, -1)}
+                                className="flex items-center justify-center rounded-full"
+                                style={{ width: 20, height: 20, border: '1px solid var(--border)',
+                                         color: 'var(--foreground)', fontSize: 14 }}>
+                          −
+                        </button>
+                        <span className="font-bold text-sm" style={{ color: 'var(--foreground)', minWidth: 16, textAlign: 'center' }}>
+                          {it.qty}
+                        </span>
+                        <button onClick={() => cambiaQty(it.piatto.id, +1)}
+                                className="flex items-center justify-center rounded-full"
+                                style={{ width: 20, height: 20, border: '1px solid var(--border)',
+                                         color: 'var(--foreground)', fontSize: 14 }}>
+                          +
+                        </button>
+                        <span className="flex-1 text-sm truncate" style={{ color: 'var(--foreground)' }}>
+                          {it.piatto.nome}
+                        </span>
+                        {it.piatto.prezzo && (
+                          <span className="text-xs shrink-0" style={{ color: 'var(--muted-foreground)' }}>
+                            €{(parseFloat(it.piatto.prezzo) * it.qty).toFixed(2)}
+                          </span>
+                        )}
+                      </div>
+                      {/* Nota */}
+                      <input
+                        type="text"
+                        placeholder="Nota (es. al dente, senza cipolla...)"
+                        value={it.nota}
+                        onChange={e => cambioNota(it.piatto.id, e.target.value)}
+                        className="w-full outline-none rounded px-2"
+                        style={{
+                          fontSize: 16,
+                          minHeight: 44,
+                          background: allerta ? '#FCEBEB' : 'var(--muted)',
+                          border: allerta ? '1px solid #F09595' : '1px solid var(--border)',
+                          color: allerta ? '#A32D2D' : 'var(--muted-foreground)',
+                          fontStyle: allerta ? 'normal' : 'italic',
+                          fontWeight: allerta ? 500 : 400,
+                          marginTop: 4,
+                        }}
+                      />
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* ── MENU: PIATTI ORDINATI + AGGIUNGI PIATTI (area scrollabile) ── */}
           <div className="flex-1 overflow-y-auto">
 
           {/* Piatti ordinati — in cima, solo se la comanda ha righe */}
@@ -615,87 +703,6 @@ function RistoranteInner() {
             </div>
           </div>
           )}
-          </div>
-
-          {/* ── ZONA 3: CARRELLO ───────────────────────────────────────────── */}
-          <div className="shrink-0" style={{ background: 'var(--card)', borderTop: '2px solid var(--border)' }}>
-
-            {/* Header carrello */}
-            <div className="flex items-center justify-between px-3 py-2">
-              <div className="flex items-center gap-2">
-                <ShoppingCart size={16} style={{ color: 'var(--foreground)' }} />
-                <span className="font-medium text-sm" style={{ color: 'var(--foreground)' }}>Ordine</span>
-                {itemsCarrello.length > 0 && (
-                  <span className="text-xs font-bold px-1.5 py-0.5 rounded-full"
-                        style={{ background: 'var(--hotel-amber, #EF9F27)', color: '#fff' }}>
-                    {itemsCarrello.reduce((s, it) => s + it.qty, 0)}
-                  </span>
-                )}
-              </div>
-              {totaleCarrello > 0 && (
-                <span className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-                  €{totaleCarrello.toFixed(2)}
-                </span>
-              )}
-            </div>
-
-            {/* Righe carrello */}
-            {itemsCarrello.length > 0 && (
-              <div className="overflow-y-auto px-3 flex flex-col gap-1.5"
-                   style={{ maxHeight: 180, paddingBottom: 4 }}>
-                {itemsCarrello.map(it => {
-                  const allerta = notaEAllerta(it.nota);
-                  return (
-                    <div key={it.piatto.id}>
-                      {/* Riga qty + nome */}
-                      <div className="flex items-center gap-1.5">
-                        <button onClick={() => cambiaQty(it.piatto.id, -1)}
-                                className="flex items-center justify-center rounded-full"
-                                style={{ width: 20, height: 20, border: '1px solid var(--border)',
-                                         color: 'var(--foreground)', fontSize: 14 }}>
-                          −
-                        </button>
-                        <span className="font-bold text-sm" style={{ color: 'var(--foreground)', minWidth: 16, textAlign: 'center' }}>
-                          {it.qty}
-                        </span>
-                        <button onClick={() => cambiaQty(it.piatto.id, +1)}
-                                className="flex items-center justify-center rounded-full"
-                                style={{ width: 20, height: 20, border: '1px solid var(--border)',
-                                         color: 'var(--foreground)', fontSize: 14 }}>
-                          +
-                        </button>
-                        <span className="flex-1 text-sm truncate" style={{ color: 'var(--foreground)' }}>
-                          {it.piatto.nome}
-                        </span>
-                        {it.piatto.prezzo && (
-                          <span className="text-xs shrink-0" style={{ color: 'var(--muted-foreground)' }}>
-                            €{(parseFloat(it.piatto.prezzo) * it.qty).toFixed(2)}
-                          </span>
-                        )}
-                      </div>
-                      {/* Nota */}
-                      <input
-                        type="text"
-                        placeholder="Nota (es. al dente, senza cipolla...)"
-                        value={it.nota}
-                        onChange={e => cambioNota(it.piatto.id, e.target.value)}
-                        className="w-full outline-none rounded px-2"
-                        style={{
-                          fontSize: 16,
-                          minHeight: 44,
-                          background: allerta ? '#FCEBEB' : 'var(--muted)',
-                          border: allerta ? '1px solid #F09595' : '1px solid var(--border)',
-                          color: allerta ? '#A32D2D' : 'var(--muted-foreground)',
-                          fontStyle: allerta ? 'normal' : 'italic',
-                          fontWeight: allerta ? 500 : 400,
-                          marginTop: 4,
-                        }}
-                      />
-                    </div>
-                  );
-                })}
-              </div>
-            )}
           </div>
         </div>
 
