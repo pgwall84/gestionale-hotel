@@ -63,7 +63,7 @@ const VOCI_MOBILE: Record<string, { href: string; icona: React.ElementType; test
     { href: '/personale', icona: Users,           testo: 'Personale' },
     { href: '/timbratura',icona: Clock,           testo: 'Timbr.' },
     { href: '/checklist', icona: ClipboardList,   testo: 'HACCP' },
-    { href: '/utenti',    icona: Settings,        testo: 'Impost.' },
+    { href: '/magazzino', icona: Package,         testo: 'Magazz.' },
   ],
   receptionist: [
     { href: '/timbratura',  icona: Clock,        testo: 'Timbratura' },
