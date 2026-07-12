@@ -3,7 +3,7 @@
 // Dashboard principale — KPI, alert, presenze (admin/titolare), camere oggi (cameriere).
 
 import { useState, useEffect } from 'react';
-import { BedDouble, UtensilsCrossed, Banknote, TrendingDown, LogIn, LogOut } from 'lucide-react';
+import { BedDouble, UtensilsCrossed, Banknote, TrendingDown, X } from 'lucide-react';
 import Link from 'next/link';
 import AppShell from '@/components/layout/AppShell';
 import KpiCard from '@/components/ui/KpiCard';
@@ -13,12 +13,76 @@ import DataTable from '@/components/ui/DataTable';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 
-const KPI_MOCK = [
-  { label: 'Camere occupate',    value: '14 / 20', sub: '70% di occupazione',    badge: 'Buona',  badgeVariante: 'green', Icona: BedDouble },
-  { label: 'Coperti stasera',    value: '38',      sub: '12 hotel · 26 esterni', badge: 'Aperto', badgeVariante: 'green', Icona: UtensilsCrossed },
-  { label: 'Incasso ristorante', value: '€ 1.240', sub: '+8% rispetto a ieri',   badge: '+8%',    badgeVariante: 'green', Icona: Banknote },
-  { label: 'Food cost %',        value: '32%',     sub: 'Obiettivo < 35%',       badge: 'Ottimo', badgeVariante: 'green', Icona: TrendingDown },
-];
+// Costruisce le card KPI a partire dai dati reali di /dashboard/kpi.
+// variazionePercentuale null → badge neutro "—" (nessun dato di confronto,
+// non un errore: capita spesso finché non c'è uno storico di almeno un anno).
+function badgeVariazione(pct) {
+  // null → nessun dato di confronto (comune finché non c'è uno storico di
+  // almeno un anno) — KpiCard non mostra badge se badge/badgeVariante mancano
+  if (pct === null || pct === undefined) return { badge: undefined, badgeVariante: undefined };
+  const segno = pct > 0 ? '+' : '';
+  return { badge: `${segno}${pct}%`, badgeVariante: pct >= 0 ? 'green' : 'red' };
+}
+
+function costruisciKpi(dati) {
+  if (!dati) return [];
+  const camerePct = badgeVariazione(dati.camere.variazionePercentuale);
+  const copertiPct = badgeVariazione(dati.coperti.variazionePercentuale);
+  const incassoPct = badgeVariazione(dati.incasso.variazionePercentuale);
+  return [
+    {
+      label: 'Camere — movimenti oggi', value: `${dati.camere.attuale} / ${dati.camere.totale}`,
+      sub: 'arrivi + partenze', Icona: BedDouble, ...camerePct,
+    },
+    {
+      label: 'Coperti oggi', value: String(dati.coperti.attuale),
+      sub: 'colazione + pranzo + cena', Icona: UtensilsCrossed, ...copertiPct,
+    },
+    {
+      label: 'Incasso oggi', value: `€ ${dati.incasso.attuale.toFixed(2)}`,
+      sub: 'contanti + POS', Icona: Banknote, ...incassoPct,
+    },
+    {
+      label: 'Food cost', value: dati.foodCost.euroPerCoperto !== null ? `€ ${dati.foodCost.euroPerCoperto.toFixed(2)}/coperto` : '—',
+      sub: 'mese corrente', Icona: TrendingDown,
+    },
+  ];
+}
+
+// Bottom sheet registrazione incasso giornaliero — solo admin/titolare
+function BottomSheetIncasso({ onSalva, onAnnulla, loading }) {
+  const [contanti, setContanti] = useState('');
+  const [pos, setPos] = useState('');
+  const [note, setNote] = useState('');
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.45)' }}
+         onClick={onAnnulla}>
+      <div className="w-full max-w-xl rounded-t-2xl p-5 flex flex-col gap-3"
+           style={{ background: 'var(--card)' }}
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>Registra incasso di oggi</p>
+          <button onClick={onAnnulla}><X size={20} style={{ color: 'var(--muted-foreground)' }} /></button>
+        </div>
+        <input type="number" step="0.01" placeholder="Contanti €" value={contanti} onChange={e => setContanti(e.target.value)}
+               className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+        <input type="number" step="0.01" placeholder="POS €" value={pos} onChange={e => setPos(e.target.value)}
+               className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+        <input type="text" placeholder="Note (opzionale)" value={note} onChange={e => setNote(e.target.value)}
+               className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+        <button
+          onClick={() => onSalva({ contanti: contanti || 0, pos: pos || 0, note })}
+          disabled={loading || (!contanti && !pos)}
+          className="w-full py-3.5 rounded-xl font-bold text-base"
+          style={{ background: 'var(--primary)', color: 'var(--primary-foreground)', opacity: (loading || (!contanti && !pos)) ? 0.6 : 1 }}>
+          {loading ? 'Salvataggio...' : 'Salva incasso'}
+        </button>
+      </div>
+    </div>
+  );
+}
 
 
 // Sezione camere inline per cameriere e portiere_notte
@@ -90,12 +154,24 @@ export default function PaginaHome() {
   const [loadingPresenze, setLoadingPresenze] = useState(true);
   const [alerts, setAlerts] = useState([]);
   const [loadingAlerts, setLoadingAlerts] = useState(true);
+  const [datiKpi, setDatiKpi] = useState(null);
+  const [loadingKpi, setLoadingKpi] = useState(true);
+  const [mostraIncasso, setMostraIncasso] = useState(false);
+  const [salvandoIncasso, setSalvandoIncasso] = useState(false);
 
   const isGestione  = ['admin', 'titolare'].includes(utente?.ruolo);
   const isCameriera = utente?.ruolo === 'cameriere';
   const isPortiere  = utente?.ruolo === 'portiere_notte';
 
+  const caricaKpi = () => {
+    api.get('/dashboard/kpi')
+      .then(r => setDatiKpi(r.data))
+      .catch(() => {})
+      .finally(() => setLoadingKpi(false));
+  };
+
   useEffect(() => {
+    caricaKpi();
     if (isGestione) {
       api.get('/hr/timbrature/presenti')
         .then(r => setPresenti(r.data.presenti))
@@ -110,6 +186,8 @@ export default function PaginaHome() {
       setLoadingAlerts(false);
     }
   }, [utente]);
+
+  const kpiCards = costruisciKpi(datiKpi);
 
   const oggi = new Date().toLocaleDateString('it-IT', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -135,13 +213,27 @@ export default function PaginaHome() {
 
       {/* KPI — incasso e food cost solo per gestione */}
       <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {KPI_MOCK
-          .filter(kpi => {
-            if (['Incasso ristorante', 'Food cost %'].includes(kpi.label)) return isGestione;
-            return true;
-          })
-          .map(kpi => <KpiCard key={kpi.label} {...kpi} />)}
+        {loadingKpi ? (
+          <p className="col-span-2 md:col-span-4 text-center py-4 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+            Caricamento KPI...
+          </p>
+        ) : (
+          kpiCards
+            .filter(k => {
+              if (['Incasso oggi', 'Food cost'].includes(k.label)) return isGestione;
+              return true;
+            })
+            .map(k => <KpiCard key={k.label} {...k} />)
+        )}
       </div>
+
+      {isGestione && (
+        <button onClick={() => setMostraIncasso(true)}
+                className="mb-6 px-4 py-2 rounded-lg text-sm font-medium"
+                style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
+          Registra incasso di oggi
+        </button>
+      )}
 
       {/* Griglia principale — layout dipende dal ruolo */}
       <div className={`grid grid-cols-1 gap-4 ${isGestione ? 'md:grid-cols-2' : ''}`}>
@@ -192,6 +284,25 @@ export default function PaginaHome() {
         {(isCameriera || isPortiere) && <RiepilogoCamere />}
       </div>
 
+      {mostraIncasso && (
+        <BottomSheetIncasso
+          loading={salvandoIncasso}
+          onAnnulla={() => setMostraIncasso(false)}
+          onSalva={async (dati) => {
+            setSalvandoIncasso(true);
+            try {
+              await api.post('/dashboard/incassi', dati);
+              setMostraIncasso(false);
+              setLoadingKpi(true);
+              caricaKpi();
+            } catch (err) {
+              alert(err.response?.data?.errore || err.message);
+            } finally {
+              setSalvandoIncasso(false);
+            }
+          }}
+        />
+      )}
     </AppShell>
   );
 }

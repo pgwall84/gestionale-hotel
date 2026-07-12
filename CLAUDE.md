@@ -318,7 +318,7 @@ WEBHOOK_SECRET_ACUBE
 | 1.5 | Menu — categorie, piatti, allergeni, QR pubblico, stampa | ✅ Fatto |
 | 1.6 | **Ristorante** — prenotazioni, sala, comande, monitor cucina SSE, conto | ✅ Fatto |
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
-| 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | Da fare |
+| 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | ✅ Fatto |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | Da fare |
 | 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | Da fare (parallelo) |
 | 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | Da fare (parallelo) |
@@ -1026,6 +1026,12 @@ Modulo 1.7 — Magazzino (evolutive, non ora):
     hardware invece della fotocamera del telefono, se il volume di scansioni
     giornaliere rende l'inserimento manuale troppo lento in pratica.
 
+Modulo 1.8 — Dashboard (evolutive, non ora):
+  Food cost % sul fatturato (spesa materie prime / ricavi ristorante × 100)
+  — evolutiva quando ci sarà storico incassi reale. Oggi mostra
+  correttamente €/coperto invece di una % che sarebbe fuorviante senza
+  incassi storici affidabili.
+
 Modulo 1.1 — HR Timbrature (evolutive, non ora):
   Verifica geolocalizzazione al momento della timbratura — navigator.geolocation
   verifica che il dipendente sia entro X metri dall'hotel (coordinata GPS hotel
@@ -1180,9 +1186,32 @@ esatto introspezionato dal DB reale), applicata in transazione, nessun dato tocc
   telefono — richiede permesso getUserMedia, testato finora solo il resto
   del flusso (form, salvataggio, giacenza), non lo scan vero e proprio.
 
+### Modulo 1.8 — Dashboard KPI reali: COMPLETATO ✅ (11/07/2026)
+
+- backend/controllers/dashboardController.js: kpi() (camere, coperti, incasso,
+  food cost con confronto anno precedente), registraIncasso() (upsert su
+  incassi_giornalieri, mancava completamente — nessun endpoint la scriveva),
+  alert() esteso con sezione magazzino (giacenza sotto soglia).
+- Camere: lo schema attuale (stato_camere) traccia solo arrivo/partenza/pronta
+  del giorno, non un calendario occupazione (quello è Fase 2.2, non ancora
+  costruito) — KPI rinominato onestamente "movimenti oggi" invece di fingere
+  un'occupazione % che i dati non supportano.
+- Food cost: mostrato in €/coperto (riusa la stessa logica di magazzino),
+  non una % sul fatturato — richiederebbe incassi storici affidabili,
+  oggi quasi sempre a 0. Nota aggiunta in Sezione 14 come evolutiva.
+- Coperti "hotel/esterni" del vecchio mock rimosso: ospiti_giornalieri non
+  traccia questa distinzione, mostrato solo il totale reale.
+- Rilevata (non corretta, per non spendere risorse extra) la stessa
+  migration drift già vista con audit_log/refresh_tokens: stato_camere è
+  usata dal modulo Camere ma non ha nessuna migration nei file versionati.
+- 10 nuovi test (tests/api/dashboard.test.js), 256 test totali verdi.
+- Non verificato nel browser in questa sessione (solo sintassi + test
+  backend) per contenere il consumo di risorse — da controllare visivamente
+  alla prossima occasione.
+
 ### Prossimo step
 
-Modulo 1.8 — Dashboard KPI reali (dati reali, alert aggregati, confronto anno precedente)
+Modulo 1.9 — Archivio documentale (upload foto, categorie, ricerca)
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 
