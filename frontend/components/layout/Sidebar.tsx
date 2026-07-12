@@ -43,7 +43,7 @@ const SEZIONI_MENU = [
     voci: [
       { href: '/ztl',      icona: Car,          testo: 'ZTL Targhe',   ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/checklist',icona: ClipboardList, testo: 'HACCP',        ruoli: [...AT,'cuoco'] },
-      { href: '/archivio', icona: Archive,       testo: 'Archivio',     ruoli: AT },
+      { href: '/archivio', icona: Archive,       testo: 'Archivio',     ruoli: [...AT,'receptionist'] },
       { href: '/utenti',   icona: Settings,      testo: 'Impostazioni', ruoli: AT },
     ],
   },

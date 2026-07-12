@@ -52,7 +52,7 @@ const PERMESSI_SEZIONI = {
   ztl:            [A, T, R, P],
 
   // Sezioni riservate ad admin e titolare
-  archivio:       [A, T],
+  archivio:       [A, T, R],
   dashboard:      [A, T],
   impostazioni:   [A, T],
 

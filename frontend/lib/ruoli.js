@@ -31,7 +31,7 @@ export const PERMESSI_SEZIONI = {
   ristorante:     [A, T, C, K, P],
   prenotazioni:   [A, T, R, P],
   ztl:            [A, T, R, P],
-  archivio:       [A, T],
+  archivio:       [A, T, R],
   dashboard:      [A, T],
   impostazioni:   [A, T],
   hr_timbratura:  TUTTI,

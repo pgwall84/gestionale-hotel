@@ -18,6 +18,7 @@ const menuRoutes      = require('./routes/menu');
 const dashboardRoutes    = require('./routes/dashboard');
 const ristoranteRoutes   = require('./routes/ristorante');
 const magazzinoRoutes    = require('./routes/magazzino');
+const archivioRoutes     = require('./routes/archivio');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -60,6 +61,7 @@ app.use('/api/menu',      menuRoutes);
 app.use('/api/dashboard',  dashboardRoutes);
 app.use('/api/ristorante', ristoranteRoutes);
 app.use('/api/magazzino', magazzinoRoutes);
+app.use('/api/archivio', archivioRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));

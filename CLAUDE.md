@@ -319,7 +319,7 @@ WEBHOOK_SECRET_ACUBE
 | 1.6 | **Ristorante** — prenotazioni, sala, comande, monitor cucina SSE, conto | ✅ Fatto |
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | ✅ Fatto |
-| 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | Da fare |
+| 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | ✅ Fatto |
 | 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | Da fare (parallelo) |
 | 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | Da fare (parallelo) |
 
@@ -1231,19 +1231,43 @@ esatto introspezionato dal DB reale), applicata in transazione, nessun dato tocc
 - 4 nuovi test in hr.test.js (geolocalizzazione persistita, data_decisione) —
   33/33 verdi isolati.
 
-**Trovato (non risolto, da approfondire a parte):** `camere.test.js` +
-`dashboard.test.js` eseguiti insieme causano un fallimento in
-`dashboard.test.js` (variazione anno precedente coperti restituisce 0 invece
-del valore atteso) — riproducibile anche `--runInBand`, quindi non è una
-race di worker paralleli ma probabile condivisione/esaurimento del pool
-PostgreSQL tra file di test. Non è una regressione di oggi: dashboard.test.js
-da solo passa 10/10, hr.test.js da solo passa 33/33. Da investigare in una
+**Trovato (non risolto, da approfondire a parte):** `dashboard.test.js`
+eseguito insieme a QUALSIASI altro file di test (confermato con
+`camere.test.js` e poi anche `archivio.test.js`+`hr.test.js` insieme) causa
+un fallimento in `dashboard.test.js` (variazione anno precedente coperti
+restituisce 0 invece del valore atteso) — riproducibile anche `--runInBand`,
+quindi non è una race di worker paralleli ma probabile condivisione/
+esaurimento del pool PostgreSQL tra file di test, specifico di
+dashboard.test.js. Non è una regressione: dashboard.test.js da solo passa
+10/10, tutti gli altri file passano puliti tra loro. Da investigare in una
 sessione dedicata prima di fidarsi ciecamente di `npm test` sulla suite
-completa.
+completa (eseguire dashboard.test.js separatamente nel frattempo).
+
+### Modulo 1.9 — Archivio documentale: COMPLETATO ✅ (11/07/2026)
+
+- Tabella archivio_documenti già esistente (006_archivio_incassi.sql),
+  nessuna migration necessaria.
+- backend/controllers/archivioController.js + routes/archivio.js: CRUD
+  completo (lista con filtri tipo/data, upload multer, download, elimina)
+  — stesso pattern di documentiController.js (documenti HR).
+- Cartella uploads/archivio/ creata a mano (multer non la crea da sola).
+- Permessi ampliati: sezione 'archivio' in shared/ruoli.js e
+  frontend/lib/ruoli.js da [admin,titolare] a [admin,titolare,receptionist]
+  — aggiornata anche Sidebar.tsx (voce hardcoded separata, stessa
+  duplicazione già nota per magazzino).
+- OneDrive Microsoft Graph: NON implementato ora, evolutiva futura dopo il
+  deploy (serve accesso Azure AD aziendale) — storage su disco VPS per ora.
+- 20 nuovi test (tests/api/archivio.test.js), 2 bug di test corretti in
+  fase di sviluppo: file fixture con estensione .txt rifiutato dal
+  fileFilter multer (solo pdf/jpeg/jpg/png), e un ECONNRESET quando si
+  allega un file multipart a una richiesta destinata a un 403 (il server
+  chiude la risposta prima di consumare lo stream) — risolto senza allegare
+  file nei test di solo permesso.
 
 ### Prossimo step
 
-Modulo 1.9 — Archivio documentale (upload foto, categorie, ricerca)
+Modulo 1.10 — Deploy VPS (Nginx, PM2, SSL, backup automatico) — parallelo
+Modulo 1.11 — Sito web (progetto indipendente, repository separato)
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 
