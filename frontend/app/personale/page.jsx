@@ -936,10 +936,41 @@ function TabFerie() {
   }
 
   const BADGE = { in_attesa: 'amber', approvata: 'green', rifiutata: 'red' };
-  const LABEL = { in_attesa: 'In attesa', approvata: 'Approvata', rifiutata: 'Rifiutata' };
+  const LABEL = { in_attesa: 'In attesa', approvata: 'Approvata ✓', rifiutata: 'Rifiutata ✗' };
+
+  // Ultime decisioni (dipendente): richieste degli ultimi 30 giorni, evidenzia
+  // con "Nuovo" quelle decise (approvata/rifiutata) nelle ultime 24 ore.
+  // Non è una notifica push (evolutiva futura) — il dipendente la vede al
+  // prossimo accesso, ma il riquadro è immediato e ben visibile in cima.
+  const ora = Date.now();
+  const ultimeDecisioni = richieste.filter(r => {
+    const riferimento = r.data_decisione || r.created_at;
+    return riferimento && (ora - new Date(riferimento).getTime()) <= 30 * 24 * 3600 * 1000;
+  });
 
   return (
     <div>
+      {utente?.ruolo !== 'titolare' && ultimeDecisioni.length > 0 && (
+        <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
+          <p className="text-[13px] font-medium mb-2" style={{ color: 'var(--foreground)' }}>Ultime decisioni</p>
+          <div className="flex flex-col gap-2">
+            {ultimeDecisioni.map(r => {
+              const nuovo = r.data_decisione && (ora - new Date(r.data_decisione).getTime()) <= 24 * 3600 * 1000;
+              return (
+                <div key={r.id} className="flex items-center justify-between px-3 py-2 rounded-lg"
+                     style={nuovo ? { border: '1.5px solid var(--hotel-amber)' } : { border: '0.5px solid var(--border)' }}>
+                  <span className="text-[12px] capitalize" style={{ color: 'var(--foreground)' }}>
+                    {r.tipo} — {fmtData(r.data_inizio)} → {fmtData(r.data_fine)}
+                    {nuovo && <span className="ml-2 text-[10px] font-bold" style={{ color: 'var(--hotel-amber)' }}>NUOVO</span>}
+                  </span>
+                  <StatusBadge status={BADGE[r.stato]} label={LABEL[r.stato]} />
+                </div>
+              );
+            })}
+          </div>
+        </div>
+      )}
+
       <div className="flex justify-between items-center mb-3">
         <p className="text-[13px]" style={{ color: 'var(--muted-foreground)' }}>
           {richieste.filter(r => r.stato === 'in_attesa').length} in attesa di approvazione

@@ -9,7 +9,7 @@ const pool = require('../config/db');
 // se è entrata o uscita in base all'ultima timbratura.
 async function timbra(req, res) {
   const userId = req.utente.id;
-  const { note } = req.body;
+  const { note, latitudine, longitudine, distanza_hotel } = req.body;
 
   try {
     // Cerca l'ultima timbratura dell'utente per determinare il tipo
@@ -23,9 +23,12 @@ async function timbra(req, res) {
       ? 'entrata'
       : 'uscita';
 
+    // Geolocalizzazione: opzionale, verificata lato client (vedi timbratura/page.jsx),
+    // qui salvata solo per audit — nessuna validazione server-side della posizione.
     const result = await pool.query(
-      'INSERT INTO timbrature (user_id, tipo, note) VALUES ($1, $2, $3) RETURNING *',
-      [userId, tipoCorrente, note || null]
+      `INSERT INTO timbrature (user_id, tipo, note, latitudine, longitudine, distanza_hotel)
+       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
+      [userId, tipoCorrente, note || null, latitudine ?? null, longitudine ?? null, distanza_hotel ?? null]
     );
 
     res.status(201).json({
@@ -193,6 +196,19 @@ async function reportMensile(req, res) {
       `SELECT id, nome, cognome, ruolo FROM users WHERE attivo = true ORDER BY cognome, nome`
     );
 
+    // 4. Turni del mese — per calcolare i ritardi (entrata reale vs ora_inizio turno)
+    const turni = await pool.query(
+      `SELECT user_id, data, ora_inizio FROM turni WHERE data BETWEEN $1 AND $2`,
+      [primoGiorno, ultimoGiorno]
+    );
+    const turnoPerUser = {}; // user_id → { 'YYYY-MM-DD' → 'HH:MM:SS' }
+    for (const t of turni.rows) {
+      const uid = t.user_id;
+      const giorno = new Date(t.data).toISOString().split('T')[0];
+      if (!turnoPerUser[uid]) turnoPerUser[uid] = {};
+      turnoPerUser[uid][giorno] = t.ora_inizio;
+    }
+
     // Calcola coppie entrata/uscita per giorno per utente
     const pairsPerUser = {}; // user_id → { 'YYYY-MM-DD' → [{entrata, uscita, ore}] }
     const timRows = timbrature.rows;
@@ -210,9 +226,10 @@ async function reportMensile(req, res) {
       } else if (r.tipo === 'uscita' && openEntry[uid]) {
         const ore = (ts - openEntry[uid]) / 3600000;
         pairsPerUser[uid][giorno].push({
-          entrata: openEntry[uid].toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
-          uscita:  ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
-          ore:     Math.round(ore * 100) / 100,
+          entrata:    openEntry[uid].toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+          entrataRaw: openEntry[uid],
+          uscita:     ts.toLocaleTimeString('it-IT', { hour: '2-digit', minute: '2-digit' }),
+          ore:        Math.round(ore * 100) / 100,
         });
         delete openEntry[uid];
       }
@@ -279,6 +296,21 @@ async function reportMensile(req, res) {
       const ferie = [...as].filter(d => asenzaTipo[`${u.id}_${d}`] === 'F').length;
       const malattia = [...as].filter(d => asenzaTipo[`${u.id}_${d}`] === 'M').length;
       const permessi = [...as].filter(d => asenzaTipo[`${u.id}_${d}`] === 'P').length;
+
+      // Ritardi: prima entrata del giorno oltre 15 min dopo l'ora_inizio del turno
+      // assegnato quel giorno. Nessun turno assegnato → giorno non conteggiato.
+      let ritardi = 0;
+      const turniUtente = turnoPerUser[u.id] || {};
+      for (const [giorno, oraInizio] of Object.entries(turniUtente)) {
+        const primaEntrata = giorni[giorno]?.[0]?.entrataRaw;
+        if (!primaEntrata) continue;
+        const [h, m] = oraInizio.split(':').map(Number);
+        const inizioTurno = new Date(primaEntrata);
+        inizioTurno.setHours(h, m, 0, 0);
+        const minutiRitardo = (primaEntrata - inizioTurno) / 60000;
+        if (minutiRitardo > 15) ritardi++;
+      }
+
       return {
         'Cognome':           u.cognome,
         'Nome':              u.nome,
@@ -288,6 +320,7 @@ async function reportMensile(req, res) {
         'Giorni ferie':      ferie,
         'Giorni malattia':   malattia,
         'Giorni permesso':   permessi,
+        'Ritardi':           ritardi,
       };
     });
 

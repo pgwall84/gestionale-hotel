@@ -10,6 +10,29 @@ import AppShell from '@/components/layout/AppShell';
 import StatusBadge from '@/components/ui/StatusBadge';
 import api from '@/lib/api';
 
+// Coordinate hotel e raggio massimo consentito per timbrare.
+const HOTEL_LAT = 44.0773612;
+const HOTEL_LON = 9.9127261;
+const RAGGIO_MAX_METRI = 50;
+
+// Formula Haversine — distanza in metri tra due coordinate GPS (funzione pura, no librerie).
+function distanzaMetri(lat1, lon1, lat2, lon2) {
+  const R = 6371000;
+  const toRad = deg => (deg * Math.PI) / 180;
+  const dLat = toRad(lat2 - lat1);
+  const dLon = toRad(lon2 - lon1);
+  const a = Math.sin(dLat / 2) ** 2 + Math.cos(toRad(lat1)) * Math.cos(toRad(lat2)) * Math.sin(dLon / 2) ** 2;
+  return R * 2 * Math.atan2(Math.sqrt(a), Math.sqrt(1 - a));
+}
+
+// Promisifica getCurrentPosition per poterla usare con await.
+function ottieniPosizione() {
+  return new Promise((resolve, reject) => {
+    if (!navigator.geolocation) { reject(new Error('no-geolocation')); return; }
+    navigator.geolocation.getCurrentPosition(resolve, reject, { enableHighAccuracy: true, timeout: 10000 });
+  });
+}
+
 export default function PaginaTimbratura() {
   const [stato, setStato] = useState(null);
   const [storico, setStorico] = useState([]);
@@ -49,8 +72,32 @@ export default function PaginaTimbratura() {
   async function handleTimbra() {
     setInvio(true);
     setMessaggio(null);
+
+    let geo = {};
     try {
-      const res = await api.post('/hr/timbrature');
+      const posizione = await ottieniPosizione();
+      const distanza = Math.round(distanzaMetri(
+        posizione.coords.latitude, posizione.coords.longitude, HOTEL_LAT, HOTEL_LON
+      ));
+      if (distanza > RAGGIO_MAX_METRI) {
+        setMessaggio({ testo: `Devi essere in hotel per timbrare. Sei a ${distanza} metri dalla struttura.`, tipo: 'red' });
+        setInvio(false);
+        return;
+      }
+      geo = { latitudine: posizione.coords.latitude, longitudine: posizione.coords.longitude, distanza_hotel: distanza };
+    } catch (err) {
+      if (err?.code === 1 /* PERMISSION_DENIED */) {
+        setMessaggio({ testo: 'Permesso posizione negato. Contatta il titolare.', tipo: 'red' });
+        setInvio(false);
+        return;
+      }
+      // Posizione non disponibile per altri motivi (timeout, GPS assente, browser non supportato):
+      // non blocchiamo la timbratura, la registriamo senza coordinate.
+      geo = {};
+    }
+
+    try {
+      const res = await api.post('/hr/timbrature', geo);
       setMessaggio({ testo: res.data.messaggio, tipo: 'green' });
       await caricaDati();
     } catch (err) {

@@ -1209,6 +1209,38 @@ esatto introspezionato dal DB reale), applicata in transazione, nessun dato tocc
   backend) per contenere il consumo di risorse — da controllare visivamente
   alla prossima occasione.
 
+### Modulo HR — 4 miglioramenti: COMPLETATO ✅ (11/07/2026)
+
+- Migration 014 (geolocalizzazione timbrature) + 015 (data_decisione assenze),
+  applicate.
+- timbra(): salva lat/lon/distanza opzionali (fidandosi della verifica lato
+  client, nessuna validazione server-side della posizione).
+- reportMensile(): aggiunta colonna Ritardi (entrata reale vs turno.ora_inizio,
+  soglia 15 min) — riusa l'endpoint/pulsante Excel già esistenti (scoperto in
+  fase di piano: Miglioramento 4 era già quasi completo, mancava solo questo).
+- Griglia turni settimanale (Miglioramento 2): **era già completamente
+  implementata** in TabTurni (personale/page.jsx) — righe/colonne, colori
+  per tipo, click crea/modifica, navigazione settimana. Nessuna modifica.
+- timbratura/page.jsx: Haversine pura + blocco raggio 50m dalle coordinate
+  hotel, gestione permesso negato; se il GPS è indisponibile per altri motivi
+  (timeout, browser non supportato) la timbratura NON viene bloccata —
+  scelta deliberata per non impedire mai la timbratura per un problema
+  tecnico transitorio.
+- Riquadro "Ultime decisioni" in TabFerie (dipendente): ultimi 30 giorni,
+  badge "NUOVO" se decisa nelle ultime 24h.
+- 4 nuovi test in hr.test.js (geolocalizzazione persistita, data_decisione) —
+  33/33 verdi isolati.
+
+**Trovato (non risolto, da approfondire a parte):** `camere.test.js` +
+`dashboard.test.js` eseguiti insieme causano un fallimento in
+`dashboard.test.js` (variazione anno precedente coperti restituisce 0 invece
+del valore atteso) — riproducibile anche `--runInBand`, quindi non è una
+race di worker paralleli ma probabile condivisione/esaurimento del pool
+PostgreSQL tra file di test. Non è una regressione di oggi: dashboard.test.js
+da solo passa 10/10, hr.test.js da solo passa 33/33. Da investigare in una
+sessione dedicata prima di fidarsi ciecamente di `npm test` sulla suite
+completa.
+
 ### Prossimo step
 
 Modulo 1.9 — Archivio documentale (upload foto, categorie, ricerca)

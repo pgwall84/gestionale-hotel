@@ -58,7 +58,7 @@ async function aggiornaStato(req, res) {
   }
   try {
     const result = await pool.query(
-      `UPDATE richieste_assenza SET stato=$1 WHERE id=$2
+      `UPDATE richieste_assenza SET stato=$1, data_decisione=NOW() WHERE id=$2
        RETURNING *, (SELECT nome || ' ' || cognome FROM users WHERE id = richieste_assenza.user_id) AS dipendente`,
       [stato, id]
     );

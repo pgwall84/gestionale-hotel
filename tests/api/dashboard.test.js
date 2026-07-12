@@ -7,7 +7,7 @@ const app     = require('../../backend/app');
 const { authHeader } = require('../helpers/auth');
 const { getPool, chiudiPool } = require('../helpers/db');
 
-const DATA_TEST        = '2099-06-15';
+const DATA_TEST        = '2099-11-23';
 const DATA_ANNO_SCORSO = '2098-06-15';
 const PREFISSO = 'ZZZ_TEST_';
 

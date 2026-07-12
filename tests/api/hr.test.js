@@ -235,6 +235,41 @@ describe('PATCH /api/hr/assenze/:id/stato', () => {
     expect(res.status).toBe(200);
     expect(res.body.richiesta.stato).toBe('approvata');
   });
+
+  test('approvazione imposta data_decisione (per il riquadro "Ultime decisioni")', async () => {
+    const res = await request(app)
+      .patch(`/api/hr/assenze/${idRichiesta}/stato`)
+      .set(authHeader.titolare())
+      .send({ stato: 'rifiutata' });
+    expect(res.status).toBe(200);
+    expect(res.body.richiesta.data_decisione).toBeTruthy();
+    const secondiFa = (Date.now() - new Date(res.body.richiesta.data_decisione).getTime()) / 1000;
+    expect(secondiFa).toBeLessThan(10);
+  });
+});
+
+// ─── Geolocalizzazione timbratura (Miglioramento HR 1) ────────────────────────
+
+describe('POST /api/hr/timbrature — geolocalizzazione', () => {
+  test('con lat/lon/distanza → salvati sulla timbratura', async () => {
+    const res = await request(app)
+      .post('/api/hr/timbrature')
+      .set({ Authorization: `Bearer ${tokenUtente}` })
+      .send({ latitudine: 44.0773612, longitudine: 9.9127261, distanza_hotel: 12 });
+    expect(res.status).toBe(201);
+    expect(parseFloat(res.body.timbratura.latitudine)).toBeCloseTo(44.0773612, 5);
+    expect(parseFloat(res.body.timbratura.longitudine)).toBeCloseTo(9.9127261, 5);
+    expect(res.body.timbratura.distanza_hotel).toBe(12);
+  });
+
+  test('senza campi di geolocalizzazione → funziona comunque (opzionali)', async () => {
+    const res = await request(app)
+      .post('/api/hr/timbrature')
+      .set({ Authorization: `Bearer ${tokenUtente}` })
+      .send({});
+    expect(res.status).toBe(201);
+    expect(res.body.timbratura.latitudine).toBeNull();
+  });
 });
 
 // ─── GET /api/hr/comunicazioni ────────────────────────────────────────────────
