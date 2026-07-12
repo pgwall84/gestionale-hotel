@@ -1018,6 +1018,13 @@ Modulo 1.7 — Magazzino (evolutive, non ora):
   Storico prezzi per prodotto nel tempo
   Generazione automatica bozza ordine fornitore quando prodotto sotto soglia
   Alert scadenze progressivi (7 giorni, 3 giorni, giorno stesso)
+  DA APPROFONDIRE — scansione barcode/QR poco affidabile da foto telefono
+    (testato su Samsung + Chrome, stesso errore "no MultiFormat Readers"
+    anche con BarcodeDetector nativo attivato e immagine ridimensionata).
+    Per ora: inserimento manuale del codice come via primaria (già in
+    produzione). Da valutare in futuro: pistola/lettore barcode dedicato
+    hardware invece della fotocamera del telefono, se il volume di scansioni
+    giornaliere rende l'inserimento manuale troppo lento in pratica.
 
 Modulo 1.1 — HR Timbrature (evolutive, non ora):
   Verifica geolocalizzazione al momento della timbratura — navigator.geolocation
