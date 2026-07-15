@@ -320,8 +320,8 @@ WEBHOOK_SECRET_ACUBE
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | ✅ Fatto |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | ✅ Fatto |
-| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | Da fare (parallelo) |
-| 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | Da fare (parallelo) |
+| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | 🔜 Prossimo step |
+| 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | ✅ Fatto (repo separato `sito-hotel`) |
 
 **Nota 1.6 completato:** Fix trovati dai test: validazione transizioni stati comanda,
 blocco chiusura con piatti non serviti, check duplicato tavolo,
@@ -365,7 +365,11 @@ blocco eliminazione tavolo occupato, distinzione 404/400 rimozione riga.
   Nuovo endpoint GET /api/ristorante/sala/stream. 79 test verdi.
 
 **Nota 1.6 → 1.7:** Il ristorante va prima del magazzino perché le comande alimentano il food cost del magazzino.
-**Nota 1.11:** Il sito è completamente indipendente — può partire in qualsiasi momento in parallelo. Nella Fase 1 usa ancora il widget TS per le prenotazioni camere.
+**Nota 1.11 completato:** Sito web sviluppato come progetto separato (repo `sito-hotel`,
+deploy GitHub/Vercel/Sanity). Nella Fase 1 usa ancora il widget TS per le prenotazioni camere.
+Dettagli su repo, deploy e deviazioni dalla spec originale nel CLAUDE.md di quel repository.
+
+**Unico step rimasto della Fase 1: 1.10 — Deploy VPS** (Nginx, PM2, SSL, backup automatico).
 
 ### FASE 2A — Sostituzione TS: prenotazioni e OTA
 
@@ -1032,16 +1036,18 @@ Modulo 1.8 — Dashboard (evolutive, non ora):
   correttamente €/coperto invece di una % che sarebbe fuorviante senza
   incassi storici affidabili.
 
-Modulo 1.1 — HR Timbrature (evolutive, non ora):
-  Verifica geolocalizzazione al momento della timbratura — navigator.geolocation
-  verifica che il dipendente sia entro X metri dall'hotel (coordinata GPS hotel
-  da configurare nelle impostazioni). Blocca la timbratura se troppo lontano
-  con messaggio "Devi essere in hotel per timbrare".
-  Notifica email al titolare ad ogni timbratura (entrata e uscita) con nome
-  dipendente, tipo e orario. Usare Brevo o SendGrid (già pianificati per email
-  automatiche Fase 2). Da sviluppare insieme al modulo email/SMS (5.3).
-  Notifica push nativa (service worker) al titolare — da sviluppare insieme
-  al service worker per notifiche cameriere ristorante.
+Modulo 1.1 — HR Timbrature:
+  ✅ Geolocalizzazione timbratura — implementata (Haversine + blocco raggio 50m
+  dalle coordinate hotel, vedi Sezione 16 "Modulo HR — 4 miglioramenti").
+  ✅ Griglia turni visuale — implementata (TabTurni, personale/page.jsx).
+  ✅ Notifiche approvazione ferie — implementata (riquadro "Ultime decisioni" in TabFerie).
+  ✅ Report mensile presenze — implementato (colonna Ritardi in reportMensile()).
+
+  Evolutiva futura, non ora:
+  Notifica push nativa (service worker) al titolare ad ogni timbratura — da
+  sviluppare insieme al service worker per notifiche cameriere ristorante
+  (nessuna dipendenza da email/SMS Fase 2, può usare Brevo/SendGrid solo se
+  si preferisce un canale email invece di push).
 
 Fase 2 (dopo go-live e test in produzione):
   2.1 Anagrafica ospiti completa + OCR documenti identità
@@ -1264,10 +1270,17 @@ completa (eseguire dashboard.test.js separatamente nel frattempo).
   chiude la risposta prima di consumare lo stream) — risolto senza allegare
   file nei test di solo permesso.
 
+### Modulo 1.11 — Sito web: COMPLETATO ✅ (progetto separato)
+
+Sviluppato come repository indipendente (`sito-hotel`), non incluso in questo
+repo. Stack, deploy (GitHub/Vercel/Sanity) e deviazioni dalla spec originale
+documentati nel CLAUDE.md di quel repository.
+
 ### Prossimo step
 
-Modulo 1.10 — Deploy VPS (Nginx, PM2, SSL, backup automatico) — parallelo
-Modulo 1.11 — Sito web (progetto indipendente, repository separato)
+Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**
+(Nginx, PM2, SSL, backup automatico) su Hetzner CX22, per gestionale + sito
+sulla stessa macchina (vedi Sezione "Deploy futuro" nella memoria di progetto).
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 
