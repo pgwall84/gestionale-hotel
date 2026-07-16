@@ -74,6 +74,17 @@ const PERMESSI_SEZIONI = {
     svela_documento:  [A, T, R],
   },
 
+  // Soggiorni + Soggiorno_ospiti (Fase 2) — sezione unica (non due) perché
+  // il contratto tratta PATCH /api/soggiorni/:id e i 3 endpoint
+  // .../ospiti con permessi identici: admin/titolare/receptionist
+  // lettura+scrittura, portiere_notte sola lettura (serve per consultare i
+  // componenti gruppo/famiglia nel check-in notturno). Vedi
+  // docs/API_PRENOTAZIONI_FASE2.md Sezioni 3-4.
+  soggiorni: {
+    lettura:    [A, T, R, P],
+    scrittura:  [A, T, R],
+  },
+
   // Pulizie (Fase 2) — dipendente + receptionist segnano "fatta/da fare".
   // Vista non espone mai l'anagrafica ospite, solo tipo/completamento camera.
   pulizie:        [D, R],

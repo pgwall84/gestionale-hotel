@@ -8,6 +8,7 @@
 
 const pool = require('../config/db');
 const { DOC_MASCHERATO } = require('./anagraficaOspitiController');
+const { gestisciConflittoCamera } = require('../utils/erroriDb');
 
 // Mappa esplicita delle transizioni di stato ammesse — non if/else sparsi.
 // Qualunque transizione fuori da questa mappa è un 400.
@@ -156,13 +157,64 @@ async function crea(req, res) {
     res.status(201).json({ ...prenotazione, soggiorno: soggiornoResult.rows[0] });
   } catch (err) {
     await client.query('ROLLBACK');
-    // Violazione del vincolo anti-overbooking (EXCLUDE) — vedi
-    // SCHEMA_PRENOTAZIONI_FASE2.md Sezione 3. Codice Postgres 23P01 =
-    // exclusion_violation, err.constraint identifica il vincolo specifico.
-    if (err.code === '23P01' && err.constraint === 'excl_soggiorni_camera_overlap') {
-      return res.status(409).json({ error: 'Camera già occupata in queste date' });
-    }
+    if (gestisciConflittoCamera(err, res)) return;
     console.error('crea prenotazione error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  } finally {
+    client.release();
+  }
+}
+
+// POST /api/prenotazioni/:id/soggiorni — aggiunge un altro soggiorno (camera)
+// alla stessa prenotazione, caso multi-camera (stesso gruppo, camere diverse).
+// Stesso payload "soggiorno" di crea(), stessa creazione automatica della
+// riga soggiorno_ospiti capofamiglia (tipo_alloggiato='17') per coerenza.
+// Accessibile a: admin, titolare, receptionist (scrittura).
+async function aggiungiSoggiorno(req, res) {
+  const { soggiorno } = req.body;
+  if (!soggiorno || !soggiorno.camera_id || !soggiorno.ospite_id || !soggiorno.data_arrivo || !soggiorno.data_partenza) {
+    return res.status(400).json({ error: 'soggiorno.camera_id, ospite_id, data_arrivo e data_partenza sono obbligatori.' });
+  }
+  if (soggiorno.data_partenza <= soggiorno.data_arrivo) {
+    return res.status(400).json({ error: 'data_partenza deve essere successiva a data_arrivo.' });
+  }
+
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const prenotazioneResult = await client.query(
+      'SELECT id FROM prenotazioni WHERE id = $1',
+      [req.params.id]
+    );
+    if (!prenotazioneResult.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+
+    const soggiornoResult = await client.query(
+      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING *`,
+      [
+        req.params.id, soggiorno.camera_id, soggiorno.ospite_id,
+        soggiorno.data_arrivo, soggiorno.data_partenza,
+        soggiorno.num_ospiti || 1, soggiorno.tariffa_totale || null,
+      ]
+    );
+
+    await client.query(
+      `INSERT INTO soggiorno_ospiti (soggiorno_id, ospite_id, tipo_alloggiato)
+       VALUES ($1, $2, '17')`,
+      [soggiornoResult.rows[0].id, soggiorno.ospite_id]
+    );
+
+    await client.query('COMMIT');
+    res.status(201).json(soggiornoResult.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    if (gestisciConflittoCamera(err, res)) return;
+    console.error('aggiungi soggiorno error:', err);
     res.status(500).json({ error: 'Errore interno' });
   } finally {
     client.release();
@@ -252,4 +304,4 @@ async function aggiornaStato(req, res) {
   }
 }
 
-module.exports = { griglia, dettaglio, crea, aggiorna, aggiornaStato, TRANSIZIONI_VALIDE };
+module.exports = { griglia, dettaglio, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, TRANSIZIONI_VALIDE };

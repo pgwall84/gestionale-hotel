@@ -1037,6 +1037,14 @@ Modulo 1.7 — Magazzino (evolutive, non ora):
     hardware invece della fotocamera del telefono, se il volume di scansioni
     giornaliere rende l'inserimento manuale troppo lento in pratica.
 
+Modulo 1.3 — Camere:
+  Robustezza query camere: GET /api/camere usa CAST(numero AS INTEGER) senza
+  gestione errore — un valore non numerico in camere.numero rompe l'intero
+  endpoint con 500 invece di un errore leggibile. Scoperto incidentalmente
+  il 16/07/2026 con dati di scarto di test, non ancora capitato in
+  produzione. Da sistemare quando si tocca di nuovo il modulo Camere
+  (validazione a monte sull'INSERT, o query più difensiva).
+
 Modulo 1.8 — Dashboard (evolutive, non ora):
   Food cost % sul fatturato (spesa materie prime / ricavi ristorante × 100)
   — evolutiva quando ci sarà storico incassi reale. Oggi mostra
@@ -1665,9 +1673,46 @@ completa 329/329.
   per gli ospiti annidati nel dettaglio — stessa regola di mascheramento
   documento del modulo Ospiti, nessuna duplicazione.
 
-**Prossimo passo Fase 2A**: Sessione 3 — Soggiorni + Soggiorno_ospiti
-(Sezioni 3-4 del contratto), poi Sessione 4 Pagamenti, poi Sessione 5 vista
-griglia frontend.
+### Modulo Soggiorni + Soggiorno_ospiti — Sezioni 3-4 API: COMPLETATO ✅ (16/07/2026)
+
+```
+5 endpoint implementati:
+  POST   /api/prenotazioni/:id/soggiorni        (multi-camera, in prenotazioniController.js)
+  PATCH  /api/soggiorni/:id                     (drag-and-drop planning)
+  GET    /api/soggiorni/:id/ospiti
+  POST   /api/soggiorni/:id/ospiti
+  DELETE /api/soggiorni/:id/ospiti/:ospiteId
+
+Decisioni prese in questa sessione:
+- Helper 409 estratto in backend/utils/erroriDb.js (gestisciConflittoCamera),
+  riusato da prenotazioniController.crea/aggiungiSoggiorno e da
+  soggiorniController.aggiorna — era inline solo in crea(), ora un solo
+  punto da correggere se cambia il nome del constraint.
+- shared/ruoli.js: UNA sezione 'soggiorni' (lettura/scrittura), non due
+  separate per 'soggiorni'/'soggiorno_ospiti' — il contratto le tratta con
+  permessi identici (tabella riepilogativa, colonna unica). Usata sia da
+  PATCH /api/soggiorni/:id sia dai 3 endpoint .../ospiti.
+- Vincolo applicativo "esattamente un capofamiglia/singolo/capogruppo
+  (tipo 16/17/18) per soggiorno": verificato con SELECT ... FOR UPDATE
+  dentro la transazione PRIMA di scrivere, sia in POST .../ospiti (blocca
+  il secondo intestatario, qualunque combinazione di tipi 16/17/18) sia in
+  DELETE .../ospiti/:id (blocca la rimozione se resterebbe l'ultimo).
+  Testato esplicitamente il caso 17→18 (tipi diversi), non solo 17→17.
+- POST /api/prenotazioni/:id/soggiorni crea automaticamente la riga
+  soggiorno_ospiti capofamiglia (tipo '17') per l'ospite_id passato, stesso
+  comportamento di POST /api/prenotazioni.
+- GET .../ospiti ordina per tipo_alloggiato ASC — mette capofamiglia/
+  singolo/capogruppo (16/17/18) prima di familiari/membri gruppo (19/20),
+  coerente con l'ordine richiesto per la schedina Alloggiati Web (modulo 2.5).
+
+25 test nuovi in tests/api/soggiorni.test.js (permessi, multi-camera, 409 su
+PATCH, doppio capofamiglia 400 — inclusa la combinazione 17→18 oltre a
+17→17, rimozione ultimo capofamiglia 400). 354/354 test verdi sull'intera
+suite dopo il refactor dell'helper 409.
+```
+
+**Prossimo passo Fase 2A**: Sessione 4 — Pagamenti (Sezione 5 del contratto),
+poi Sessione 5 — vista griglia frontend.
 
 ### Prossimo step
 

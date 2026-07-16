@@ -34,6 +34,7 @@ router.use(verificaToken);
 router.get('/griglia',      richiedeAzione('prenotazioni', 'lettura'),   ctrl.griglia);
 router.get('/:id',          richiedeAzione('prenotazioni', 'lettura'),   ctrl.dettaglio);
 router.post('/',            richiedeAzione('prenotazioni', 'scrittura'), ctrl.crea);
+router.post('/:id/soggiorni', richiedeAzione('prenotazioni', 'scrittura'), ctrl.aggiungiSoggiorno);
 router.patch('/:id',        richiedeAzione('prenotazioni', 'scrittura'), ctrl.aggiorna);
 router.patch('/:id/stato',  richiedeTransizioneStato,                    ctrl.aggiornaStato);
 
