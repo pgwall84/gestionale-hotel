@@ -380,6 +380,7 @@ Dettagli su repo, deploy e deviazioni dalla spec originale nel CLAUDE.md di quel
 | 2.3 | Integrazione WuBook/WooDoo — channel manager + webhook prenotazioni | Dipende da 2.2 |
 | 2.4 | Tassa di soggiorno custom — calcolo per notte/ospite, report Comune | Collegata al planning |
 | 2.5 | Alloggiati Web — intermediario REST certificato (non SOAP diretto) | Dipende da 2.1 |
+| 2.6 | ROSS1000/ISTAT flussi turistici — export mensile (XML o TXT) verso Regione Liguria, entro il 5 del mese successivo. Dati derivabili da `soggiorni`+`ospiti`+`soggiorno_ospiti` (stessa fonte di Alloggiati Web), serve funzione di aggregazione giornaliera + codice struttura CIR (da richiedere alla Regione se non già assegnato) | Dipende da 2.1/2.2 |
 
 **Nota:** architettura concettuale del modulo Prenotazioni (schema entità,
 ciclo di vita stati, 3 decisioni prioritarie PCI/webhook/GDPR) e viste UX
