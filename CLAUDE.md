@@ -1559,6 +1559,56 @@ timbrature HR.
 - Dettagli architetturali completi: `docs/SCHEMA_PRENOTAZIONI_FASE2.md`,
   sezione "Nota sulla migration 017".
 
+### Modulo Ospiti — anagrafica Fase 2 (Sezione 1 API): COMPLETATO ✅ (16/07/2026)
+
+Primi 5 endpoint CRUD del contratto `docs/API_PRENOTAZIONI_FASE2.md` Sezione 1,
+sulle tabelle create in migration 016/017. 23/23 test verdi.
+
+- File: `backend/controllers/anagraficaOspitiController.js`,
+  `backend/routes/ospiti.js` (mount `/api/ospiti` in `app.js`),
+  `tests/api/anagrafica-ospiti.test.js`.
+- **Nome file deliberatamente diverso da `ospitiController.js`**: quel file e
+  `tests/api/ospiti.test.js` esistevano già per il Modulo 1.2 (note cucina,
+  tabella `ospiti_giornalieri`, montato su `/api/hr/ospiti`) — dominio
+  completamente diverso. Nessuna modifica a quei file.
+- `shared/ruoli.js`: la voce `ospiti` (prima un array flat) è ora un oggetto
+  per azione — `{ lettura: [A,T,R,P], scrittura: [A,T,R], svela_documento:
+  [A,T,R] }` — per riflettere permessi diversi su lettura/scrittura/svela
+  documento nella stessa sezione. `puoAccedere()` resta invariata per le
+  sezioni ad array esistenti (retrocompatibile); nuova funzione
+  `puoCompiereAzione(ruolo, sezione, azione)` per le sezioni per-azione.
+  Nuovo middleware `richiedeAzione(sezione, azione)` in
+  `backend/middleware/auth.js`, accanto a `richiedeSezione`/`soloTitolare`
+  esistenti.
+- **`documento_numero` mai in chiaro fuori da `svela-documento`**: le query
+  di lista/dettaglio/crea/aggiorna non selezionano mai la colonna grezza —
+  costruiscono `documento_mascherato` lato SQL (`RIGHT(documento_numero,4)`).
+  Le `RETURNING` di crea/aggiorna elencano colonne esplicite invece di
+  `RETURNING *` (deviazione intenzionale dal pattern standard di Sezione 5,
+  richiesta esplicitamente per non far transitare mai il dato in chiaro nel
+  payload). Solo `svelaDocumento` fa una SELECT sulla colonna reale, e scrive
+  sempre una riga in `audit_log` (azione `svela_documento`), anche se il
+  documento non è valorizzato — è l'accesso stesso a essere tracciato.
+- Permessi verificati con test negativi dedicati: `portiere_notte` riceve
+  403 su scrittura E specificamente su `svela-documento` (non basta il 403
+  generico di sezione, serve il caso esplicito perché ha comunque accesso in
+  lettura alla stessa sezione).
+
+**Bug preesistente scoperto per caso, non toccato (fuori scope di questa
+sessione)**: `tests/api/dashboard.test.js`, test "con dati oggi e anno
+scorso" — fallisce anche in isolamento, prima e indipendentemente da questa
+sessione. `dashboardController.js:116` calcola l'anno scorso come stesso
+giorno/mese dell'anno precedente, ma il test inserisce i dati anno-scorso su
+una data con giorno/mese diversi (`DATA_ANNO_SCORSO = '2098-06-15'` contro
+`DATA_TEST = '2099-11-23'` → il controller cerca su `2098-11-23`, non li
+trova). Bug nel test, non nel controller. Segnalato come task separato, non
+blocca né riguarda il modulo Ospiti.
+
+**Prossimo passo Fase 2A**: Sessione 2 del contratto API — Prenotazioni +
+state machine (Sezione 2), poi Sessioni 3-5 (Soggiorni/Soggiorno_ospiti,
+Pagamenti, vista griglia frontend) — vedi
+`docs/API_PRENOTAZIONI_FASE2.md`, "Suggerimento per spezzare in sessioni".
+
 ### Prossimo step
 
 Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**

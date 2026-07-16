@@ -3,7 +3,7 @@
 // per verificare se la richiesta è autorizzata. Se non lo è, blocca tutto qui.
 
 const jwt = require('jsonwebtoken');
-const { puoAccedere } = require('../../shared/ruoli');
+const { puoAccedere, puoCompiereAzione } = require('../../shared/ruoli');
 
 // Verifica che la richiesta abbia un token JWT valido.
 // Tutte le route protette devono passare per questo middleware.
@@ -48,6 +48,22 @@ function richiedeSezione(sezione) {
   };
 }
 
+// Verifica che l'utente autenticato possa compiere una specifica azione dentro
+// una sezione con permessi differenziati (es. 'ospiti': lettura vs scrittura
+// vs svela_documento — vedi shared/ruoli.js).
+// Uso: router.post('/rotta', verificaToken, richiedeAzione('ospiti', 'scrittura'), controller)
+function richiedeAzione(sezione, azione) {
+  return (req, res, next) => {
+    if (!req.utente) {
+      return res.status(401).json({ errore: 'Non autenticato.' });
+    }
+    if (!puoCompiereAzione(req.utente.ruolo, sezione, azione)) {
+      return res.status(403).json({ errore: 'Non hai i permessi per questa operazione.' });
+    }
+    next();
+  };
+}
+
 // Verifica che l'utente sia ADMIN o TITOLARE.
 // Admin = accesso completo sempre; titolare = accesso operativo (equivalente ad admin sui moduli attivi).
 function soloTitolare(req, res, next) {
@@ -57,4 +73,4 @@ function soloTitolare(req, res, next) {
   next();
 }
 
-module.exports = { verificaToken, richiedeSezione, soloTitolare };
+module.exports = { verificaToken, richiedeSezione, richiedeAzione, soloTitolare };

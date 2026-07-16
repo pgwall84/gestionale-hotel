@@ -51,11 +51,15 @@ const PERMESSI_SEZIONI = {
   prenotazioni:   [A, T, R, P],
   ztl:            [A, T, R, P],
 
-  // Ospiti (Fase 2) — admin, titolare, receptionist: lettura/scrittura piena
-  // (incluso "svela documento su richiesta", loggato in audit_log).
-  // portiere_notte: sola lettura (serve per check-in notturno) — il controller
-  // deve applicare questa distinzione, l'array qui copre solo l'accesso alla sezione.
-  ospiti:         [A, T, R, P],
+  // Ospiti (Fase 2) — permessi differenziati per azione (non un unico array
+  // di sezione): admin/titolare/receptionist hanno lettura+scrittura+svela
+  // documento, portiere_notte solo lettura (serve per check-in notturno),
+  // mai svela documento. Vedi docs/API_PRENOTAZIONI_FASE2.md Sezione 1.
+  ospiti: {
+    lettura:          [A, T, R, P],
+    scrittura:        [A, T, R],
+    svela_documento:  [A, T, R],
+  },
 
   // Pulizie (Fase 2) — dipendente + receptionist segnano "fatta/da fare".
   // Vista non espone mai l'anagrafica ospite, solo tipo/completamento camera.
@@ -80,7 +84,23 @@ const PERMESSI_SEZIONI = {
 function puoAccedere(ruolo, sezione) {
   const sezionePermessi = PERMESSI_SEZIONI[sezione];
   if (!sezionePermessi) return false;
-  return sezionePermessi.includes(ruolo);
+  if (Array.isArray(sezionePermessi)) return sezionePermessi.includes(ruolo);
+  // Sezione con permessi differenziati per azione (es. 'ospiti'): senza
+  // un'azione esplicita non si può concedere accesso, usare puoCompiereAzione.
+  return false;
 }
 
-module.exports = { RUOLI, PERMESSI_SEZIONI, puoAccedere };
+// Controlla se un ruolo può compiere una specifica azione dentro una sezione
+// che ha permessi differenziati (es. ospiti: lettura vs scrittura vs
+// svela_documento). Per le sezioni con un unico array di ruoli, l'azione
+// viene ignorata e si ricade sullo stesso comportamento di puoAccedere.
+function puoCompiereAzione(ruolo, sezione, azione) {
+  const sezionePermessi = PERMESSI_SEZIONI[sezione];
+  if (!sezionePermessi) return false;
+  if (Array.isArray(sezionePermessi)) return sezionePermessi.includes(ruolo);
+  const permessiAzione = sezionePermessi[azione];
+  if (!Array.isArray(permessiAzione)) return false;
+  return permessiAzione.includes(ruolo);
+}
+
+module.exports = { RUOLI, PERMESSI_SEZIONI, puoAccedere, puoCompiereAzione };
