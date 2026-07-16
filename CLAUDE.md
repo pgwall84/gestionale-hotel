@@ -1609,6 +1609,66 @@ state machine (Sezione 2), poi Sessioni 3-5 (Soggiorni/Soggiorno_ospiti,
 Pagamenti, vista griglia frontend) — vedi
 `docs/API_PRENOTAZIONI_FASE2.md`, "Suggerimento per spezzare in sessioni".
 
+### Modulo Prenotazioni — Sezione 2 API: COMPLETATO ✅ (16/07/2026)
+
+5 endpoint del contratto `docs/API_PRENOTAZIONI_FASE2.md` Sezione 2, su
+`prenotazioni`/`soggiorni`/`soggiorno_ospiti` (migration 016) col vincolo
+anti-overbooking e `cancellato` (migration 017). 26/26 test verdi, suite
+completa 329/329.
+
+- File: `backend/controllers/prenotazioniController.js`,
+  `backend/routes/prenotazioni.js` (mount `/api/prenotazioni` in `app.js`),
+  `tests/api/prenotazioni.test.js`. Non implementati qui i sotto-endpoint di
+  Sezione 3 (`POST .../soggiorni`, `PATCH /api/soggiorni/:id`) — sessione
+  separata come da "Suggerimento per spezzare in sessioni" del contratto.
+- `shared/ruoli.js`: `prenotazioni` (prima un array flat mai consumato da
+  nessuna route) è ora un oggetto per azione, stesso pattern di `ospiti` —
+  `{ lettura:[A,T,R,P], scrittura:[A,T,R], stato:[A,T,R],
+  stato_check_in:[A,T,R,P] }`.
+- **Caso speciale portiere_notte** (lettura piena + SOLA la transizione di
+  stato verso `check_in`, check-in notturno): non esprimibile con un array
+  di ruoli per azione, perché dipende anche dal *valore* di `stato`
+  richiesto nel body, non solo dal ruolo. Middleware dedicato
+  `richiedeTransizioneStato` in `routes/prenotazioni.js` (non il generico
+  `richiedeAzione`) che combina `puoCompiereAzione(ruolo,'prenotazioni','stato')`
+  (transizioni ordinarie) con `puoCompiereAzione(ruolo,'prenotazioni','stato_check_in')`
+  solo quando `req.body.stato === 'check_in'`. Testato sia in positivo
+  (`confermata→check_in` da portiere_notte → 200) sia in negativo
+  (`check_in→check_out` da portiere_notte → 403, stato non modificato).
+- State machine `TRANSIZIONI_VALIDE` tradotta come oggetto/mappa nel
+  controller (non if/else sparsi), come richiesto dal contratto. Transizione
+  fuori mappa → 400 con messaggio esplicito. Testato l'intero ciclo di vita
+  `opzione→confermata→check_in→check_out→chiusa` più due transizioni non
+  valide (`opzione→check_in` salta uno stato, `chiusa→` qualunque cosa).
+- Transizione verso `interrotta`: `UPDATE soggiorni SET cancellato=true
+  WHERE prenotazione_id=$1` nella STESSA transazione dell'UPDATE su
+  `prenotazioni` (stessa connessione/client, non due query separate) —
+  regola di sincronizzazione di `SCHEMA_PRENOTAZIONI_FASE2.md` Sezione 3.
+- `POST /api/prenotazioni`: `data_scadenza_opzione` calcolata in SQL
+  (`NOW() + INTERVAL '48 hours'`), mai passata dal client. Violazione del
+  vincolo `excl_soggiorni_camera_overlap` intercettata sul codice Postgres
+  `23P01` (exclusion_violation) + `err.constraint`, tradotta in `409` con
+  messaggio esplicito invece di un `500` generico — testato creando due
+  prenotazioni sulla stessa camera con date sovrapposte.
+- `GET /api/prenotazioni/griglia`: esclude sempre `soggiorni.cancellato=true`
+  — altrimenti una prenotazione interrotta continuerebbe a comparire come
+  occupata in planning anche se il vincolo DB non la blocca più
+  fisicamente (precisazione emersa in fase di revisione del piano, non nel
+  contratto originale). Testato esplicitamente: prenotazione portata a
+  `interrotta` sparisce dalla griglia.
+- `GET /api/prenotazioni/:id`: include `pagamenti: []` — la tabella esiste
+  già (migration 016) ma il modulo Pagamenti (Sessione 4) non è ancora
+  costruito, quindi oggi non ci sono mai righe. La query e la forma della
+  risposta sono già quelle definitive, nessun cambio di forma previsto
+  quando arriverà quel modulo.
+- Riusa `DOC_MASCHERATO` da `anagraficaOspitiController.js` (ora esportata)
+  per gli ospiti annidati nel dettaglio — stessa regola di mascheramento
+  documento del modulo Ospiti, nessuna duplicazione.
+
+**Prossimo passo Fase 2A**: Sessione 3 — Soggiorni + Soggiorno_ospiti
+(Sezioni 3-4 del contratto), poi Sessione 4 Pagamenti, poi Sessione 5 vista
+griglia frontend.
+
 ### Prossimo step
 
 Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**

@@ -47,9 +47,22 @@ const PERMESSI_SEZIONI = {
   menu:           [A, T, K, P],
   ristorante:     [A, T, C, K, P],
 
-  // Prenotazioni e ZTL — admin, titolare, receptionist, portiere notte
-  prenotazioni:   [A, T, R, P],
+  // ZTL — admin, titolare, receptionist, portiere notte
   ztl:            [A, T, R, P],
+
+  // Prenotazioni (Fase 2) — permessi differenziati per azione, come 'ospiti'.
+  // Caso speciale portiere_notte: NON è un ruolo con scrittura piena — può
+  // fare SOLO la transizione di stato verso 'check_in' (check-in notturno),
+  // nessun'altra transizione. Questo non si esprime con un array di ruoli
+  // per sé: va combinato col valore di 'stato' richiesto nel body, vedi
+  // richiedeTransizioneStato in backend/routes/prenotazioni.js, che usa
+  // sia 'stato' (transizioni ordinarie) sia 'stato_check_in' (l'eccezione).
+  prenotazioni: {
+    lettura:         [A, T, R, P],
+    scrittura:       [A, T, R],
+    stato:           [A, T, R],
+    stato_check_in:  [A, T, R, P],
+  },
 
   // Ospiti (Fase 2) — permessi differenziati per azione (non un unico array
   // di sezione): admin/titolare/receptionist hanno lettura+scrittura+svela
