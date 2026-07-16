@@ -114,6 +114,34 @@ Alloggiati Web è un obbligo distinto, tracciato separatamente (vedi tabella
 
 ---
 
+## 1c. `gruppi_prenotazione` (aggiunta 16/07/2026 — pagamento per gruppi di camere)
+
+Caso raro ma reale: un gruppo (squadra, comitiva, evento) prenota più camere,
+gestite come prenotazioni separate (una per camera/famiglia) ma con un unico
+pagatore/referente e, spesso, un pagamento unico che copre l'intero gruppo
+invece di essere spezzato artificialmente su ogni singola prenotazione.
+Creata **prima** di `prenotazioni` (sotto) perché quest'ultima ha una FK
+verso questa tabella — ordine di creazione obbligato nella migration.
+
+```sql
+CREATE TABLE gruppi_prenotazione (
+  id                  SERIAL PRIMARY KEY,
+  nome                VARCHAR(255) NOT NULL,     -- es. "Squadra calcio X", "Matrimonio Rossi"
+  referente_nome      VARCHAR(255),
+  referente_email     VARCHAR(255),
+  referente_telefono  VARCHAR(50),
+  note                TEXT,
+  created_at          TIMESTAMP NOT NULL DEFAULT now()
+);
+```
+
+Ogni `prenotazioni.gruppo_id` punta qui (nullable — la maggior parte delle
+prenotazioni resta singola, senza gruppo). Vedi Sezione 4 (`pagamenti`) per
+come si registra un pagamento a livello di gruppo invece che di singola
+prenotazione.
+
+---
+
 ## 2. `prenotazioni` (testata)
 
 ```sql
@@ -123,6 +151,7 @@ CREATE TABLE prenotazioni (
   external_booking_id   VARCHAR(255) UNIQUE,    -- idempotenza da WuBook, NULL se diretta
   stato                 VARCHAR(20) NOT NULL DEFAULT 'opzione',
   data_scadenza_opzione TIMESTAMP,              -- per scadenza automatica 24-48h
+  gruppo_id             INTEGER REFERENCES gruppi_prenotazione(id),  -- NULL se prenotazione singola
   note                  TEXT,
   created_at            TIMESTAMP NOT NULL DEFAULT now(),
   updated_at            TIMESTAMP NOT NULL DEFAULT now(),
@@ -132,6 +161,7 @@ CREATE TABLE prenotazioni (
 );
 
 CREATE INDEX idx_prenotazioni_stato ON prenotazioni (stato);
+CREATE INDEX idx_prenotazioni_gruppo ON prenotazioni (gruppo_id);
 ```
 
 **Nota anti-duplicazione (decisione #2)**: `external_booking_id UNIQUE` è la
@@ -152,6 +182,7 @@ CREATE TABLE soggiorni (
   data_partenza     DATE NOT NULL,
   num_ospiti        INTEGER NOT NULL DEFAULT 1,
   tariffa_totale    NUMERIC(10,2),
+  cancellato        BOOLEAN NOT NULL DEFAULT false,  -- sincronizzato quando prenotazione → interrotta
   created_at        TIMESTAMP NOT NULL DEFAULT now(),
   updated_at        TIMESTAMP NOT NULL DEFAULT now(),
   CONSTRAINT chk_soggiorni_date CHECK (data_partenza > data_arrivo)
@@ -161,7 +192,38 @@ CREATE TABLE soggiorni (
 -- (vista griglia/planning, MOCKUP_VISTE_FASE2.md punto 2)
 CREATE INDEX idx_soggiorni_date ON soggiorni (data_arrivo, data_partenza);
 CREATE INDEX idx_soggiorni_camera ON soggiorni (camera_id);
+
+-- Vincolo anti-overbooking (aggiunto 16/07/2026, decisione presa dopo ricerca
+-- su pattern standard dei PMS — drag&drop planning richiede questa garanzia).
+-- Richiede l'estensione btree_gist per usare "=" dentro un EXCLUDE con GiST.
+CREATE EXTENSION IF NOT EXISTS btree_gist;
+
+ALTER TABLE soggiorni ADD CONSTRAINT excl_soggiorni_camera_overlap
+  EXCLUDE USING gist (
+    camera_id WITH =,
+    daterange(data_arrivo, data_partenza, '[)') WITH &&
+  ) WHERE (cancellato = false);
 ```
+
+**Nota vincolo anti-overbooking — IMPORTANTE, impatta il controller**: il
+vincolo `EXCLUDE` impedisce fisicamente due soggiorni non cancellati sulla
+stessa camera con date sovrapposte (intervallo `[arrivo, partenza)` —
+semiaperto: chi parte il giorno X libera la camera per chi arriva lo stesso
+giorno X, convenzione standard alberghiera). Qualunque INSERT/UPDATE che
+violi questo vincolo fallisce a livello DB con un errore Postgres — il
+controller deve intercettarlo e restituire un `409 Conflict` con messaggio
+chiaro ("Camera già occupata in queste date"), non un generico `500`.
+
+**Regola di sincronizzazione obbligatoria**: il vincolo esclude solo i
+soggiorni con `cancellato = false`. Quando una prenotazione passa a stato
+`interrotta` (Sezione 2 del contratto API, `PATCH .../stato`), il controller
+**deve** anche impostare `cancellato = true` su tutti i `soggiorni` di quella
+prenotazione, nella stessa transazione — altrimenti una prenotazione
+cancellata continuerebbe a bloccare quella camera/date per sempre. Questo è
+un accoppiamento reale tra le due tabelle: se in futuro si aggiunge un altro
+modo di cancellare un soggiorno (es. WuBook invia una cancellazione via
+webhook), deve passare dalla stessa funzione/transazione, non da un percorso
+alternativo che dimentica di aggiornare `cancellato`.
 
 **Nota**: `ospite_id` qui è l'intestatario/capofamiglia — usato per comodità
 in UI (nome mostrato nel pannello di dettaglio prenotazione). Per la lista
@@ -177,7 +239,8 @@ come pensato inizialmente.
 ```sql
 CREATE TABLE pagamenti (
   id                    SERIAL PRIMARY KEY,
-  prenotazione_id       INTEGER NOT NULL REFERENCES prenotazioni(id),
+  prenotazione_id       INTEGER REFERENCES prenotazioni(id),   -- nullable, vedi CHECK sotto
+  gruppo_id             INTEGER REFERENCES gruppi_prenotazione(id),  -- nullable, vedi CHECK sotto
   importo               NUMERIC(10,2) NOT NULL,
   metodo                VARCHAR(30),             -- carta, contanti, bonifico
   tipo                  VARCHAR(20) NOT NULL,    -- caparra, saldo, corrispettivo
@@ -187,11 +250,27 @@ CREATE TABLE pagamenti (
   created_at            TIMESTAMP NOT NULL DEFAULT now(),
   CONSTRAINT chk_pagamenti_stato CHECK (
     stato IN ('pending','completato','fallito','rimborsato')
+  ),
+  CONSTRAINT chk_pagamenti_prenotazione_o_gruppo CHECK (
+    (prenotazione_id IS NOT NULL AND gruppo_id IS NULL) OR
+    (prenotazione_id IS NULL AND gruppo_id IS NOT NULL)
   )
 );
 
 CREATE INDEX idx_pagamenti_prenotazione ON pagamenti (prenotazione_id);
+CREATE INDEX idx_pagamenti_gruppo ON pagamenti (gruppo_id);
 ```
+
+**Nota pagamento di gruppo (aggiunta 16/07/2026)**: un pagamento è **sempre**
+legato o a una singola prenotazione, o a un gruppo (`gruppi_prenotazione`) —
+mai a entrambi, mai a nessuno dei due (vincolo CHECK esplicito, tipo XOR).
+Per un gruppo che paga un conto unico per più camere, si registra un solo
+pagamento con `gruppo_id` valorizzato — non serve spezzarlo artificialmente
+tra le prenotazioni del gruppo. Il folio/conto complessivo del gruppo (per
+la fatturazione finale) andrà calcolato sommando i `soggiorni.tariffa_totale`
+di tutte le prenotazioni con lo stesso `gruppo_id`, meno i pagamenti con
+quel `gruppo_id` — logica di aggregazione lato applicazione, non richiede
+altre tabelle.
 
 **Nota PCI scope zero (decisione #1)**: nessun campo per dati carta in nessuna
 tabella. Il gestionale riceve solo `external_payment_id` + `stato` via webhook
@@ -247,6 +326,26 @@ CREATE INDEX idx_alloggiati_soggiorno ON alloggiati_invii (soggiorno_id);
 sicurezza pubblica) indipendentemente da quanto a lungo si conserva `ospiti`
 per finalità fiscale (fino a 10 anni) — le due scadenze vanno gestite
 separatamente, non con un unico campo di retention.
+
+---
+
+## 6b. `camere.piano` (aggiunta a tabella esistente di Fase 1)
+
+Non è una tabella nuova — `camere` esiste già dal Modulo 1.3 (Fase 1). Serve
+però aggiungere un campo per raggruppare visivamente le camere per piano
+nella vista griglia/planning (pattern standard nei PMS confrontati — vedi
+ricerca 16/07/2026). Verificato: probabilmente non presente oggi.
+
+```sql
+ALTER TABLE camere ADD COLUMN piano SMALLINT;
+```
+
+Nullable (le camere esistenti non hanno questo dato finché non viene
+popolato manualmente), `SMALLINT` con 0=piano terra, valori negativi per
+eventuali seminterrati, positivi per i piani superiori — il frontend mappa
+il numero in etichetta leggibile ("Piano Terra", "1° Piano", ecc.). Da
+popolare manualmente per le 20 camere esistenti dopo la migration, non è
+automatizzabile.
 
 ---
 
@@ -383,35 +482,57 @@ quando si costruirà davvero il modulo 2.5 (non riguardano questa migration):
   password — da tenere in `.env` come le altre chiavi Fase 2 (Sezione 7 di
   CLAUDE.md), non hardcoded.
 
-## Nota sulla migration correttiva (017)
+## Nota sulla migration 017 (nuova — per le aggiunte del 16/07/2026)
 
-La migration `016` è già stata applicata senza i campi Alloggiati Web. La
-`017` (ALTER TABLE, non modificare la 016) dovrà:
-- aggiungere a `ospiti`: `sesso`, `stato_nascita_codice`,
-  `comune_nascita_codice`, `provincia_nascita`, `cittadinanza_codice`
-  (se non già presente come testo — valutare se rinominare/convertire),
-  `documento_tipo_codice`, `luogo_rilascio_codice`
-- **creare la nuova tabella `soggiorno_ospiti`** (non è un ALTER, è una
-  CREATE TABLE aggiuntiva) — questa è la parte più corposa della 017, non
-  solo l'aggiunta di colonne
-- popolare `soggiorno_ospiti` per eventuali soggiorni già inseriti nel
-  frattempo (script di backfill, se esistono già dati in `soggiorni`)
+**Aggiornamento**: la migration `016` era già stata applicata **con tutti i
+campi corretti** fin dall'inizio (Alloggiati Web + `soggiorno_ospiti`) —
+confermato da Claude Code il 16/07, non serviva più nessuna correttiva su
+quella parte. La nota precedente su una "017 correttiva" è quindi superata.
+
+La `017` **reale** che serve ora è per le aggiunte di questa sessione
+(overbooking, gruppi, piano camere):
+
+1. `CREATE EXTENSION IF NOT EXISTS btree_gist;`
+2. `CREATE TABLE gruppi_prenotazione` (Sezione 1c) — **prima** di toccare
+   `prenotazioni`, per via della FK
+3. `ALTER TABLE prenotazioni ADD COLUMN gruppo_id ...` (Sezione 2)
+4. `ALTER TABLE soggiorni ADD COLUMN cancellato ...` + `ADD CONSTRAINT
+   excl_soggiorni_camera_overlap EXCLUDE ...` (Sezione 3) — **attenzione**:
+   se esistono già soggiorni con date sovrapposte sulla stessa camera (non
+   dovrebbe, ma verificare prima), l'`ALTER TABLE ADD CONSTRAINT` fallisce.
+   Query di verifica preventiva da far girare prima:
+   ```sql
+   SELECT a.id, b.id FROM soggiorni a JOIN soggiorni b
+     ON a.camera_id = b.camera_id AND a.id < b.id
+     AND daterange(a.data_arrivo, a.data_partenza, '[)') &&
+         daterange(b.data_arrivo, b.data_partenza, '[)');
+   ```
+5. `ALTER TABLE pagamenti ALTER COLUMN prenotazione_id DROP NOT NULL;` +
+   `ADD COLUMN gruppo_id ...` + `ADD CONSTRAINT
+   chk_pagamenti_prenotazione_o_gruppo ...` (Sezione 4)
+6. `ALTER TABLE camere ADD COLUMN piano SMALLINT;` (Sezione 6b)
 
 ## Messaggio d'apertura suggerito per la sessione Claude Code
 
-Schema e permessi validati (vedi "Punti aperti — risolti" sopra). Prima di
-scrivere la migration, Claude Code deve verificare due cose sul repo reale:
+```
+Leggi CLAUDE.md e docs/SCHEMA_PRENOTAZIONI_FASE2.md.
+Obiettivo: migration 017 — aggiunte del 16/07/2026 al modulo Prenotazioni:
+vincolo anti-overbooking, gruppi di prenotazione con pagamento unico,
+campo piano su camere. Vedi la sezione "Nota sulla migration 017" nello
+schema per l'elenco esatto e l'ordine delle operazioni.
 
-```
-Leggi CLAUDE.md. Obiettivo: migration modulo Prenotazioni secondo
-SCHEMA_PRENOTAZIONI_FASE2.md (tabelle ospiti, prenotazioni, soggiorni,
-pagamenti, webhook_log, alloggiati_invii).
 Prima di scrivere la migration:
-1. Verifica il prossimo numero libero in database/migrations/ (lavoro
-   provvisorio: 016) contro lo stato reale del DB.
-2. grep -rn "CREATE TRIGGER" database/migrations/ — se esiste già un trigger
-   condiviso per updated_at, riusalo; altrimenti procedi con query esplicite.
-Poi estendi shared/ruoli.js con le voci 'ospiti' e 'pulizie' (vedi permessi
-proposti nel documento).
-Piano in 5 righe, attendi conferma.
+1. Verifica il prossimo numero libero in database/migrations/.
+2. Esegui la query di verifica preventiva indicata nello schema per
+   controllare che non esistano già soggiorni sovrapposti sulla stessa
+   camera — se ce ne sono, fermati e dimmelo prima di aggiungere il
+   vincolo EXCLUDE, non risolverli in autonomia.
+3. Verifica che l'estensione btree_gist sia abilitabile sul DB (permessi
+   utente sufficienti) prima di includerla nella migration.
+
+Piano in 5 righe, attendi conferma prima di eseguire sul DB.
 ```
+
+Dopo l'applicazione, aggiorna anche il contratto API
+(`API_PRENOTAZIONI_FASE2.md`) se qualche dettaglio implementativo emerge
+diverso da quanto previsto qui — è un documento di lavoro, non immutabile.

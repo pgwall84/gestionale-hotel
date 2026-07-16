@@ -1523,6 +1523,42 @@ rotazione periodica secret (JWT, chiavi API), audit log dettagliato azioni
 sensibili (utile se cresce lo staff), resistenza a spoofing GPS nelle
 timbrature HR.
 
+### Migration 017 — vincolo anti-overbooking, gruppi prenotazione, piano camere: COMPLETATA ✅ (16/07/2026)
+
+- Vincolo `EXCLUDE USING gist` (estensione `btree_gist`) su `soggiorni`:
+  impedisce a livello DB due soggiorni non cancellati sulla stessa camera
+  con date sovrapposte. Verifica preventiva di overlap eseguita prima
+  dell'ALTER, nessun conflitto trovato.
+- `soggiorni.cancellato` (bool) — REGOLA OBBLIGATORIA per i controller
+  futuri: quando una prenotazione passa a `interrotta`, impostare
+  `cancellato = true` su tutti i suoi soggiorni nella stessa transazione,
+  altrimenti il vincolo blocca quella camera/date per sempre.
+- Un INSERT/UPDATE che viola il vincolo fallisce a livello Postgres — il
+  controller deve intercettare l'errore e restituire `409 Conflict` con
+  messaggio chiaro ("Camera già occupata in queste date"), non un
+  generico `500`.
+- Nuova tabella `gruppi_prenotazione` (nome, referente, note) per gruppi
+  che prenotano più camere con un unico pagatore/referente.
+  `prenotazioni.gruppo_id` (nullable) collega ogni prenotazione al gruppo.
+- `pagamenti`: `prenotazione_id` ora nullable, aggiunta `gruppo_id`
+  (nullable) + vincolo CHECK `chk_pagamenti_prenotazione_o_gruppo` — un
+  pagamento è legato o a una prenotazione singola o a un gruppo, mai a
+  entrambi, mai a nessuno dei due. Il folio di gruppo si calcola sommando
+  `soggiorni.tariffa_totale` di tutte le prenotazioni con lo stesso
+  `gruppo_id`, meno i pagamenti con quel `gruppo_id` — logica applicativa,
+  nessuna tabella aggiuntiva.
+- `camere.piano` (SMALLINT, nullable) aggiunta per raggruppamento visivo
+  nella vista griglia/planning. 0=piano terra, negativi=seminterrati,
+  positivi=piani superiori. Da popolare manualmente per le 20 camere
+  esistenti.
+- File: `database/migrations/017_overbooking_gruppi_piano.sql`. Verifiche
+  pre-migration eseguite e documentate: 0 soggiorni sovrapposti, `btree_gist`
+  disponibile e installabile (utente DB superuser). Applicata in
+  transazione, verificata post-applicazione su tutti i punti (estensione,
+  tabella, colonne, vincoli).
+- Dettagli architetturali completi: `docs/SCHEMA_PRENOTAZIONI_FASE2.md`,
+  sezione "Nota sulla migration 017".
+
 ### Prossimo step
 
 Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**
