@@ -1254,17 +1254,17 @@ esatto introspezionato dal DB reale), applicata in transazione, nessun dato tocc
 - 4 nuovi test in hr.test.js (geolocalizzazione persistita, data_decisione) —
   33/33 verdi isolati.
 
-**Trovato (non risolto, da approfondire a parte):** `dashboard.test.js`
-eseguito insieme a QUALSIASI altro file di test (confermato con
-`camere.test.js` e poi anche `archivio.test.js`+`hr.test.js` insieme) causa
-un fallimento in `dashboard.test.js` (variazione anno precedente coperti
-restituisce 0 invece del valore atteso) — riproducibile anche `--runInBand`,
-quindi non è una race di worker paralleli ma probabile condivisione/
-esaurimento del pool PostgreSQL tra file di test, specifico di
-dashboard.test.js. Non è una regressione: dashboard.test.js da solo passa
-10/10, tutti gli altri file passano puliti tra loro. Da investigare in una
-sessione dedicata prima di fidarsi ciecamente di `npm test` sulla suite
-completa (eseguire dashboard.test.js separatamente nel frattempo).
+**Diagnosi corretta (16/07/2026):** la causa non è un pool PostgreSQL
+condiviso come ipotizzato inizialmente — verificato che il file fallisce
+in modo deterministico anche eseguito da solo. Causa reale: DATA_TEST
+spostata da 2099-06-15 a 2099-11-23 nel commit del 12/07 (giorno dopo
+questa nota), senza allineare DATA_ANNO_SCORSO di conseguenza — il
+controller (dashboardController.js:116, logica invariata dall'origine)
+cerca i dati 'anno scorso' su 2098-11-23, ma il test li inserisce su
+2098-06-15. Bug nel dato fittizio del test, non nella logica applicativa.
+Fix: allineare DATA_ANNO_SCORSO a 2098-11-23 in dashboard.test.js.
+**Risolto (16/07/2026):** DATA_ANNO_SCORSO allineata a 2098-11-23.
+dashboard.test.js 10/10 verdi da solo, suite completa 303/303 verdi.
 
 ### Modulo 1.9 — Archivio documentale: COMPLETATO ✅ (11/07/2026)
 

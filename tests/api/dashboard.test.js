@@ -8,7 +8,7 @@ const { authHeader } = require('../helpers/auth');
 const { getPool, chiudiPool } = require('../helpers/db');
 
 const DATA_TEST        = '2099-11-23';
-const DATA_ANNO_SCORSO = '2098-06-15';
+const DATA_ANNO_SCORSO = '2098-11-23'; // stesso giorno/mese di DATA_TEST, anno-1 — coerente con dashboardController.js:116
 const PREFISSO = 'ZZZ_TEST_';
 
 afterAll(async () => {
