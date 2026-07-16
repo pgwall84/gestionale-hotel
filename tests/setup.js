@@ -7,7 +7,7 @@ module.exports = async () => {
   process.env.NODE_ENV = 'test';
 
   // Carica il .env del backend
-  require('dotenv').config({ path: path.join(__dirname, '../backend/.env') });
+  require('dotenv').config({ path: path.join(__dirname, '../backend/.env'), quiet: true });
 
   // Verifica che le variabili critiche siano presenti
   const richieste = ['DB_HOST', 'DB_NAME', 'JWT_SECRET'];

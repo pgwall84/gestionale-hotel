@@ -89,6 +89,25 @@ const PERMESSI_SEZIONI = {
   // Vista non espone mai l'anagrafica ospite, solo tipo/completamento camera.
   pulizie:        [D, R],
 
+  // Gruppi di prenotazione (Fase 2) — admin/titolare/receptionist lettura+
+  // scrittura piena, portiere_notte sola lettura (consulta il gruppo durante
+  // il check-in notturno, non lo modifica). Vedi
+  // docs/API_PRENOTAZIONI_FASE2.md Sezione 6.
+  gruppi: {
+    lettura:    [A, T, R, P],
+    scrittura:  [A, T, R],
+  },
+
+  // Pagamenti (Fase 2) — admin/titolare/receptionist lettura+scrittura,
+  // portiere_notte NESSUN accesso (a differenza di 'gruppi': i totali
+  // aggregati in GET /api/gruppi/:id sono un dato del gruppo, non un
+  // accesso alla lista pagamenti in sé). Vedi
+  // docs/API_PRENOTAZIONI_FASE2.md Sezione 5 e tabella riepilogativa.
+  pagamenti: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T, R],
+  },
+
   // Sezioni riservate ad admin e titolare
   archivio:       [A, T, R],
   dashboard:      [A, T],

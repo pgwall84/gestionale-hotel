@@ -2,7 +2,7 @@
 // Importato da server.js per il deploy e da Supertest per i test API.
 // Separare app da listen permette di testare le route senza occupare porte.
 
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 const express      = require('express');
 const cors         = require('cors');
 const helmet       = require('helmet');
@@ -22,6 +22,7 @@ const archivioRoutes     = require('./routes/archivio');
 const ospitiRoutes       = require('./routes/ospiti');
 const prenotazioniRoutes = require('./routes/prenotazioni');
 const soggiorniRoutes    = require('./routes/soggiorni');
+const gruppiRoutes       = require('./routes/gruppi');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -74,6 +75,7 @@ app.use('/api/archivio', archivioRoutes);
 app.use('/api/ospiti',   ospitiRoutes);
 app.use('/api/prenotazioni', prenotazioniRoutes);
 app.use('/api/soggiorni',    soggiorniRoutes);
+app.use('/api/gruppi',       gruppiRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));

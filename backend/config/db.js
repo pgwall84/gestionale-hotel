@@ -3,7 +3,7 @@
 // nuova ad ogni richiesta HTTP (molto più veloce e scalabile).
 
 const { Pool, types } = require('pg');
-require('dotenv').config();
+require('dotenv').config({ quiet: true });
 
 // Restituisce le colonne DATE come stringa 'YYYY-MM-DD' invece che come oggetto Date
 // (evita la conversione UTC che causa shift di timezone in UTC+2)

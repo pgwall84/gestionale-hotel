@@ -91,7 +91,7 @@ Restituisci solo il codice del file tests/api/${modulo}.test.js`;
 // ─── Chiamata API Claude ──────────────────────────────────────────────────────
 
 async function generaTest() {
-  require('dotenv').config({ path: path.join(ROOT, 'backend/.env') });
+  require('dotenv').config({ path: path.join(ROOT, 'backend/.env'), quiet: true });
 
   const apiKey = process.env.ANTHROPIC_API_KEY;
   if (!apiKey) {

@@ -1711,8 +1711,52 @@ PATCH, doppio capofamiglia 400 — inclusa la combinazione 17→18 oltre a
 suite dopo il refactor dell'helper 409.
 ```
 
-**Prossimo passo Fase 2A**: Sessione 4 — Pagamenti (Sezione 5 del contratto),
-poi Sessione 5 — vista griglia frontend.
+### Modulo Gruppi + Pagamenti — Sezioni 5-6 API: COMPLETATO ✅ (16/07/2026)
+
+```
+7 endpoint implementati:
+  GET    /api/gruppi/:id                (dettaglio + prenotazioni collegate + totali aggregati)
+  POST   /api/gruppi                    (gruppiController.js)
+  PATCH  /api/gruppi/:id
+  GET    /api/prenotazioni/:id/pagamenti (pagamentiController.js, mount su routes/prenotazioni.js)
+  POST   /api/prenotazioni/:id/pagamenti
+  GET    /api/gruppi/:id/pagamenti      (mount su routes/gruppi.js)
+  POST   /api/gruppi/:id/pagamenti
+
+Decisioni prese in questa sessione:
+- pagamentiController.js unico riusato sia da routes/prenotazioni.js sia da
+  routes/gruppi.js — 4 funzioni (listaPerPrenotazione/creaPerPrenotazione/
+  listaPerGruppo/creaPerGruppo), ognuna valorizza SOLO il campo id giusto
+  (mai passa entrambi), rispettando il CHECK XOR di migration 017 prima
+  ancora che sia il DB a scoprire l'errore.
+- stato pagamento sempre 'completato' hardcoded lato controller (nessun
+  flusso 'pending' qui — arriverà con webhook WuBook, modulo 2.3).
+- GET /api/gruppi/:id restituisce due somme distinte (totale_addebiti da
+  SUM soggiorni.tariffa_totale con cancellato=false, totale_pagamenti da
+  SUM pagamenti.importo su gruppo_id) — nessun saldo netto precalcolato,
+  decisione lasciata al frontend.
+- shared/ruoli.js: due nuove sezioni con permessi differenziati, non
+  flat array — 'gruppi' {lettura:[A,T,R,P], scrittura:[A,T,R]} (portiere_notte
+  può consultare il gruppo durante check-in notturno) e 'pagamenti'
+  {lettura:[A,T,R], scrittura:[A,T,R]} (portiere_notte ESCLUSO qui, a
+  differenza di 'gruppi' — i totali aggregati in GET /gruppi/:id sono un
+  dato del gruppo, non un accesso alla lista pagamenti).
+- Vincolo CHECK XOR testato con INSERT diretto sul DB (nessun endpoint
+  pubblico passa mai entrambi gli id o nessuno dei due, quindi va forzato
+  a livello DB per verificarlo davvero).
+
+37 test nuovi (tests/api/gruppi.test.js, tests/api/pagamenti.test.js — file
+separati, confine naturale tra le due risorse): creazione gruppo, prenotazione
+collegata via gruppo_id, pagamento gruppo vs pagamento prenotazione, permessi
+per ruolo, doppia violazione CHECK XOR (entrambi gli id / nessuno dei due),
+totali aggregati verificati con 2 prenotazioni (400+250=650) e 2 pagamenti di
+gruppo (100+50=150) per escludere che la query prendesse solo l'ultima riga.
+391/391 test verdi sull'intera suite.
+```
+
+**Prossimo passo Fase 2A**: Sessione 5 — vista griglia frontend (consuma
+tutti gli endpoint Ospiti/Prenotazioni/Soggiorni/Gruppi/Pagamenti costruiti
+finora).
 
 ### Prossimo step
 

@@ -9,6 +9,7 @@ const router = express.Router();
 const { verificaToken, richiedeAzione } = require('../middleware/auth');
 const { puoCompiereAzione } = require('../../shared/ruoli');
 const ctrl = require('../controllers/prenotazioniController');
+const pagamentiCtrl = require('../controllers/pagamentiController');
 
 // Permesso per PATCH .../stato: non un semplice array di ruoli, perché
 // portiere_notte può fare SOLO la transizione verso 'check_in' (check-in
@@ -37,5 +38,7 @@ router.post('/',            richiedeAzione('prenotazioni', 'scrittura'), ctrl.cr
 router.post('/:id/soggiorni', richiedeAzione('prenotazioni', 'scrittura'), ctrl.aggiungiSoggiorno);
 router.patch('/:id',        richiedeAzione('prenotazioni', 'scrittura'), ctrl.aggiorna);
 router.patch('/:id/stato',  richiedeTransizioneStato,                    ctrl.aggiornaStato);
+router.get('/:id/pagamenti',  richiedeAzione('pagamenti', 'lettura'),   pagamentiCtrl.listaPerPrenotazione);
+router.post('/:id/pagamenti', richiedeAzione('pagamenti', 'scrittura'), pagamentiCtrl.creaPerPrenotazione);
 
 module.exports = router;
