@@ -26,7 +26,13 @@ const app = express();
 
 // ─── Middleware globali ───────────────────────────────────────────────────────
 
-app.use(helmet());
+// Helmet imposta già di default CSP, X-Content-Type-Options, X-Frame-Options,
+// Referrer-Policy — stesso standard applicato esplicitamente in sito-hotel/next.config.ts.
+// Unica differenza esplicitata qui: HSTS a 2 anni + preload (default Helmet: 180 giorni),
+// per allinearsi al valore già in produzione sul sito.
+app.use(helmet({
+  hsts: { maxAge: 63072000, includeSubDomains: true, preload: true },
+}));
 app.use(cookieParser());
 
 app.use(cors({

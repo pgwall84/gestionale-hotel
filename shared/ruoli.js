@@ -51,6 +51,16 @@ const PERMESSI_SEZIONI = {
   prenotazioni:   [A, T, R, P],
   ztl:            [A, T, R, P],
 
+  // Ospiti (Fase 2) — admin, titolare, receptionist: lettura/scrittura piena
+  // (incluso "svela documento su richiesta", loggato in audit_log).
+  // portiere_notte: sola lettura (serve per check-in notturno) — il controller
+  // deve applicare questa distinzione, l'array qui copre solo l'accesso alla sezione.
+  ospiti:         [A, T, R, P],
+
+  // Pulizie (Fase 2) — dipendente + receptionist segnano "fatta/da fare".
+  // Vista non espone mai l'anagrafica ospite, solo tipo/completamento camera.
+  pulizie:        [D, R],
+
   // Sezioni riservate ad admin e titolare
   archivio:       [A, T, R],
   dashboard:      [A, T],

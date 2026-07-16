@@ -320,7 +320,7 @@ WEBHOOK_SECRET_ACUBE
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | ✅ Fatto |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | ✅ Fatto |
-| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico | 🔜 Prossimo step |
+| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico (Hetzner CX22, ~€75-90/anno, vedi Sezione 16) | 🔜 Prossimo step |
 | 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | ✅ Fatto (repo separato `sito-hotel`) |
 
 **Nota 1.6 completato:** Fix trovati dai test: validazione transizioni stati comanda,
@@ -380,6 +380,12 @@ Dettagli su repo, deploy e deviazioni dalla spec originale nel CLAUDE.md di quel
 | 2.3 | Integrazione WuBook/WooDoo — channel manager + webhook prenotazioni | Dipende da 2.2 |
 | 2.4 | Tassa di soggiorno custom — calcolo per notte/ospite, report Comune | Collegata al planning |
 | 2.5 | Alloggiati Web — intermediario REST certificato (non SOAP diretto) | Dipende da 2.1 |
+
+**Nota:** architettura concettuale del modulo Prenotazioni (schema entità,
+ciclo di vita stati, 3 decisioni prioritarie PCI/webhook/GDPR) e viste UX
+già definite in sessione dedicata — vedi Sezione 16, sottosezioni
+"Architettura Fase 2" e "Viste UX Fase 2". Prossimo passo concreto: schema
+tabelle PostgreSQL dettagliato.
 
 ### FASE 2B — Sostituzione TS: fiscale e pagamenti
 
@@ -1051,6 +1057,16 @@ Modulo 1.1 — HR Timbrature:
 
 Fase 2 (dopo go-live e test in produzione):
   2.1 Anagrafica ospiti completa + OCR documenti identità
+
+  Modulo Prenotazioni — evolutiva non ancora implementata:
+    Cron scadenza automatica prenotazioni "Opzione" (node-cron, ogni 30 min)
+    — passa lo stato da 'opzione' a 'interrotta' se non confermate entro
+    24-48h (campo prenotazioni.data_scadenza_opzione, già nella migration
+    016). Ogni riga aggiornata va loggata in audit_log. Da implementare
+    insieme al primo modulo che espone endpoint di creazione prenotazioni,
+    non prima — dipendenza nuova (node-cron) da introdurre solo a quel
+    punto, motivandola nel piano di quella sessione.
+
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
   2.3 Integrazione WuBook/WooDoo channel manager OTA
   2.4 Tassa di soggiorno custom
@@ -1276,11 +1292,244 @@ Sviluppato come repository indipendente (`sito-hotel`), non incluso in questo
 repo. Stack, deploy (GitHub/Vercel/Sanity) e deviazioni dalla spec originale
 documentati nel CLAUDE.md di quel repository.
 
+### Deploy VPS — stima costi Hetzner (15/07/2026)
+
+In attesa di conferma costi col titolare. Dettaglio completo in
+`STIMA_COSTI_DEPLOY_HETZNER.md`.
+
+Confronto rapido Hetzner vs DigitalOcean (stesso hardware: 2 vCPU, 4GB RAM):
+- Hetzner CX22: ~€5,99/mese (~€72/anno) — 20TB traffico incluso, datacenter
+  Germania/Finlandia
+- DigitalOcean Basic Droplet: ~€22/mese (~€264/anno) — 4TB traffico incluso,
+  datacenter Amsterdam
+
+**Raccomandazione: Hetzner CX22** — risparmio netto ~€190/anno a fronte di
+specifiche identiche, e il carico di lavoro (20 camere) resta ben entro le
+capacità di entrambi.
+
+Stima costo totale annuale: VPS ~€72 + Backblaze B2 (backup DB) ~€0-5 + SSL
+Let's Encrypt €0 + snapshot VPS settimanale opzionale ~€14 = **~€75-90/anno**.
+
+Backup DB automatico: cron notturno (pg_dump → gzip → upload rclone su
+Backblaze B2), setup one-time (~30 min: bucket B2, install rclone, script
+bash, cron), poi completamente automatico. Alternativa "zero setup": backup
+gestiti Hetzner (+20% sul costo VPS, snapshot dell'intero server, meno
+granulare del backup DB puntuale).
+
+### Architettura Fase 2 — modulo Prenotazioni (15/07/2026)
+
+Punto centrale emerso: **non esiste ancora un vero modulo Prenotazioni**.
+"Camere" (Fase 1) ha solo anagrafica + stato giornaliero, non date
+arrivo/partenza, dati ospite, tariffe. Tutta la Fase 2 (WuBook, pagamenti,
+A-Cube, Alloggiati Web, tassa di soggiorno) deve agganciarsi a questo
+modulo, che va costruito.
+
+Flusso: Sorgenti prenotazioni (WuBook channel manager, WuBook booking
+engine, reception) → **Prenotazioni** (nuovo, hub centrale) ↔ sync con
+Camere (esistente) → Pagamenti (Nexi/Stripe via WuBook) + Adempimenti
+fiscali (A-Cube, Alloggiati Web, tassa soggiorno) → Dashboard KPI
+(esistente, da alimentare con nuovi dati).
+
+**Ciclo di vita prenotazione (stati proposti):** Opzione (blocco
+provvisorio, no pagamento) → Confermata (caparra incassata) → Check-in
+(soggiorno in corso) → Check-out (camera liberata) → Chiusa (fatturata,
+A-Cube emesso). Stato parallelo: Interrotta (no-show o cancellata, da
+Confermata).
+
+**Schema dati proposto (entità principali):**
+- Prenotazione (testata): canale origine, `external_booking_id`
+  (idempotenza da WuBook), stato, note
+- Soggiorno (riga): FK Prenotazione + FK Camera, data arrivo/partenza,
+  tariffa, ospiti totali
+- Ospite: nome, documento (tipo/numero, campi testuali), cittadinanza, data
+  nascita — MAI un campo foto/scansione documento
+- Pagamento: importo, metodo, stato — collegato a booking engine (caparra)
+  e A-Cube (corrispettivo)
+
+**Tre decisioni architetturali prioritarie (da fissare prima di scrivere codice):**
+
+1. **PCI scope zero** — il gestionale non deve mai vedere/memorizzare dati
+   carta. Con l'integrazione WuBook (media pagamenti Nexi/Stripe) questo è
+   probabilmente già garantito by design: il gestionale riceve solo l'esito
+   via webhook. Attenzione a non aggiungere in futuro form di pagamento
+   "fatti in casa".
+2. **Sicurezza webhook** — verifica firma HMAC sui webhook in ingresso
+   (WuBook, A-Cube) se supportata; in ogni caso `external_booking_id` come
+   barriera anti-duplicazione. Loggare sempre il payload grezzo prima di
+   processarlo, per poter rigiocare un evento in caso di problemi.
+3. **Dati ospite GDPR-ready** — due basi giuridiche distinte, da NON confondere:
+   - **Alloggiati Web / TULPS** (sicurezza pubblica): solo trasmissione, la
+     struttura non deve conservare i dati oltre l'invio. La ricevuta di
+     trasmissione (protocollo, data, esito) va conservata 5 anni — obbligo
+     distinto e separato dall'anagrafica ospite.
+   - **Finalità fiscale** (fatturazione/corrispettivi): consente di
+     conservare l'anagrafica ospite collegata a documenti fiscali fino a 10
+     anni. È la base giuridica che giustifica un'anagrafica ricca, non
+     l'obbligo di sicurezza pubblica.
+   - **Vietato sempre**, a prescindere dalla finalità: conservare foto o
+     scansioni del documento d'identità. Chiarimento Garante Privacy del
+     29/04/2026 (docweb 10244289): le strutture ricettive devono
+     cancellare/distruggere qualsiasi copia del documento subito dopo
+     l'invio ad Alloggiati Web. Solo dati testuali, mai immagini.
+   - Se in futuro si costruisce CRM/marketing verso ospiti abituali, serve
+     una terza base giuridica (consenso esplicito), separata dalle prime due.
+   - Controllo di accesso a livello di campo (non solo di modulo): valutare
+     se estendere i ruoli già presenti in HR ai campi sensibili
+     dell'anagrafica ospiti (es. governante vede note allergie ma non dati
+     fiscali completi).
+
+**Omnitec — chiarito:** non è pre check-in da remoto, è gestione chiavi
+magnetiche/accesso struttura. Le chiavi vengono sempre consegnate in
+portineria da un receptionist. Nessun conflitto con l'obbligo di riscontro
+visivo dell'ospite perché l'identificazione avviene comunque di persona al
+banco.
+
+**Prossimo passo:** schema tabelle PostgreSQL dettagliato per il modulo
+Prenotazioni (nomi campi, tipi, foreign key), tenendo conto dei tre punti
+sopra. Da fare in una prossima sessione, eventualmente direttamente con
+Claude Code una volta validato lo schema concettuale.
+
+### Viste UX Fase 2 — specifica separata (15/07/2026)
+
+Mockup/UX (non codice) su come si presenteranno le nuove viste, da tradurre
+nei componenti reali mantenendo lo stile esistente (sidebar navy, card
+bianche, stessa libreria icone/componenti). Dettaglio completo in
+`MOCKUP_VISTE_FASE2.md`.
+
+- **Sidebar riorganizzata** in sezioni: OSPITALITÀ (Camere, Prenotazioni
+  camere, Pulizie, Ospiti), RISTORANTE (rinominare "Prenotazioni" →
+  "Prenotazioni tavoli" per disambiguare dalle nuove prenotazioni camere),
+  AMMINISTRAZIONE (Pagamenti, Adempimenti fiscali, Report).
+- **Prenotazioni (camere)**: vista predefinita a griglia/planning (camere
+  su righe, giorni su colonne, barra colorata per stato: Opzione ambra,
+  Confermata blu/accent, In corso verde). Query sottostante: intersezione
+  con [data_inizio, data_fine] su tutte le camere — richiede indice su
+  Soggiorno(data_arrivo, data_partenza).
+- **Ospiti**: scheda anagrafica con documento SEMPRE mascherato (es.
+  `CI · ••••1847`, mai foto/scansione), storico soggiorni derivato da
+  Soggiorno (non tabella duplicata), consenso marketing come flag separato
+  con propria base giuridica.
+- **Pulizie**: incrocia Tipo (fermata/partenza, calcolato automaticamente
+  da Soggiorno, sola lettura — sostituisce l'impostazione manuale attuale
+  in Camere) e Completamento (fatta/da fare, unico campo manuale della
+  cameriera). Stato occupazione camera va calcolato dalla stessa fonte
+  Soggiorno in tre punti oggi scollegati: Camere, Prenotazioni, Dashboard
+  (contatore "camere X/21" da rendere calcolato invece che statico).
+- **Conto ospite (folio)**: accumula addebiti da fonti diverse (camera,
+  ristorante, extra) con saldo al checkout. Richiede una funzione "addebita
+  alla camera" nel modulo comande (tag `soggiorno_id`) — modifica al modulo
+  Ristorante esistente, non solo un'aggiunta.
+- **Report avanzati**: ADR, RevPAR, tasso occupazione medio, grafico
+  andamento 7/30 giorni — tutti calcolabili da Soggiorno + Pagamento una
+  volta che Prenotazioni esiste, nessuna nuova tabella richiesta.
+
+Priorità: Prenotazioni + Ospiti sono il prerequisito di tutto il resto.
+Pulizie è indipendente (può essere fatto anche prima/separatamente). Conto
+ospite e Report dipendono dai primi due.
+
+### Audit di sicurezza applicativa (15/07/2026)
+
+Primo audit sistematico su gestionale-hotel (il sito web aveva già avuto un
+audit separato: header, rate limiting, Dependabot). **Risultato: PULITO su
+tutte e 4 le categorie principali.**
+
+- **SQL injection**: ✅ nessuna vulnerabilità. Verificati 21 controller con
+  `pool.query`, tutti i valori utente passano come parametri ($1,$2...),
+  mai concatenati.
+- **XSS**: ✅ nessuna vulnerabilità. Zero `dangerouslySetInnerHTML`/
+  `innerHTML`/`eval` nel repo, tutto renderizzato via JSX con escape
+  automatico React (verificato in particolare menu pubblico QR e note cucina).
+- **IDOR**: ✅ nessuna vulnerabilità. Timbrature derivano sempre l'utente da
+  JWT (`req.utente.id`), mai da parametro URL. Documenti hanno controllo
+  ownership esplicito. Endpoint sensibili ristretti per ruolo.
+- **Rate limiting login**: ✅ già presente (`backend/app.js:43-54`), max 5
+  tentativi/15 min per IP con express-rate-limit.
+
+**Corretto in questa sessione:**
+- Autorizzazione debole menu toggle: `PATCH /api/menu/piatti/:id/toggle`
+  ora richiede ruolo admin/titolare/cuoco/cameriere (prima bastava un token
+  valido di qualsiasi ruolo). Test suite `menu.test.js` 20/20 passata.
+
+**Chiuso in questa sessione:**
+- Security header: applicati in `backend/app.js:29-34`. HSTS rafforzato a
+  `max-age=63072000; includeSubDomains; preload` (⚠️ da rivedere:
+  `includeSubDomains`+`preload` richiede che TUTTI i sottodomini di
+  hoteldelgolfolerici.com servano sempre HTTPS senza eccezioni — verificare
+  quando il dominio torna sotto controllo diretto, nel dubbio togliere
+  `preload` che comunque non ha effetto finché non sottomesso
+  manualmente). CSP, X-Frame-Options, X-Content-Type-Options,
+  Referrer-Policy confermati via curl, zero regressioni.
+- CORS: verificato già corretto, nessuna modifica al codice necessaria.
+  Aggiunta `FRONTEND_URL` a `backend/.env.example` come promemoria
+  obbligatorio per il deploy.
+- Backup cifrati B2: da applicare al Modulo 1.10 (il bucket non esiste
+  ancora). Procedura: Console B2 → Bucket Settings → Encryption → attivare
+  Server-Side Encryption (SSE-B2, gestita da Backblaze, nessuna chiave da
+  custodire). Automatico su ogni upload, nessuna modifica a
+  `backup-db.sh` richiesta.
+
+**Falso allarme verificato e chiuso:** file `frontend/AGENTS.md` — è una
+funzionalità ufficiale di Next.js 16.2+ (annunciata 18/03/2026):
+`create-next-app` include di default un AGENTS.md che punta alla
+documentazione bundlata in `node_modules/next/dist/docs/`, per evitare che
+gli assistenti AI scrivano codice con pattern di training obsoleti.
+Origine: commit `fbd4164` (02/07/2026), conversione di `frontend` da
+submodule a cartella normale. Nessuna azione necessaria.
+
+**Processo di sicurezza continuativo — non un controllo una tantum.** Ogni
+nuovo modulo riapre le stesse categorie di rischio (SQLi, XSS, IDOR,
+autorizzazione). Checkpoint da ricordare nel ciclo di vita del progetto:
+
+1. Automatico e continuo: Dependabot/npm audit sulle dipendenze — da
+   attivare anche su gestionale-hotel (oggi presente solo sul sito web),
+   gira da solo senza sessioni dedicate.
+2. Ad ogni nuovo modulo che tocca dati sensibili o soldi: mini-review
+   mirata su autorizzazione (IDOR) e validazione input. In Fase 2 vale
+   soprattutto per Prenotazioni, Pagamenti, ricezione webhook — è terreno
+   nuovo, più facile introdurre un buco.
+3. ⚠️ **Prima del deploy in produzione (Modulo 1.10)**: ripetere l'audit
+   completo (SQLi, XSS, IDOR, rate limiting, header, CORS, backup) come
+   ultimo checkpoint. Motivo: oggi il gestionale è raggiungibile solo dalla
+   LAN dell'hotel (rischio basso), dopo il deploy sarà raggiungibile da
+   internet (rischio reale) — stesso codice, esposizione completamente
+   diversa. Va rifatto anche se nel frattempo il codice non è cambiato.
+4. Dopo modifiche a codice sensibile: login, gestione permessi, logica di
+   pagamento — controllo mirato su quella parte specifica dopo ogni modifica.
+5. Periodico post go-live: audit completo ogni pochi mesi, o dopo
+   aggiornamenti importanti di Next.js/Express/PostgreSQL (le versioni
+   nuove possono cambiare comportamenti di sicurezza di default — vedi il
+   caso AGENTS.md sopra).
+6. Eventi specifici: cambio staff con accesso al sistema (revocare
+   credenziali), sospetto incidente, nuova normativa che tocca i dati
+   trattati (es. i chiarimenti Garante Privacy di aprile 2026 su documenti
+   ospiti).
+
+**Da affrontare prima del go-live Fase 2:**
+- Scadenza automatica prenotazioni "Opzione": entro 24-48h se non
+  confermate, previene sia abusi (esaurimento inventario) sia problemi
+  operativi.
+- Bot protection sui form pubblici: honeypot o captcha leggero (es.
+  Cloudflare Turnstile, gratuito) su form convenzione lavoro e altri form
+  pubblici del sito quando diventeranno form veri.
+- Dependency scanning: attivare Dependabot anche su gestionale-hotel (già
+  presente sul sito web).
+
+**Bassa priorità per la scala attuale (da tenere a mente, non urgente):**
+rotazione periodica secret (JWT, chiavi API), audit log dettagliato azioni
+sensibili (utile se cresce lo staff), resistenza a spoofing GPS nelle
+timbrature HR.
+
 ### Prossimo step
 
 Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**
-(Nginx, PM2, SSL, backup automatico) su Hetzner CX22, per gestionale + sito
-sulla stessa macchina (vedi Sezione "Deploy futuro" nella memoria di progetto).
+(Nginx, PM2, SSL, backup automatico) su Hetzner CX22 (~€75-90/anno, vedi
+sopra), per gestionale + sito sulla stessa macchina. Prima del deploy,
+ripetere l'audit di sicurezza completo (vedi "Processo di sicurezza
+continuativo" sopra, punto 3).
+
+Per la Fase 2, il prossimo passo concettuale (non urgente, dopo il
+deploy) è lo schema tabelle PostgreSQL del modulo Prenotazioni, sulla base
+dell'architettura definita sopra.
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 

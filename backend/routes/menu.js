@@ -7,6 +7,16 @@ const fs = require('fs');
 const { verificaToken, soloTitolare } = require('../middleware/auth');
 const menuCtrl = require('../controllers/menuController');
 
+// Ruoli ammessi a segnare un piatto esaurito/disponibile — stesso gruppo CUCINA di ristorante.js
+function ruoli(...ammessi) {
+  return (req, res, next) => {
+    if (!req.utente || !ammessi.includes(req.utente.ruolo)) {
+      return res.status(403).json({ errore: 'Non hai i permessi per questa operazione.' });
+    }
+    next();
+  };
+}
+
 const storage = multer.diskStorage({
   destination: path.join(__dirname, '..', 'uploads', 'menu'),
   filename: (req, file, cb) => {
@@ -50,7 +60,7 @@ router.delete('/categorie/:id',   soloTitolare, menuCtrl.eliminaCategoria);
 router.get('/piatti',             menuCtrl.listPiatti);
 router.post('/piatti',            soloTitolare, upload.single('immagine'), menuCtrl.creaPiatto);
 router.put('/piatti/:id',         soloTitolare, upload.single('immagine'), menuCtrl.modificaPiatto);
-router.patch('/piatti/:id/toggle',verificaToken, menuCtrl.toggleDisponibile);
+router.patch('/piatti/:id/toggle',ruoli('admin', 'titolare', 'cuoco', 'cameriere'), menuCtrl.toggleDisponibile);
 router.delete('/piatti/:id',      soloTitolare, menuCtrl.eliminaPiatto);
 
 module.exports = router;
