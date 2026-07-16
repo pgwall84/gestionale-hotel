@@ -1449,6 +1449,9 @@ tutte e 4 le categorie principali.**
 - Autorizzazione debole menu toggle: `PATCH /api/menu/piatti/:id/toggle`
   ora richiede ruolo admin/titolare/cuoco/cameriere (prima bastava un token
   valido di qualsiasi ruolo). Test suite `menu.test.js` 20/20 passata.
+- Gap di copertura test chiuso il 16/07/2026: aggiunto test negativo
+  (`receptionist → 403`) sul toggle sopra, che prima non aveva un caso che
+  verificasse il blocco dei ruoli esclusi. Test suite `menu.test.js` 21/21 passata.
 
 **Chiuso in questa sessione:**
 - Security header: applicati in `backend/app.js:29-34`. HSTS rafforzato a

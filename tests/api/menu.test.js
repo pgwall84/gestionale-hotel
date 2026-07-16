@@ -226,6 +226,14 @@ describe('PATCH /api/menu/piatti/:id/toggle', () => {
     expect(res.status).toBe(401);
   });
 
+  test('receptionist → 403 (ruolo non ammesso al toggle)', async () => {
+    if (!primoIdPiatto) return;
+    const res = await request(app)
+      .patch(`/api/menu/piatti/${primoIdPiatto}/toggle`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(403);
+  });
+
   test('con token valido → 200 con disponibile invertito', async () => {
     if (!primoIdPiatto) {
       console.warn('Nessun piatto nel DB — test toggle skippato');
