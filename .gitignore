@@ -11,3 +11,5 @@ backups/
 *.log
 backend/uploads/
 frontend/.next/
+test-results/
+playwright-report/

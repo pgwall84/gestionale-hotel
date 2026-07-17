@@ -21,6 +21,13 @@ const TRANSIZIONI_VALIDE = {
 
 // GET /api/prenotazioni/griglia?data_inizio=&data_fine= — vista planning.
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
+// LEFT JOIN a partire da camere (non da soggiorni): la griglia deve mostrare
+// SEMPRE tutte le camere come righe, comprese quelle libere nel range
+// richiesto (altrimenti non sarebbe possibile trascinarci sopra una
+// prenotazione) — le colonne soggiorno_id/prenotazione_id ecc. sono NULL
+// per una camera senza soggiorni nel range. Ordinamento numerico esplicito
+// su camere.numero (VARCHAR) per evitare l'ordine lessicografico ('10'
+// prima di '2') — stesso pattern di guardia già usato in camereController.
 async function griglia(req, res) {
   const { data_inizio, data_fine } = req.query;
   if (!data_inizio || !data_fine) {
@@ -28,17 +35,18 @@ async function griglia(req, res) {
   }
   try {
     const result = await pool.query(
-      `SELECT s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
-              c.id AS camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
+      `SELECT c.id AS camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
+              s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
               p.id AS prenotazione_id, p.stato AS prenotazione_stato,
               o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
-       FROM soggiorni s
-       JOIN camere c ON c.id = s.camera_id
-       JOIN prenotazioni p ON p.id = s.prenotazione_id
-       JOIN ospiti o ON o.id = s.ospite_id
-       WHERE s.cancellato = false
+       FROM camere c
+       LEFT JOIN soggiorni s ON s.camera_id = c.id AND s.cancellato = false
          AND daterange(s.data_arrivo, s.data_partenza, '[)') && daterange($1, $2, '[)')
-       ORDER BY c.piano NULLS LAST, c.numero, s.data_arrivo`,
+       LEFT JOIN prenotazioni p ON p.id = s.prenotazione_id
+       LEFT JOIN ospiti o ON o.id = s.ospite_id
+       ORDER BY c.piano NULLS LAST,
+                CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END,
+                s.data_arrivo`,
       [data_inizio, data_fine]
     );
     res.json(result.rows);

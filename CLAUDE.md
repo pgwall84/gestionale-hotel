@@ -1045,6 +1045,49 @@ Modulo 1.3 — Camere:
   produzione. Da sistemare quando si tocca di nuovo il modulo Camere
   (validazione a monte sull'INSERT, o query più difensiva).
 
+frontend/lib/api.js — messaggi di errore backend (scoperto 17/07/2026,
+CORRETTO in questa sessione, ma verificare l'impatto visibile):
+  L'helper leggeva `json?.errore` (chiave italiana) per costruire
+  `err.message`, ma TUTTI i controller backend rispondono con
+  `{ error: '...' }` (inglese, Sezione 5 di questo file). Risultato: da
+  quando esiste `api.js`, `err.message` è sempre stato esattamente la
+  stringa generica `Errore ${status}` (es. "Errore 400", "Errore 409"),
+  MAI il messaggio specifico scritto dai controller — non un fallimento
+  silenzioso, ma un messaggio sempre generico e mai informativo, in ogni
+  modulo del gestionale. Corretto in `frontend/lib/api.js` (`json?.error`).
+  ⚠️ **Impatto**: 13 pagine leggono `err.message` (direttamente o via
+  `err.response?.data?.errore || err.message`, che risolveva comunque
+  sempre a `err.message` per lo stesso motivo) — archivio, personale,
+  timbratura, home, magazzino, magazzino/scansiona, ristorante, sala,
+  cucina, prenotazioni (ristorante), ztl, utenti, planning-camere. Da ora
+  mostrano il messaggio specifico del backend invece di "Errore
+  400/409/500" generico. **La prossima volta che si tocca uno di questi
+  moduli, verificare se l'utente segnala un messaggio d'errore "nuovo" o
+  "mai visto prima"**: è questo bug che finalmente si vede, non una
+  regressione introdotta dal tocco successivo.
+  **Eccezione non coperta dal fix**: `frontend/app/login/page.jsx` non usa
+  `err.message` — legge `err?.response?.data?.errore || 'Errore di
+  connessione. Riprova.'` con la STESSA chiave sbagliata ma un fallback
+  hardcoded diverso. Resta silenziosamente sbagliata: un login fallito per
+  password errata mostra ancora il fuorviante "Errore di connessione.
+  Riprova." invece del motivo reale. Non toccata (fuori scope Sessione 5),
+  da correggere quando si tocca di nuovo il modulo login (stesso fix:
+  `err?.response?.data?.error`).
+
+tests/e2e/login.spec.js — getByLabel non trova i campi (scoperto
+17/07/2026, non corretto, fuori scope Sessione 5):
+  `frontend/app/login/page.jsx` ha due `<label>` (Email, Password) senza
+  `htmlFor`/`id` a collegarli ai rispettivi `<input>` — nessuna
+  associazione programmatica. `login.spec.js` usa `page.getByLabel(/email/i)`
+  e `page.getByLabel(/password/i)`, che quindi non trovano mai i campi e
+  vanno in timeout (verificato: lo stesso identico errore si riproduce nel
+  nuovo `tests/e2e/planning-camere.spec.js` finché non è stato riscritto
+  con `getByPlaceholder`). `login.spec.js` esistente molto probabilmente
+  fallisce già oggi in CI/locale, indipendentemente da questa sessione.
+  Fix quando si riprende: aggiungere `htmlFor="email"`/`id="email"` (e
+  coppia analoga per password) in `login/page.jsx`, oppure riscrivere il
+  test con `getByPlaceholder`/selettore diretto sull'input.
+
 Modulo 1.8 — Dashboard (evolutive, non ora):
   Food cost % sul fatturato (spesa materie prime / ricavi ristorante × 100)
   — evolutiva quando ci sarà storico incassi reale. Oggi mostra
@@ -1758,6 +1801,82 @@ gruppo (100+50=150) per escludere che la query prendesse solo l'ultima riga.
 tutti gli endpoint Ospiti/Prenotazioni/Soggiorni/Gruppi/Pagamenti costruiti
 finora).
 
+### Sessione 5 — Vista griglia planning camere: COMPLETATO ✅ (17/07/2026)
+
+Frontend `docs/FRONTEND_GRIGLIA_FASE2.md`, in due parti come da contratto.
+
+**Parte 1 — Popolamento `camere.piano`**: i dati reali non corrispondevano
+allo script SQL del contratto (che assumeva numerazione alberghiera 101-121
+con appartamento `A1`). Il DB reale ha `camere.numero` 1-21 (manca il 17,
+non il 117) + un'unità `'app'` (non `A1`) — dato segnaposto mai sostituito
+con una numerazione reale, oppure la numerazione reale è davvero 1-21.
+Confermato `\d camere`: `numero` è `VARCHAR(20)`, CAST fragile reale.
+Deciso con l'utente: bande automatiche da 5 (1-5→piano1, 6-10→piano2,
+11-15→piano3, 16-21→piano4 con `17` mancante quindi 5 righe comunque,
+`app`→NULL). 20/20 camere popolate, verificato con SELECT.
+
+**Parte 2 — Vista griglia**:
+- File nuovo: `frontend/app/planning-camere/page.jsx` (non `/prenotazioni-
+  camere`: quel path avrebbe fatto match col prefisso di `/prenotazioni`
+  esistente — la voce "Prenotazioni" del ristorante sarebbe risultata
+  erroneamente attiva anche su questa pagina, per via del controllo
+  `pathname.startsWith(voce.href)` in Sidebar.tsx).
+- Libreria drag-and-drop: **@dnd-kit/core** (nuova dipendenza, sola
+  `@dnd-kit/core`). Scartate: HTML5 drag nativo (niente supporto touch di
+  serie, il progetto usa già tablet in sala/cucina), react-big-calendar
+  (pensato per eventi mese/settimana/giorno, non per grid risorse-per-riga).
+  Sensori pointer/touch nativi di dnd-kit, nessun polyfill.
+- `backend/controllers/prenotazioniController.js`, funzione `griglia()`:
+  cambiata da `JOIN` a `LEFT JOIN` a partire da `camere` — la versione
+  originale (Sessione 2) restituiva solo le camere con almeno un soggiorno
+  nel range, ma il layout richiede TUTTE le camere come righe (anche
+  libere, per poterci trascinare sopra una prenotazione). Aggiunto anche
+  un `ORDER BY` numerico esplicito su `camere.numero` (stesso pattern di
+  guardia già usato in `camereController.lista`) per evitare l'ordine
+  lessicografico ('10' prima di '2'). Nessuna modifica a path/permessi/
+  forma della risposta per le righe con soggiorno.
+- `frontend/lib/api.js`: bug preesistente scoperto e corretto (chiave
+  `errore` invece di `error`, mai un messaggio backend specifico arrivato
+  all'utente in NESSUNA pagina) — necessario per il messaggio 409 richiesto
+  dal contratto. **Impatto su 13 pagine esistenti + eccezione login non
+  coperta dal fix: dettaglio completo in Sezione 14**, voce
+  "frontend/lib/api.js — messaggi di errore backend".
+- `frontend/app/globals.css`: aggiunte `--status-graylight-*` e
+  `--status-graydark-*` (mancavano, servono per gli stati `check_out` e
+  `chiusa` — il mockup originale ne prevedeva solo 3, il contratto del
+  16/07 ha risolto esplicitamente l'apertura su interrotta/cancellata
+  aggiungendo questi due).
+- `frontend/components/layout/Sidebar.tsx`: nuova sezione OSPITALITÀ con
+  la sola voce "Prenotazioni" → `/planning-camere` (non l'intera
+  riorganizzazione del mockup punto 1, fuori scope di questa sessione).
+- Pannello dettaglio: dati da `GET /api/prenotazioni/:id`, azioni
+  Check-in (`PATCH .../stato`) e Modifica (form che copre sia note/canale
+  via `PATCH /api/prenotazioni/:id` sia camera/date via
+  `PATCH /api/soggiorni/:id`, quest'ultimo come alternativa manuale al
+  drag-and-drop).
+- Drag-and-drop: aggiornamento ottimistico, `PATCH /api/soggiorni/:id`,
+  rollback immediato allo stato precedente su 409 + messaggio "Camera già
+  occupata in queste date". Verificato end-to-end (vedi sotto) sia il
+  caso di successo sia il rollback su conflitto reale.
+- Permessi: `puoTrascinare` lato frontend limita il drag ad
+  admin/titolare/receptionist (`useDraggable({ disabled })`); il backend
+  già rifiutava comunque le richieste di `portiere_notte` (permessi
+  Sessione 2, non modificati qui).
+
+**Verifica**: sessione interattiva nel browser (login reale, griglia
+popolata, check-in da pannello, drag riuscito con verifica DB delle nuove
+date, conflitto 409 reale forzato con un secondo soggiorno e rollback
+verificato sia in DB sia visivamente) + `tests/e2e/planning-camere.spec.js`
+nuovo, 3 test Playwright verdi (caricamento griglia, cambio range 7/14/mese,
+drag-and-drop con rollback su 409). Nel farlo, scoperto un bug preesistente
+in `login.spec.js` (non corretto, fuori scope — dettaglio in Sezione 14,
+voce "tests/e2e/login.spec.js").
+
+**Nota per il prossimo passo Fase 2A**: la vista griglia è la base
+CRUD+UI del modulo 2.2 (planning/disponibilità), ma tariffe, stagionalità
+e pacchetti all-inclusive elencati nella tabella Fase 2A restano da fare —
+riga 2.2 della roadmap non ancora marcata ✅ per questo.
+
 ### Prossimo step
 
 Fase 1 quasi completa — **unico step rimasto: Modulo 1.10 — Deploy VPS**
@@ -1766,9 +1885,13 @@ sopra), per gestionale + sito sulla stessa macchina. Prima del deploy,
 ripetere l'audit di sicurezza completo (vedi "Processo di sicurezza
 continuativo" sopra, punto 3).
 
-Per la Fase 2, il prossimo passo concettuale (non urgente, dopo il
-deploy) è lo schema tabelle PostgreSQL del modulo Prenotazioni, sulla base
-dell'architettura definita sopra.
+Per la Fase 2A, tutte le 5 sessioni del contratto API/frontend
+Prenotazioni sono completate (Ospiti, Prenotazioni+state machine,
+Soggiorni/Soggiorno_ospiti, Gruppi+Pagamenti, vista griglia planning).
+Prossimo passo concreto: tariffe/stagionalità/pacchetti all-inclusive
+(completamento modulo 2.2, non ancora ✅ in tabella) oppure modulo 2.3
+(integrazione WuBook/WooDoo) — da decidere con l'utente all'inizio della
+prossima sessione.
 
 ### Istruzioni per sessioni efficienti (ridurre consumo token)
 

@@ -49,7 +49,7 @@ async function request(method, path, data = null, customHeaders = {}) {
   const json = await res.json().catch(() => null);
 
   if (!res.ok) {
-    const err = new Error(json?.errore || `Errore ${res.status}`);
+    const err = new Error(json?.error || `Errore ${res.status}`);
     err.response = { status: res.status, data: json };
     throw err;
   }

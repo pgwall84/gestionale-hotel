@@ -31,6 +31,10 @@
   --status-red-text: #A32D2D;
   --status-blue-bg: #E6F1FB;
   --status-blue-text: #185FA5;
+  --status-graylight-bg: #F1F2F4;
+  --status-graylight-text: #6B7280;
+  --status-graydark-bg: #E2E4E8;
+  --status-graydark-text: #374151;
 
   /* Tipografia */
   --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;

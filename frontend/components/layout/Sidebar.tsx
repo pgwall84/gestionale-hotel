@@ -28,6 +28,12 @@ const SEZIONI_MENU = [
     ],
   },
   {
+    label: 'OSPITALITÀ',
+    voci: [
+      { href: '/planning-camere', icona: CalendarDays, testo: 'Prenotazioni', ruoli: [...AT,'receptionist','portiere_notte'] },
+    ],
+  },
+  {
     label: 'RISTORANTE',
     voci: [
       { href: '/camere',       icona: BedDouble,       testo: 'Camere',          ruoli: [...AT,'cameriere','portiere_notte'] },
