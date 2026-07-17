@@ -8,9 +8,9 @@
 // Accessibile a: admin, titolare, receptionist (lettura+trascinamento),
 // portiere_notte (sola lettura, no trascinamento).
 
-import { useState, useEffect, useCallback, useMemo } from 'react';
+import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
-  ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle,
+  ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
@@ -34,6 +34,15 @@ const RANGE_OPZIONI = [
   { chiave: '7',    label: '7 giorni' },
   { chiave: '14',   label: '14 giorni' },
   { chiave: 'mese', label: 'Mese' },
+];
+
+const CANALI_ORIGINE = [
+  { valore: 'diretta',     label: 'Diretta' },
+  { valore: 'telefono',    label: 'Telefono' },
+  { valore: 'booking_com', label: 'Booking.com' },
+  { valore: 'airbnb',      label: 'Airbnb' },
+  { valore: 'wubook',      label: 'WuBook' },
+  { valore: 'altro',       label: 'Altro' },
 ];
 
 // ── Helper date (aritmetica in ora locale, stesso pattern di app/prenotazioni/page.jsx) ──
@@ -131,7 +140,7 @@ function Barra({ soggiorno, style, puoTrascinare, onApri }) {
 
 // ── Riga camera (droppable) ─────────────────────────────────────────────────
 
-function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, onApriDettaglio }) {
+function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, onApriDettaglio, onCellaVuota }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `camera-${camera.camera_id}`,
     data: { cameraId: camera.camera_id },
@@ -157,13 +166,20 @@ function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, onApriDe
           background: isOver ? 'var(--status-blue-bg)' : undefined,
         }}
       >
-        {giorni.map((g, i) => (
-          <div
-            key={g}
-            style={{ gridColumn: i + 1, gridRow: 1 }}
-            className="border-r border-b"
-          />
-        ))}
+        {giorni.map((g, i) => {
+          // Cella "vuota" = nessun soggiorno di questa camera copre il giorno g
+          // (confronto tra stringhe ISO YYYY-MM-DD, ordinamento cronologico corretto).
+          const coperta = camera.soggiorni.some(s => g >= s.data_arrivo && g < s.data_partenza);
+          const cliccabile = puoTrascinare && !coperta;
+          return (
+            <div
+              key={g}
+              style={{ gridColumn: i + 1, gridRow: 1, cursor: cliccabile ? 'pointer' : undefined }}
+              className="border-r border-b"
+              onClick={cliccabile ? () => onCellaVuota(camera.camera_id, g) : undefined}
+            />
+          );
+        })}
         {camera.soggiorni.map((s) => {
           const { colStart, colEnd } = calcolaBarra(giorni, s.data_arrivo, s.data_partenza);
           return (
@@ -434,6 +450,327 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   );
 }
 
+// ── Form nuova prenotazione ──────────────────────────────────────────────────
+// Stesso componente per i due punti d'ingresso (pulsante in alto / click cella
+// vuota): cambia solo `iniziale` con cui viene aperto. Su 409/400 il form
+// resta aperto (dati inseriti intatti) — solo su successo si chiude.
+
+function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
+  const [cameraId, setCameraId] = useState(iniziale.camera_id ?? '');
+  const [dataArrivo, setDataArrivo] = useState(iniziale.data_arrivo ?? '');
+  const [dataPartenza, setDataPartenza] = useState(iniziale.data_partenza ?? '');
+  const [numOspiti, setNumOspiti] = useState(1);
+  const [tariffaTotale, setTariffaTotale] = useState('');
+  const [canaleOrigine, setCanaleOrigine] = useState('diretta');
+  const [note, setNote] = useState('');
+
+  const [ospiteSelezionato, setOspiteSelezionato] = useState(null);
+  const [ricercaOspite, setRicercaOspite] = useState('');
+  const [risultatiOspiti, setRisultatiOspiti] = useState([]);
+  const [cercandoOspiti, setCercandoOspiti] = useState(false);
+
+  const [nuovoOspiteAperto, setNuovoOspiteAperto] = useState(false);
+  const [nuovoOspiteNome, setNuovoOspiteNome] = useState('');
+  const [nuovoOspiteCognome, setNuovoOspiteCognome] = useState('');
+  const [erroreNuovoOspite, setErroreNuovoOspite] = useState(null);
+  const [creandoOspite, setCreandoOspite] = useState(false);
+
+  const [erroreDate, setErroreDate] = useState(null);
+  const [erroreGenerale, setErroreGenerale] = useState(null);
+  const [salvataggio, setSalvataggio] = useState(false);
+
+  // Ricerca ospiti con debounce — non cerca se un ospite è già selezionato.
+  useEffect(() => {
+    if (ospiteSelezionato || ricercaOspite.trim().length < 2) {
+      setRisultatiOspiti([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        setCercandoOspiti(true);
+        const risposta = await api.get(`/ospiti?search=${encodeURIComponent(ricercaOspite.trim())}`);
+        setRisultatiOspiti(risposta.data);
+      } catch {
+        setRisultatiOspiti([]);
+      } finally {
+        setCercandoOspiti(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ricercaOspite, ospiteSelezionato]);
+
+  function validaDate(arrivo, partenza) {
+    setErroreDate(arrivo && partenza && partenza <= arrivo ? 'La partenza deve essere successiva all\'arrivo.' : null);
+  }
+
+  async function creaNuovoOspite() {
+    setErroreNuovoOspite(null);
+    if (!nuovoOspiteNome.trim() || !nuovoOspiteCognome.trim()) {
+      setErroreNuovoOspite('Nome e cognome sono obbligatori.');
+      return;
+    }
+    setCreandoOspite(true);
+    try {
+      const risposta = await api.post('/ospiti', {
+        nome: nuovoOspiteNome.trim(),
+        cognome: nuovoOspiteCognome.trim(),
+      });
+      setOspiteSelezionato(risposta.data);
+      setNuovoOspiteAperto(false);
+      setNuovoOspiteNome('');
+      setNuovoOspiteCognome('');
+    } catch (err) {
+      setErroreNuovoOspite(err.response?.data?.error || err.message || 'Errore nella creazione ospite.');
+    } finally {
+      setCreandoOspite(false);
+    }
+  }
+
+  async function invia() {
+    setErroreGenerale(null);
+    if (!cameraId) return setErroreGenerale('Seleziona una camera.');
+    if (!ospiteSelezionato) return setErroreGenerale('Seleziona o crea un ospite.');
+    if (!dataArrivo || !dataPartenza) return setErroreGenerale('Inserisci le date di arrivo e partenza.');
+    if (dataPartenza <= dataArrivo) return setErroreDate('La partenza deve essere successiva all\'arrivo.');
+
+    setSalvataggio(true);
+    try {
+      await api.post('/prenotazioni', {
+        canale_origine: canaleOrigine,
+        external_booking_id: null,
+        gruppo_id: null,
+        note: note || '',
+        soggiorno: {
+          camera_id: Number(cameraId),
+          ospite_id: ospiteSelezionato.id,
+          data_arrivo: dataArrivo,
+          data_partenza: dataPartenza,
+          num_ospiti: Number(numOspiti) || 1,
+          tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+        },
+      });
+      onCreato();
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setErroreGenerale(err.message || 'Camera già occupata in queste date.');
+      } else {
+        setErroreGenerale(err.response?.data?.error || err.message || 'Errore nella creazione della prenotazione.');
+      }
+    } finally {
+      setSalvataggio(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div
+        className="w-full max-w-md bg-white rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
+        onClick={(e) => e.stopPropagation()}
+      >
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <p className="font-semibold text-sm">Nuova prenotazione</p>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {erroreGenerale && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {erroreGenerale}
+            </div>
+          )}
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Camera</label>
+            <select
+              value={cameraId}
+              onChange={(e) => setCameraId(e.target.value)}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            >
+              <option value="">Seleziona camera...</option>
+              {elencoCamere.map(c => (
+                <option key={c.camera_id} value={c.camera_id}>
+                  {c.numero !== 'app' ? `Camera ${c.numero}` : c.nome}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Ospite</label>
+            {ospiteSelezionato ? (
+              <div className="flex items-center justify-between border rounded-lg px-2 py-1.5 text-sm">
+                <span className="flex items-center gap-1.5"><User size={14} /> {ospiteSelezionato.nome} {ospiteSelezionato.cognome}</span>
+                <button type="button" onClick={() => setOspiteSelezionato(null)} className="text-xs underline" style={{ color: 'var(--muted-foreground)' }}>
+                  Cambia
+                </button>
+              </div>
+            ) : (
+              <div className="relative">
+                <input
+                  type="text"
+                  value={ricercaOspite}
+                  onChange={(e) => setRicercaOspite(e.target.value)}
+                  placeholder="Cerca per nome o cognome..."
+                  className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                />
+                {cercandoOspiti && (
+                  <div className="absolute right-2 top-1.5"><Loader2 size={14} className="animate-spin" /></div>
+                )}
+                {risultatiOspiti.length > 0 && (
+                  <div className="absolute z-20 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                    {risultatiOspiti.map(o => (
+                      <button
+                        type="button"
+                        key={o.id}
+                        onClick={() => { setOspiteSelezionato(o); setRicercaOspite(''); setRisultatiOspiti([]); }}
+                        className="w-full text-left px-2 py-1.5 text-sm hover:bg-gray-50"
+                      >
+                        {o.nome} {o.cognome}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <button
+                  type="button"
+                  onClick={() => setNuovoOspiteAperto(v => !v)}
+                  className="mt-1.5 text-xs font-medium flex items-center gap-1"
+                  style={{ color: 'var(--hotel-navy)' }}
+                >
+                  <UserPlus size={13} /> Nuovo ospite
+                </button>
+
+                {nuovoOspiteAperto && (
+                  <div className="mt-2 border rounded-lg p-2.5 space-y-2" style={{ background: 'var(--background)' }}>
+                    {erroreNuovoOspite && (
+                      <p className="text-xs" style={{ color: 'var(--status-red-text)' }}>{erroreNuovoOspite}</p>
+                    )}
+                    <input
+                      type="text"
+                      value={nuovoOspiteNome}
+                      onChange={(e) => setNuovoOspiteNome(e.target.value)}
+                      placeholder="Nome"
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    />
+                    <input
+                      type="text"
+                      value={nuovoOspiteCognome}
+                      onChange={(e) => setNuovoOspiteCognome(e.target.value)}
+                      placeholder="Cognome"
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                    />
+                    <div className="flex gap-2">
+                      <button
+                        type="button"
+                        onClick={creaNuovoOspite}
+                        disabled={creandoOspite}
+                        className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white"
+                        style={{ background: 'var(--hotel-navy)' }}
+                      >
+                        {creandoOspite ? 'Creazione...' : 'Crea e usa'}
+                      </button>
+                      <button
+                        type="button"
+                        onClick={() => { setNuovoOspiteAperto(false); setErroreNuovoOspite(null); }}
+                        className="flex-1 rounded-lg py-1.5 text-xs font-medium border"
+                      >
+                        Annulla
+                      </button>
+                    </div>
+                  </div>
+                )}
+              </div>
+            )}
+          </div>
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium block mb-1">Arrivo</label>
+              <input
+                type="date"
+                value={dataArrivo}
+                onChange={(e) => { setDataArrivo(e.target.value); validaDate(e.target.value, dataPartenza); }}
+                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">Partenza</label>
+              <input
+                type="date"
+                value={dataPartenza}
+                onChange={(e) => { setDataPartenza(e.target.value); validaDate(dataArrivo, e.target.value); }}
+                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+          {erroreDate && <p className="text-xs" style={{ color: 'var(--status-red-text)' }}>{erroreDate}</p>}
+
+          <div className="grid grid-cols-2 gap-2">
+            <div>
+              <label className="text-xs font-medium block mb-1">Numero ospiti</label>
+              <input
+                type="number"
+                min={1}
+                value={numOspiti}
+                onChange={(e) => setNumOspiti(e.target.value)}
+                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+              />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">Tariffa totale (€)</label>
+              <input
+                type="number"
+                min={0}
+                step="0.01"
+                value={tariffaTotale}
+                onChange={(e) => setTariffaTotale(e.target.value)}
+                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Canale origine</label>
+            <select
+              value={canaleOrigine}
+              onChange={(e) => setCanaleOrigine(e.target.value)}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            >
+              {CANALI_ORIGINE.map(c => <option key={c.valore} value={c.valore}>{c.label}</option>)}
+            </select>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Note</label>
+            <textarea
+              value={note}
+              rows={2}
+              onChange={(e) => setNote(e.target.value)}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            />
+          </div>
+
+          <div className="flex gap-2 pt-2">
+            <button
+              onClick={invia}
+              disabled={salvataggio}
+              className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
+              style={{ background: 'var(--hotel-amber)' }}
+            >
+              {salvataggio ? 'Creazione...' : 'Crea prenotazione'}
+            </button>
+            <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">
+              Annulla
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Pagina principale ────────────────────────────────────────────────────────
 
 export default function PaginaPlanningCamere() {
@@ -445,12 +782,24 @@ export default function PaginaPlanningCamere() {
   const [errore, setErrore] = useState(null);
   const [dragErrore, setDragErrore] = useState(null);
   const [prenotazioneApertaId, setPrenotazioneApertaId] = useState(null);
+  const [formNuovaPrenotazione, setFormNuovaPrenotazione] = useState(null);
 
   const puoTrascinare = RUOLI_TRASCINA.includes(utente?.ruolo);
   const giorni = useMemo(() => calcolaGiorni(ancora, rangeModo), [ancora, rangeModo]);
   const oggiStr = oggi();
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
+
+  // Guardia difensiva: evita che un click "residuo" dopo il rilascio di un
+  // drag-and-drop apra per errore il form da cella vuota. useDroppable non
+  // registra listener sulla cella (solo il ref), quindi in condizioni normali
+  // non c'è conflitto — questo ref è solo una rete di sicurezza aggiuntiva.
+  const dragInCorsoRef = useRef(false);
+
+  function apriFormDaCella(cameraId, giorno) {
+    if (dragInCorsoRef.current) return;
+    setFormNuovaPrenotazione({ camera_id: cameraId, data_arrivo: giorno, data_partenza: spostaData(giorno, 1) });
+  }
 
   const caricaGriglia = useCallback(async () => {
     try {
@@ -560,6 +909,10 @@ export default function PaginaPlanningCamere() {
   }
 
   function handleDragEnd(event) {
+    // Reset del ref rimandato di un tick: lascia esaurire un eventuale click
+    // sintetico generato dal browser sullo stesso rilascio del puntatore.
+    setTimeout(() => { dragInCorsoRef.current = false; }, 0);
+
     const { active, over, delta } = event;
     if (!over) return;
     const soggiorno = active.data.current.soggiorno;
@@ -613,6 +966,16 @@ export default function PaginaPlanningCamere() {
               </div>
             ))}
           </div>
+
+          {puoTrascinare && (
+            <button
+              onClick={() => setFormNuovaPrenotazione({})}
+              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+              style={{ background: 'var(--hotel-amber)' }}
+            >
+              <Plus size={14} /> Nuova prenotazione
+            </button>
+          )}
         </div>
 
         {dragErrore && (
@@ -635,7 +998,7 @@ export default function PaginaPlanningCamere() {
           </div>
         ) : (
           <div className="rounded-lg border bg-white overflow-x-auto">
-            <DndContext sensors={sensors} onDragEnd={handleDragEnd}>
+            <DndContext sensors={sensors} onDragStart={() => { dragInCorsoRef.current = true; }} onDragEnd={handleDragEnd}>
               <div
                 style={{
                   display: 'grid',
@@ -682,6 +1045,7 @@ export default function PaginaPlanningCamere() {
                           oggiStr={oggiStr}
                           puoTrascinare={puoTrascinare}
                           onApriDettaglio={setPrenotazioneApertaId}
+                          onCellaVuota={apriFormDaCella}
                         />
                       );
                       riga++;
@@ -701,6 +1065,18 @@ export default function PaginaPlanningCamere() {
           elencoCamere={elencoCamere}
           onChiudi={() => setPrenotazioneApertaId(null)}
           onCambiato={caricaGriglia}
+        />
+      )}
+
+      {formNuovaPrenotazione && (
+        <FormNuovaPrenotazione
+          iniziale={formNuovaPrenotazione}
+          elencoCamere={elencoCamere}
+          onChiudi={() => setFormNuovaPrenotazione(null)}
+          onCreato={async () => {
+            setFormNuovaPrenotazione(null);
+            await caricaGriglia();
+          }}
         />
       )}
     </AppShell>
