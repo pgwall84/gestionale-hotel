@@ -1119,6 +1119,14 @@ Fase 2 (dopo go-live e test in produzione):
     non prima — dipendenza nuova (node-cron) da introdurre solo a quel
     punto, motivandola nel piano di quella sessione.
 
+  Check-out anticipato / annullamento post check-in — non ancora gestito:
+  oggi "Annulla prenotazione" è disponibile solo per stato 'opzione' o
+  'confermata' (coerente con la state machine). Se un ospite con check_in
+  già fatto deve interrompere il soggiorno prima della data prevista, non
+  c'è un flusso dedicato — richiede probabilmente una transizione diversa
+  (check_in → check_out anticipato, non verso 'interrotta') e va progettata
+  a parte quando serve davvero, non è banale come l'annullamento pre-arrivo.
+
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
   2.3 Integrazione WuBook/WooDoo channel manager OTA
   2.4 Tassa di soggiorno custom

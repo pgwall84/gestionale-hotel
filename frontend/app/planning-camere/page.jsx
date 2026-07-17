@@ -275,8 +275,28 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     }
   }
 
+  // Annulla prenotazione (→ 'interrotta') — solo da 'opzione'/'confermata'
+  // (uniche transizioni valide, vedi state machine). Il backend sincronizza
+  // soggiorni.cancellato in transazione: nessuna logica aggiuntiva qui.
+  async function annullaPrenotazione() {
+    if (!window.confirm('Sei sicuro di voler annullare questa prenotazione? La camera tornerà disponibile.')) {
+      return;
+    }
+    setSalvataggio(true);
+    setErrore(null);
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'interrotta' });
+      onChiudi();
+      onCambiato();
+    } catch (err) {
+      setErrore(err.message || 'Errore nell\'annullamento');
+      setSalvataggio(false);
+    }
+  }
+
   const puoScrivere = ['admin', 'titolare', 'receptionist'].includes(utente?.ruolo);
   const puoCheckIn = puoScrivere || utente?.ruolo === 'portiere_notte';
+  const puoAnnullare = puoScrivere && ['opzione', 'confermata'].includes(dati?.stato);
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
@@ -384,6 +404,17 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                   </button>
                 )}
               </div>
+
+              {puoAnnullare && (
+                <button
+                  onClick={annullaPrenotazione}
+                  disabled={salvataggio}
+                  className="w-full rounded-lg py-2 text-sm font-medium border flex items-center justify-center gap-1.5"
+                  style={{ color: 'var(--status-red-text)', borderColor: 'var(--status-red-text)' }}
+                >
+                  <X size={14} /> Annulla prenotazione
+                </button>
+              )}
             </div>
           )}
 
