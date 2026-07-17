@@ -1131,6 +1131,13 @@ Fase 2 (dopo go-live e test in produzione):
   all'emissione fattura reale (modulo 2.5/A-Cube), non a un click manuale,
   per non creare un dato fiscalmente fuorviante.
 
+  Check-in oggi non verifica che i dati documento dell'ospite siano stati
+  registrati (obbligo normativo reale per Alloggiati Web, ma il modulo
+  Ospiti/documento non ha ancora una UI per inserirli in questo flusso).
+  Quando si costruisce la scheda Ospite completa, valutare se aggiungere
+  un controllo (bloccante o solo un avviso) su questa transizione — oggi
+  il controllo è solo professionale/manuale da parte della reception.
+
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
   2.3 Integrazione WuBook/WooDoo channel manager OTA
   2.4 Tassa di soggiorno custom

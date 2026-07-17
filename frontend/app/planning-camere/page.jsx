@@ -261,6 +261,23 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     }
   }
 
+  // Conferma prenotazione (→ 'confermata') — solo da 'opzione'. Nessuna
+  // validazione di prerequisiti (caparra/documento): controllo professionale
+  // manuale da parte della reception, vedi CLAUDE.md Sezione 14.
+  async function confermaPrenotazione() {
+    setSalvataggio(true);
+    setErrore(null);
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'confermata' });
+      await carica();
+      onCambiato();
+    } catch (err) {
+      setErrore(err.message || 'Errore nella conferma');
+    } finally {
+      setSalvataggio(false);
+    }
+  }
+
   async function fasiCheckIn() {
     setSalvataggio(true);
     setErrore(null);
@@ -310,6 +327,7 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   }
 
   const puoScrivere = ['admin', 'titolare', 'receptionist'].includes(utente?.ruolo);
+  const puoConfermare = puoScrivere && dati?.stato === 'opzione';
   const puoCheckIn = puoScrivere || utente?.ruolo === 'portiere_notte';
   const puoCheckOut = puoScrivere && dati?.stato === 'check_in';
   const puoAnnullare = puoScrivere && ['opzione', 'confermata'].includes(dati?.stato);
@@ -401,6 +419,16 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
               </div>
 
               <div className="flex gap-2 pt-2">
+                {puoConfermare && (
+                  <button
+                    onClick={confermaPrenotazione}
+                    disabled={salvataggio}
+                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
+                    style={{ background: 'var(--hotel-navy)' }}
+                  >
+                    Conferma prenotazione
+                  </button>
+                )}
                 {dati.stato === 'confermata' && puoCheckIn && (
                   <button
                     onClick={fasiCheckIn}
