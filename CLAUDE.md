@@ -1127,6 +1127,10 @@ Fase 2 (dopo go-live e test in produzione):
   (check_in → check_out anticipato, non verso 'interrotta') e va progettata
   a parte quando serve davvero, non è banale come l'annullamento pre-arrivo.
 
+  'chiusa' non ha una transizione UI per scelta — va collegata
+  all'emissione fattura reale (modulo 2.5/A-Cube), non a un click manuale,
+  per non creare un dato fiscalmente fuorviante.
+
   2.2 Planning camere con disponibilità, tariffe, pacchetti all-inclusive
   2.3 Integrazione WuBook/WooDoo channel manager OTA
   2.4 Tassa di soggiorno custom

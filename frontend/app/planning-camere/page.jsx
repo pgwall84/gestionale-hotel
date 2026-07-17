@@ -275,6 +275,21 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     }
   }
 
+  // Check-out (→ 'check_out') — solo da 'check_in' (unica transizione valida).
+  // A differenza del check-in, portiere_notte NON è autorizzato: vedi puoCheckOut.
+  async function fasiCheckOut() {
+    setSalvataggio(true);
+    setErrore(null);
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'check_out' });
+      onChiudi();
+      onCambiato();
+    } catch (err) {
+      setErrore(err.message || 'Errore nel check-out');
+      setSalvataggio(false);
+    }
+  }
+
   // Annulla prenotazione (→ 'interrotta') — solo da 'opzione'/'confermata'
   // (uniche transizioni valide, vedi state machine). Il backend sincronizza
   // soggiorni.cancellato in transazione: nessuna logica aggiuntiva qui.
@@ -296,6 +311,7 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
 
   const puoScrivere = ['admin', 'titolare', 'receptionist'].includes(utente?.ruolo);
   const puoCheckIn = puoScrivere || utente?.ruolo === 'portiere_notte';
+  const puoCheckOut = puoScrivere && dati?.stato === 'check_in';
   const puoAnnullare = puoScrivere && ['opzione', 'confermata'].includes(dati?.stato);
 
   return (
@@ -393,6 +409,16 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                     style={{ background: 'var(--hotel-navy)' }}
                   >
                     Check-in
+                  </button>
+                )}
+                {puoCheckOut && (
+                  <button
+                    onClick={fasiCheckOut}
+                    disabled={salvataggio}
+                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
+                    style={{ background: 'var(--hotel-navy)' }}
+                  >
+                    Check-out
                   </button>
                 )}
                 {puoScrivere && (
