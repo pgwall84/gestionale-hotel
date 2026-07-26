@@ -67,7 +67,7 @@ const PERMESSI_SEZIONI = {
   // Ospiti (Fase 2) — permessi differenziati per azione (non un unico array
   // di sezione): admin/titolare/receptionist hanno lettura+scrittura+svela
   // documento, portiere_notte solo lettura (serve per check-in notturno),
-  // mai svela documento. Vedi docs/API_PRENOTAZIONI_FASE2.md Sezione 1.
+  // mai svela documento. Vedi docs/PRENOTAZIONI_FASE2.md Parte A.1.
   ospiti: {
     lettura:          [A, T, R, P],
     scrittura:        [A, T, R],
@@ -79,7 +79,7 @@ const PERMESSI_SEZIONI = {
   // .../ospiti con permessi identici: admin/titolare/receptionist
   // lettura+scrittura, portiere_notte sola lettura (serve per consultare i
   // componenti gruppo/famiglia nel check-in notturno). Vedi
-  // docs/API_PRENOTAZIONI_FASE2.md Sezioni 3-4.
+  // docs/PRENOTAZIONI_FASE2.md Parte A.3-A.4.
   soggiorni: {
     lettura:    [A, T, R, P],
     scrittura:  [A, T, R],
@@ -92,7 +92,7 @@ const PERMESSI_SEZIONI = {
   // Gruppi di prenotazione (Fase 2) — admin/titolare/receptionist lettura+
   // scrittura piena, portiere_notte sola lettura (consulta il gruppo durante
   // il check-in notturno, non lo modifica). Vedi
-  // docs/API_PRENOTAZIONI_FASE2.md Sezione 6.
+  // docs/PRENOTAZIONI_FASE2.md Parte A.6.
   gruppi: {
     lettura:    [A, T, R, P],
     scrittura:  [A, T, R],
@@ -102,7 +102,7 @@ const PERMESSI_SEZIONI = {
   // portiere_notte NESSUN accesso (a differenza di 'gruppi': i totali
   // aggregati in GET /api/gruppi/:id sono un dato del gruppo, non un
   // accesso alla lista pagamenti in sé). Vedi
-  // docs/API_PRENOTAZIONI_FASE2.md Sezione 5 e tabella riepilogativa.
+  // docs/PRENOTAZIONI_FASE2.md Parte A.5 e tabella riepilogativa.
   pagamenti: {
     lettura:    [A, T, R],
     scrittura:  [A, T, R],

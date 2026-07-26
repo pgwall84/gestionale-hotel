@@ -2,7 +2,7 @@
 // Non va confuso con routes/hr.js (sotto-rotta /ospiti = ospiti_giornalieri,
 // note cucina, montata su /api/hr/ospiti): dominio diverso.
 // Permessi differenziati per azione — vedi shared/ruoli.js sezione 'ospiti'
-// e docs/API_PRENOTAZIONI_FASE2.md Sezione 1.
+// e docs/PRENOTAZIONI_FASE2.md Parte A.1.
 
 const express = require('express');
 const router = express.Router();

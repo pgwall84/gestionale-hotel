@@ -1,6 +1,5 @@
 // Controller Gruppi di prenotazione (Fase 2, modulo Prenotazioni Sezione 6 del
-// contratto API). Vedi docs/SCHEMA_PRENOTAZIONI_FASE2.md Sezione 1c e
-// docs/API_PRENOTAZIONI_FASE2.md Sezione 6.
+// contratto API). Vedi docs/PRENOTAZIONI_FASE2.md Parte B.3 e Parte A.6.
 //
 // Le singole prenotazioni del gruppo si creano con POST /api/prenotazioni
 // passando gruppo_id nel body (nessun endpoint dedicato qui, vedi contratto).

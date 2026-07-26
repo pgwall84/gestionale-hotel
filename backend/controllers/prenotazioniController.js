@@ -1,6 +1,5 @@
 // Controller Prenotazioni (Fase 2, modulo Prenotazioni Sezione 2 del contratto
-// API). Vedi docs/SCHEMA_PRENOTAZIONI_FASE2.md Sezioni 2-3 e
-// docs/API_PRENOTAZIONI_FASE2.md Sezione 2.
+// API). Vedi docs/PRENOTAZIONI_FASE2.md Parte B.4-B.5 e Parte A.2.
 //
 // Non implementa qui i sotto-endpoint di Sezione 3 (POST .../soggiorni,
 // PATCH /api/soggiorni/:id) — sessione separata, come da
@@ -259,7 +258,7 @@ async function aggiorna(req, res) {
 // sia ammessa dalla state machine, indipendentemente dal ruolo.
 // Se la transizione è verso 'interrotta', imposta cancellato=true su tutti
 // i soggiorni della prenotazione nella STESSA transazione (regola di
-// sincronizzazione, SCHEMA_PRENOTAZIONI_FASE2.md Sezione 3) — altrimenti il
+// sincronizzazione, docs/PRENOTAZIONI_FASE2.md Parte B.5) — altrimenti il
 // vincolo EXCLUDE continuerebbe a bloccare quella camera/date per sempre.
 async function aggiornaStato(req, res) {
   const { stato: statoRichiesto } = req.body;

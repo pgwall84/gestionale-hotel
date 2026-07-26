@@ -1,7 +1,7 @@
 // Helper condiviso per tradurre errori Postgres specifici in risposte HTTP
 // coerenti, invece di lasciarli ricadere nel generico 500. Estratto da
 // prenotazioniController.crea (era inline) per essere riusato anche da
-// soggiorniController — vedi SCHEMA_PRENOTAZIONI_FASE2.md Sezione 3.
+// soggiorniController — vedi docs/PRENOTAZIONI_FASE2.md Parte B.5.
 
 // Codice Postgres 23P01 = exclusion_violation, err.constraint identifica
 // il vincolo specifico violato.

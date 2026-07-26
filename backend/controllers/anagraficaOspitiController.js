@@ -1,8 +1,7 @@
 // Controller anagrafica ospiti (Fase 2, modulo Prenotazioni) — non va confuso
 // con backend/controllers/ospitiController.js (Modulo 1.2, ospiti_giornalieri
 // / note cucina, montato su /api/hr/ospiti): sono due domini diversi.
-// Vedi docs/SCHEMA_PRENOTAZIONI_FASE2.md Sezione 1 e
-// docs/API_PRENOTAZIONI_FASE2.md Sezione 1 per il contratto.
+// Vedi docs/PRENOTAZIONI_FASE2.md Parte B.1 e Parte A.1 per il contratto.
 //
 // Regola di sicurezza (non derogabile): documento_numero non deve MAI
 // transitare in chiaro nel payload di lista/dettaglio/crea/aggiorna. Le

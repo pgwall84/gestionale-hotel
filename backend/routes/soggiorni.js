@@ -2,7 +2,7 @@
 // Un'unica sezione permessi 'soggiorni' in shared/ruoli.js (lettura/
 // scrittura) copre sia PATCH /:id che i 3 endpoint .../ospiti, perché il
 // contratto API li tratta con permessi identici — vedi
-// docs/API_PRENOTAZIONI_FASE2.md Sezione 3-4 (tabella riepilogativa,
+// docs/PRENOTAZIONI_FASE2.md Parte A.3-A.4 (tabella riepilogativa,
 // colonna unica "Soggiorni/ospiti").
 
 const express = require('express');

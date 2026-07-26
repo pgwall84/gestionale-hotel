@@ -1,6 +1,6 @@
 // Routes Prenotazioni (Fase 2) — /api/prenotazioni.
 // Permessi differenziati per azione — vedi shared/ruoli.js sezione
-// 'prenotazioni' e docs/API_PRENOTAZIONI_FASE2.md Sezione 2.
+// 'prenotazioni' e docs/PRENOTAZIONI_FASE2.md Parte A.2.
 // NOTA routing: /griglia deve stare PRIMA di /:id per evitare che Express
 // interpreti "griglia" come un id.
 

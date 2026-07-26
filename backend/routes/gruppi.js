@@ -1,8 +1,8 @@
 // Routes Gruppi di prenotazione (Fase 2) — /api/gruppi.
-// Include anche i 2 endpoint pagamenti-di-gruppo (Sezione 5 del contratto,
+// Include anche i 2 endpoint pagamenti-di-gruppo (Parte A.5 del contratto,
 // permessi differenziati sulla sezione 'pagamenti' — portiere_notte escluso).
 // Vedi shared/ruoli.js sezioni 'gruppi'/'pagamenti' e
-// docs/API_PRENOTAZIONI_FASE2.md Sezione 6.
+// docs/PRENOTAZIONI_FASE2.md Parte A.6.
 
 const express = require('express');
 const router = express.Router();

@@ -1,5 +1,5 @@
 // Controller Pagamenti (Fase 2, modulo Prenotazioni Sezione 5 del contratto
-// API). Vedi docs/SCHEMA_PRENOTAZIONI_FASE2.md Sezione 4 per il vincolo CHECK
+// API). Vedi docs/PRENOTAZIONI_FASE2.md Parte B.6 per il vincolo CHECK
 // XOR (chk_pagamenti_prenotazione_o_gruppo, migration 017).
 //
 // Un pagamento è sempre legato o a una prenotazione o a un gruppo, mai a

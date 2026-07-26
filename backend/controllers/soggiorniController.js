@@ -1,6 +1,6 @@
 // Controller Soggiorni + Soggiorno_ospiti (Fase 2, modulo Prenotazioni
-// Sezioni 3-4 del contratto API). Vedi docs/SCHEMA_PRENOTAZIONI_FASE2.md
-// Sezione 3/1b e docs/API_PRENOTAZIONI_FASE2.md Sezione 3-4.
+// Parte A.3-A.4 del contratto API). Vedi docs/PRENOTAZIONI_FASE2.md
+// Parte B.5/B.2 e Parte A.3-A.4.
 //
 // POST /api/prenotazioni/:id/soggiorni (aggiunge un soggiorno multi-camera
 // alla stessa prenotazione) resta in prenotazioniController.js perché è
@@ -13,7 +13,7 @@ const { gestisciConflittoCamera } = require('../utils/erroriDb');
 // Tipi che identificano l'intestatario del soggiorno (Codice Tabella
 // Tipo_Alloggiato: singolo/capofamiglia/capogruppo). Ogni soggiorno deve
 // averne esattamente uno in ogni momento — vincolo applicativo, non CHECK DB
-// (SCHEMA_PRENOTAZIONI_FASE2.md Sezione 1b).
+// (docs/PRENOTAZIONI_FASE2.md Parte B.2).
 const TIPI_INTESTATARIO = ['16', '17', '18'];
 
 // PATCH /api/soggiorni/:id — modifica camera_id/date/tariffa. È l'endpoint
@@ -53,8 +53,8 @@ async function aggiorna(req, res) {
 // GET /api/soggiorni/:id/ospiti — lista componenti gruppo/famiglia.
 // Ordinata per tipo_alloggiato: capofamiglia/singolo/capogruppo (16/17/18)
 // prima dei familiari/membri gruppo (19/20) — stesso ordine richiesto per
-// generare la schedina Alloggiati Web (SCHEMA_PRENOTAZIONI_FASE2.md, note
-// implementative modulo 2.5).
+// generare la schedina Alloggiati Web (docs/PRENOTAZIONI_FASE2.md, note
+// per il modulo 2.5).
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 async function listaOspiti(req, res) {
   try {
