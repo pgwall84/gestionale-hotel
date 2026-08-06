@@ -206,7 +206,7 @@ function FormSegnalazione({ onInvia, onAnnulla, loading }) {
     // ruolo autenticato (nessun richiedeAzione), a differenza dell'anagrafica.
     const oggi = new Date().toISOString().slice(0, 10);
     api.get(`/camere?data=${oggi}`)
-      .then(r => setCamere(r.data || []))
+      .then(r => setCamere(r.data?.camere || []))
       .catch(() => setCamere([]));
   }, []);
 
