@@ -96,6 +96,78 @@ async function alert(req, res) {
       });
     }
 
+    // ── Prenotazioni: opzioni in scadenza entro 48h ────────────────────────────
+    // (06/08/2026) Nessun cron di scadenza automatica ancora costruito (vedi
+    // docs/EVOLUTIVE.md) — questo è solo un promemoria visivo, non cambia stato.
+    const opzioni = await pool.query(`
+      SELECT p.id, p.data_scadenza_opzione,
+             string_agg(DISTINCT c.numero::text, ', ' ORDER BY c.numero::text) AS camere,
+             (SELECT o.cognome || ' ' || o.nome FROM soggiorni s2 JOIN ospiti o ON o.id = s2.ospite_id
+              WHERE s2.prenotazione_id = p.id AND s2.cancellato = false ORDER BY s2.id LIMIT 1) AS ospite
+      FROM prenotazioni p
+      JOIN soggiorni s ON s.prenotazione_id = p.id AND s.cancellato = false
+      JOIN camere c ON c.id = s.camera_id
+      WHERE p.stato = 'opzione' AND p.data_scadenza_opzione IS NOT NULL
+        AND p.data_scadenza_opzione <= NOW() + INTERVAL '48 hours'
+      GROUP BY p.id
+      ORDER BY p.data_scadenza_opzione ASC
+      LIMIT 5
+    `);
+    for (const o of opzioni.rows) {
+      const scaduta = new Date(o.data_scadenza_opzione) <= new Date();
+      alerts.push({
+        type: scaduta ? 'red' : 'amber',
+        text: `Camera ${o.camere} — opzione ${o.ospite || ''} ${scaduta ? 'scaduta' : 'in scadenza'}`,
+        category: 'Prenotazioni',
+        link: '/planning-camere',
+      });
+    }
+
+    // ── Alloggiati Web: ospiti in arrivo oggi con documento incompleto ─────────
+    // (06/08/2026) Non esiste ancora un invio reale da tracciare (modulo 2.5
+    // Fase 2 non iniziata, alloggiati_invii resta vuota) — questo alert copre
+    // lo stesso bisogno pratico ("siamo pronti per la schedina?") controllando
+    // che i dati richiesti siano stati registrati, non l'invio in sé.
+    const documentiMancanti = await pool.query(`
+      SELECT DISTINCT c.numero AS camera_numero, o.nome, o.cognome
+      FROM soggiorni s
+      JOIN camere c ON c.id = s.camera_id
+      JOIN soggiorno_ospiti so ON so.soggiorno_id = s.id
+      JOIN ospiti o ON o.id = so.ospite_id
+      WHERE s.data_arrivo = $1 AND s.cancellato = false
+        AND (o.documento_numero IS NULL OR o.documento_tipo_testo IS NULL
+             OR o.data_nascita IS NULL OR o.sesso IS NULL OR o.cittadinanza_testo IS NULL)
+      ORDER BY c.numero
+      LIMIT 5
+    `, [oggi]);
+    for (const d of documentiMancanti.rows) {
+      alerts.push({
+        type: 'amber',
+        text: `Camera ${d.camera_numero} — documento incompleto per Alloggiati Web (${d.cognome} ${d.nome})`,
+        category: 'Alloggiati Web',
+        link: '/clienti',
+      });
+    }
+
+    // ── Pre check-in: richieste compilate in attesa di revisione reception ────
+    const preCheckin = await pool.query(`
+      SELECT r.id, r.creato_at,
+             (SELECT MIN(s.data_arrivo) FROM soggiorni s WHERE s.prenotazione_id = r.prenotazione_id AND s.cancellato = false) AS data_arrivo,
+             (SELECT COUNT(*) FROM pre_checkin_ospiti po WHERE po.richiesta_id = r.id) AS numero_ospiti
+      FROM pre_checkin_richieste r
+      WHERE r.stato = 'in_attesa'
+      ORDER BY data_arrivo ASC NULLS LAST
+      LIMIT 5
+    `);
+    for (const p of preCheckin.rows) {
+      alerts.push({
+        type: 'amber',
+        text: `Pre check-in da rivedere — ${p.numero_ospiti} ospit${p.numero_ospiti === 1 ? 'e' : 'i'}${p.data_arrivo ? `, arrivo ${new Date(p.data_arrivo).toLocaleDateString('it-IT')}` : ''}`,
+        category: 'Pre check-in',
+        link: '/pre-checkin',
+      });
+    }
+
     // ── Manutenzione: segnalazioni aperte o in lavorazione ────────────────────
     // Modulo nuovo (06/08/2026) — priorità alta in rosso, il resto in ambra,
     // stesso criterio già usato sopra per le scadenze HR.

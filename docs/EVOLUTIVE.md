@@ -88,11 +88,35 @@ selettori `[role="alert"], .errore, .error` usati dal test). Non ancora
 rieseguito con Playwright reale in questa sessione (nessun accesso a
 dev server/browser dal sandbox) — verificare al prossimo giro locale.
 
-Modulo 1.8 — Dashboard (evolutive, non ora):
+Modulo 1.8 — Dashboard:
   Food cost % sul fatturato (spesa materie prime / ricavi ristorante × 100)
   — evolutiva quando ci sarà storico incassi reale. Oggi mostra
   correttamente €/coperto invece di una % che sarebbe fuorviante senza
   incassi storici affidabili.
+
+  ✅ [FATTO 06/08/2026] Aggiunti 3 nuovi alert a GET /api/dashboard/alert
+  (dashboardController.js), su richiesta esplicita del titolare dopo
+  revisione di cosa mostrava la dashboard: (1) Prenotazioni — opzioni in
+  scadenza entro 48h (prenotazioni.data_scadenza_opzione, nessun cambio di
+  stato automatico, solo promemoria — il cron di scadenza automatica resta
+  da fare, vedi voce sopra "Modulo Prenotazioni"); (2) Alloggiati Web —
+  ospiti in arrivo oggi con documento incompleto (sostituisce la richiesta
+  originale "invii Alloggiati Web in sospeso": la tabella `alloggiati_invii`
+  è vuota perché il modulo 2.5 Fase 2 — invio reale — non è ancora iniziato,
+  quindi un alert su quella tabella sarebbe sempre vuoto e fuorviante;
+  questo alert copre lo stesso bisogno reale, "siamo pronti per la
+  schedina?", controllando i dati anagrafica invece dell'invio); (3) Pre
+  check-in — richieste compilate dall'ospite in attesa di revisione
+  reception (pre_checkin_richieste.stato = 'in_attesa').
+
+  ⚠️ **Non implementato, segnalato al titolare**: un quarto alert per
+  ROSS1000/export in sospeso, richiesto insieme agli altri tre, non è
+  costruibile allo stato attuale — non esiste nessuna tabella che registra
+  quando è stato generato l'ultimo export XML (ross1000Controller.js lo
+  genera al volo, senza salvare nulla). Servirebbe una piccola tabella di
+  log (es. `ross1000_export_log`, una riga per export generato) prima di
+  poter mostrare un alert reale invece di uno sempre vuoto o sempre pieno.
+  Da riprendere se il titolare conferma di volerla.
 
 Modulo 1.1 — HR Timbrature:
   ✅ Geolocalizzazione timbratura — implementata (Haversine + blocco raggio 50m
