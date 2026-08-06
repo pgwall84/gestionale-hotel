@@ -14,6 +14,7 @@ router.use(verificaToken);
 router.get('/prodotti',                  richiedeSezione('magazzino'), ctrl.listaProdotti);
 router.get('/prodotti/lookup-ean/:ean',  soloTitolare,                 ctrl.lookupEan);
 router.get('/prodotti/qr/:qr_code',      richiedeSezione('magazzino'), ctrl.prodottoPerQr);
+router.get('/prodotti/:id/storico-prezzi', richiedeSezione('magazzino'), ctrl.storicoPrezzi);
 router.post('/prodotti',                 soloTitolare,                 ctrl.creaProdotto);
 
 // ── Fornitori ─────────────────────────────────────────────────────────────────
@@ -25,7 +26,9 @@ router.get('/movimenti',  richiedeSezione('magazzino'), ctrl.listaMovimenti);
 router.post('/movimenti', richiedeSezione('magazzino'), ctrl.registraMovimento);
 
 // ── Alert e report ───────────────────────────────────────────────────────────
-router.get('/alert',      richiedeSezione('magazzino'), ctrl.alertSottoscorta);
-router.get('/food-cost',  soloTitolare,                 ctrl.foodCostPeriodo);
+router.get('/alert',         richiedeSezione('magazzino'), ctrl.alertSottoscorta);
+router.get('/scadenze',      richiedeSezione('magazzino'), ctrl.alertScadenze);
+router.get('/bozza-ordine',  richiedeSezione('magazzino'), ctrl.bozzaOrdine);
+router.get('/food-cost',     soloTitolare,                 ctrl.foodCostPeriodo);
 
 module.exports = router;

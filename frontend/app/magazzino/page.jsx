@@ -6,7 +6,7 @@
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { Package, AlertTriangle, Plus, Truck, Camera, X } from 'lucide-react';
+import { Package, AlertTriangle, Plus, Truck, Camera, X, Clock, ClipboardList, TrendingUp } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -27,23 +27,28 @@ export default function MagazzinoPage() {
   const [prodotti, setProdotti] = useState([]);
   const [fornitori, setFornitori] = useState([]);
   const [foodCost, setFoodCost] = useState(null);
+  const [scadenze, setScadenze] = useState([]);
   const [loading, setLoading] = useState(true);
   const [errore, setErrore] = useState(null);
   const [ricerca, setRicerca] = useState('');
 
   const [mostraNuovo, setMostraNuovo] = useState(false);
   const [mostraConsegna, setMostraConsegna] = useState(false);
+  const [mostraBozzaOrdine, setMostraBozzaOrdine] = useState(false);
+  const [prodottoStorico, setProdottoStorico] = useState(null);
   const [salvando, setSalvando] = useState(false);
 
   const caricaDati = useCallback(async () => {
     try {
       setLoading(true); setErrore(null);
-      const [rProdotti, rFornitori] = await Promise.all([
+      const [rProdotti, rFornitori, rScadenze] = await Promise.all([
         api.get('/magazzino/prodotti'),
         api.get('/magazzino/fornitori'),
+        api.get('/magazzino/scadenze'),
       ]);
       setProdotti(rProdotti.data.prodotti || []);
       setFornitori(rFornitori.data.fornitori || []);
+      setScadenze(rScadenze.data.scadenze || []);
     } catch (err) {
       setErrore(err.message);
     } finally {
@@ -99,6 +104,33 @@ export default function MagazzinoPage() {
           </div>
         )}
 
+        {/* Alert scadenze — carichi con data_scadenza entro 7 giorni o già scaduti */}
+        {scadenze.length > 0 && (
+          <div className="rounded-xl p-3" style={{ background: '#FFF6E5', border: '1px solid #F0C674' }}>
+            <p className="font-bold text-sm flex items-center gap-1.5" style={{ color: '#8A5A00' }}>
+              <Clock size={16} /> {scadenze.length} in scadenza entro 7 giorni
+            </p>
+            <div className="flex flex-col gap-0.5 mt-1">
+              {scadenze.slice(0, 5).map(s => (
+                <p key={s.id} className="text-xs" style={{ color: '#8A5A00' }}>
+                  {s.prodotto_nome} — {s.quantita} {s.unita_misura || ''} —{' '}
+                  {s.livello === 'scaduto' ? 'scaduto' : `scade tra ${s.giorni_mancanti} ${s.giorni_mancanti === 1 ? 'giorno' : 'giorni'}`}
+                  {s.fornitore_nome ? ` (${s.fornitore_nome})` : ''}
+                </p>
+              ))}
+            </div>
+          </div>
+        )}
+
+        {/* Bozza ordine fornitori — solo se c'è qualcosa sotto soglia */}
+        {prodotti.some(p => p.sottoscorta) && (
+          <button onClick={() => setMostraBozzaOrdine(true)}
+                  className="flex items-center justify-center gap-1.5 py-2 rounded-lg text-sm font-medium"
+                  style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
+            <ClipboardList size={16} /> Bozza ordine fornitori
+          </button>
+        )}
+
         {/* Food cost periodo — solo admin/titolare */}
         {isAdmin && foodCost && (
           <div className="rounded-xl p-3 flex items-center justify-between"
@@ -138,6 +170,9 @@ export default function MagazzinoPage() {
           className="w-full rounded-lg px-3 py-2 text-sm outline-none"
           style={{ background: 'var(--muted)', color: 'var(--foreground)', border: '1px solid var(--border)' }}
         />
+        <p className="text-xs -mt-2" style={{ color: 'var(--muted-foreground)' }}>
+          Tocca un prodotto per vedere lo storico prezzi.
+        </p>
 
         {/* Lista prodotti */}
         {loading ? (
@@ -150,7 +185,8 @@ export default function MagazzinoPage() {
           <div className="flex flex-col gap-2">
             {prodottiFiltrati.map(p => (
               <div key={p.id}
-                   className="rounded-xl px-4 py-3 flex items-center justify-between"
+                   onClick={() => setProdottoStorico(p)}
+                   className="rounded-xl px-4 py-3 flex items-center justify-between cursor-pointer"
                    style={{
                      background: p.sottoscorta ? '#FCEBEB' : 'var(--card)',
                      border: p.sottoscorta ? '1px solid #F09595' : '1px solid var(--border)',
@@ -220,7 +256,143 @@ export default function MagazzinoPage() {
           loading={salvando}
         />
       )}
+
+      {prodottoStorico && (
+        <BottomSheetStoricoPrezzi
+          prodotto={prodottoStorico}
+          onChiudi={() => setProdottoStorico(null)}
+        />
+      )}
+
+      {mostraBozzaOrdine && (
+        <BottomSheetBozzaOrdine onChiudi={() => setMostraBozzaOrdine(false)} />
+      )}
     </AppShell>
+  );
+}
+
+// ── Bottom sheet: storico prezzi di un prodotto ──────────────────────────────
+function BottomSheetStoricoPrezzi({ prodotto, onChiudi }) {
+  const [storico, setStorico] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState(null);
+
+  useEffect(() => {
+    api.get(`/magazzino/prodotti/${prodotto.id}/storico-prezzi`)
+      .then(r => setStorico(r.data.storico || []))
+      .catch(err => setErrore(err.message))
+      .finally(() => setLoading(false));
+  }, [prodotto.id]);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.45)' }}
+         onClick={onChiudi}>
+      <div className="w-full max-w-xl rounded-t-2xl p-5 flex flex-col gap-3 overflow-y-auto"
+           style={{ background: 'var(--card)', maxHeight: '80vh' }}
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <div className="flex items-center gap-1.5">
+            <TrendingUp size={18} style={{ color: 'var(--muted-foreground)' }} />
+            <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>{prodotto.nome} — storico prezzi</p>
+          </div>
+          <button onClick={onChiudi}><X size={20} style={{ color: 'var(--muted-foreground)' }} /></button>
+        </div>
+
+        {loading ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--muted-foreground)' }}>Caricamento...</p>
+        ) : errore ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--status-red-text)' }}>{errore}</p>
+        ) : storico.length === 0 ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+            Nessun carico con costo registrato per questo prodotto.
+          </p>
+        ) : (
+          <div className="flex flex-col gap-1.5">
+            {storico.map((s, i) => (
+              <div key={i} className="flex justify-between items-center py-1.5 text-sm"
+                   style={{ borderBottom: i < storico.length - 1 ? '1px solid var(--border)' : 'none' }}>
+                <div>
+                  <p style={{ color: 'var(--foreground)' }}>
+                    {new Date(s.data).toLocaleDateString('it-IT')} — {s.quantita} {prodotto.unita_misura || ''}
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                    {s.fornitore_nome || 'fornitore non indicato'}{s.ddt_numero ? ` · DDT ${s.ddt_numero}` : ''}
+                  </p>
+                </div>
+                <p className="font-bold" style={{ color: 'var(--foreground)' }}>€{parseFloat(s.costo_unitario).toFixed(2)}</p>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Bottom sheet: bozza ordine fornitori ─────────────────────────────────────
+function BottomSheetBozzaOrdine({ onChiudi }) {
+  const [gruppi, setGruppi] = useState([]);
+  const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState(null);
+
+  useEffect(() => {
+    api.get('/magazzino/bozza-ordine')
+      .then(r => setGruppi(r.data.gruppi || []))
+      .catch(err => setErrore(err.message))
+      .finally(() => setLoading(false));
+  }, []);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-end justify-center"
+         style={{ background: 'rgba(0,0,0,0.45)' }}
+         onClick={onChiudi}>
+      <div className="w-full max-w-xl rounded-t-2xl p-5 flex flex-col gap-3 overflow-y-auto"
+           style={{ background: 'var(--card)', maxHeight: '85vh' }}
+           onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between">
+          <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>Bozza ordine fornitori</p>
+          <button onClick={onChiudi}><X size={20} style={{ color: 'var(--muted-foreground)' }} /></button>
+        </div>
+        <p className="text-xs -mt-2" style={{ color: 'var(--muted-foreground)' }}>
+          Quantità suggerita per tornare alla soglia minima — rivedi prima di ordinare davvero.
+        </p>
+
+        {loading ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--muted-foreground)' }}>Caricamento...</p>
+        ) : errore ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--status-red-text)' }}>{errore}</p>
+        ) : gruppi.length === 0 ? (
+          <p className="text-center py-6 text-sm" style={{ color: 'var(--muted-foreground)' }}>Nessun prodotto sotto soglia.</p>
+        ) : (
+          <div className="flex flex-col gap-4">
+            {gruppi.map((g, i) => (
+              <div key={i} className="rounded-xl p-3" style={{ background: 'var(--muted)' }}>
+                <p className="font-bold text-sm mb-2" style={{ color: 'var(--foreground)' }}>
+                  {g.fornitore ? g.fornitore.nome : 'Fornitore non determinato'}
+                </p>
+                {g.fornitore && (g.fornitore.telefono || g.fornitore.email) && (
+                  <p className="text-xs mb-2" style={{ color: 'var(--muted-foreground)' }}>
+                    {g.fornitore.telefono || ''}{g.fornitore.telefono && g.fornitore.email ? ' · ' : ''}{g.fornitore.email || ''}
+                  </p>
+                )}
+                <div className="flex flex-col gap-1">
+                  {g.prodotti.map(p => (
+                    <div key={p.id} className="flex justify-between text-sm">
+                      <span style={{ color: 'var(--foreground)' }}>{p.nome}</span>
+                      <span style={{ color: 'var(--foreground)' }}>
+                        {p.quantita_suggerita} {p.unita_misura || ''}
+                        <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}> (giac. {p.giacenza})</span>
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            ))}
+          </div>
+        )}
+      </div>
+    </div>
   );
 }
 

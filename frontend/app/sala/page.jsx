@@ -471,6 +471,12 @@ export default function SalaPage() {
     finally { setSalvando(false); }
   };
 
+  const eliminaConfig = async (id, nome) => {
+    if (!confirm(`Eliminare il layout "${nome}"?`)) return;
+    try { await api.delete(`/ristorante/config/${id}`); await carica(); }
+    catch (err) { alert(err.message); }
+  };
+
   const creaTavolo = async (e) => {
     e.preventDefault();
     if (!formTavolo.numero || !formTavolo.coperti) return;
@@ -602,12 +608,21 @@ export default function SalaPage() {
               {sezioneAttiva === 'config' && (
                 <>
                   {configs.map(c => (
-                    <div key={c.id} className="flex justify-between items-center">
+                    <div key={c.id} className="flex justify-between items-center gap-2">
                       <span className="text-sm" style={{ color: 'var(--foreground)' }}>{c.nome}</span>
-                      {c.attiva
-                        ? <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }}>Attivo</span>
-                        : <button onClick={() => attivaConfig(c.id)} className="text-xs px-2 py-0.5 rounded" style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>Attiva</button>
-                      }
+                      <div className="flex items-center gap-1.5">
+                        {c.attiva
+                          ? <span className="text-xs px-2 py-0.5 rounded-full" style={{ background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }}>Attivo</span>
+                          : <button onClick={() => attivaConfig(c.id)} className="text-xs px-2 py-0.5 rounded" style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>Attiva</button>
+                        }
+                        {!c.attiva && !c.is_default && (
+                          <button onClick={() => eliminaConfig(c.id, c.nome)}
+                                  className="text-xs px-2 py-0.5 rounded"
+                                  style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                            Elimina
+                          </button>
+                        )}
+                      </div>
                     </div>
                   ))}
                   <form onSubmit={creaConfig} className="flex gap-2">

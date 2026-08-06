@@ -49,7 +49,13 @@ async function request(method, path, data = null, customHeaders = {}) {
   const json = await res.json().catch(() => null);
 
   if (!res.ok) {
-    const err = new Error(json?.error || `Errore ${res.status}`);
+    // I controller backend non sono uniformi: alcuni rispondono { errore: '...' }
+    // (italiano, maggioranza per numero di file), altri { error: '...' } (inglese,
+    // Sezione 5 di CLAUDE.md). Leggere solo una delle due chiavi degrada in modo
+    // silenzioso a "Errore {status}" generico per metà degli endpoint — scoperto
+    // il 06/08/2026 aggiungendo DELETE /api/ristorante/config/:id (chiave errore).
+    // Vedi docs/EVOLUTIVE.md per il dettaglio, la nota precedente lì è superata.
+    const err = new Error(json?.errore || json?.error || `Errore ${res.status}`);
     err.response = { status: res.status, data: json };
     throw err;
   }

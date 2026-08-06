@@ -50,6 +50,45 @@ async function attivaConfig(req, res) {
   }
 }
 
+// DELETE /api/ristorante/config/:id — elimina una configurazione sala.
+// Bloccata se: non trovata, è la configurazione Standard (is_default), è
+// quella attualmente attiva, oppure ha ancora tavoli associati (anche
+// disattivati — il vincolo FK tavoli.configurazione_id non ha ON DELETE,
+// quindi una configurazione "vuota" davvero non ha righe residue). Il
+// controllo esplicito qui serve solo a restituire un messaggio chiaro
+// invece del 500 generico che darebbe la violazione FK.
+async function eliminaConfig(req, res) {
+  const { id } = req.params;
+  try {
+    const cfg = await pool.query(
+      'SELECT id, nome, attiva, is_default FROM configurazioni_sala WHERE id = $1',
+      [id]
+    );
+    if (!cfg.rows.length) return res.status(404).json({ errore: 'Configurazione non trovata.' });
+    const config = cfg.rows[0];
+
+    if (config.is_default) {
+      return res.status(400).json({ errore: 'Impossibile eliminare la configurazione Standard.' });
+    }
+    if (config.attiva) {
+      return res.status(400).json({ errore: 'Questa configurazione è attiva: attivane un\'altra prima di eliminarla.' });
+    }
+    const tavoli = await pool.query(
+      'SELECT COUNT(*) AS tot FROM tavoli WHERE configurazione_id = $1',
+      [id]
+    );
+    if (parseInt(tavoli.rows[0].tot) > 0) {
+      return res.status(400).json({ errore: 'Impossibile eliminare: la configurazione ha ancora tavoli associati.' });
+    }
+
+    await pool.query('DELETE FROM configurazioni_sala WHERE id = $1', [id]);
+    res.json({ messaggio: `Configurazione "${config.nome}" eliminata.` });
+  } catch (err) {
+    console.error('eliminaConfig error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
 // ── Tavoli ────────────────────────────────────────────────────────────────────
 
 // GET /api/ristorante/tavoli — tavoli attivi con stato comanda, etichetta e prenotazione associata
@@ -196,7 +235,7 @@ async function associaPrenotazione(req, res) {
 }
 
 module.exports = {
-  listaConfig, creaConfig, attivaConfig,
+  listaConfig, creaConfig, attivaConfig, eliminaConfig,
   listaTavoli, creaTavolo, modificaTavolo, eliminaTavolo,
   associaPrenotazione,
 };

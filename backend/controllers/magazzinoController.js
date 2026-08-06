@@ -224,6 +224,115 @@ async function alertSottoscorta(req, res) {
   }
 }
 
+// GET /api/magazzino/prodotti/:id/storico-prezzi — storico costo_unitario dei carichi
+// per un prodotto, più recenti prima (evolutiva 1.7, 06/08/2026: nessuna nuova
+// tabella, i prezzi erano già tutti dentro movimenti_magazzino).
+// Accessibile a: admin, titolare, cuoco, receptionist, portiere_notte
+async function storicoPrezzi(req, res) {
+  const { id } = req.params;
+  try {
+    const result = await pool.query(
+      `SELECT m.data, m.quantita, m.costo_unitario, m.ddt_numero, f.nome AS fornitore_nome
+       FROM movimenti_magazzino m
+       LEFT JOIN fornitori f ON f.id = m.fornitore_id
+       WHERE m.prodotto_id = $1 AND m.tipo = 'carico' AND m.costo_unitario IS NOT NULL
+       ORDER BY m.data DESC
+       LIMIT 50`,
+      [id]
+    );
+    res.json({ storico: result.rows });
+  } catch (err) {
+    console.error('storicoPrezzi error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// GET /api/magazzino/scadenze — carichi con data_scadenza entro 7 giorni (o già
+// scaduti), livello progressivo scaduto/urgente/attenzione. Nessun tracciamento
+// a lotti nel gestionale: mostra i carichi registrati, non "cosa resta davvero
+// in giacenza di quel lotto" — stesso limite già noto per l'alert sottoscorta,
+// da comunicare a chi lo consulta se il volume di prodotti freschi crescerà.
+// Accessibile a: admin, titolare, cuoco, receptionist, portiere_notte
+async function alertScadenze(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT m.id, m.prodotto_id, p.nome AS prodotto_nome, p.unita_misura,
+              m.quantita, m.data_scadenza, m.ddt_numero, f.nome AS fornitore_nome,
+              (m.data_scadenza - CURRENT_DATE) AS giorni_mancanti
+       FROM movimenti_magazzino m
+       JOIN prodotti p ON p.id = m.prodotto_id
+       LEFT JOIN fornitori f ON f.id = m.fornitore_id
+       WHERE m.tipo = 'carico' AND m.data_scadenza IS NOT NULL
+         AND m.data_scadenza <= CURRENT_DATE + 7
+       ORDER BY m.data_scadenza ASC
+       LIMIT 30`
+    );
+    const scadenze = result.rows.map(r => {
+      const giorni = Number(r.giorni_mancanti);
+      let livello;
+      if (giorni <= 0) livello = 'scaduto';
+      else if (giorni <= 3) livello = 'urgente';
+      else livello = 'attenzione';
+      return { ...r, giorni_mancanti: giorni, livello };
+    });
+    res.json({ scadenze });
+  } catch (err) {
+    console.error('alertScadenze error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// GET /api/magazzino/bozza-ordine — prodotti sotto soglia, raggruppati per
+// fornitore, con quantità suggerita (soglia_minima - giacenza). Il fornitore
+// non è in anagrafica prodotto (schema non lo prevede): inferito dal fornitore
+// usato nell'ultimo carico registrato per quel prodotto — se non c'è mai stato
+// un carico con fornitore, finisce nel gruppo "Fornitore non determinato" invece
+// di sparire silenziosamente. È una bozza da rivedere, non un ordine reale.
+// Accessibile a: admin, titolare, cuoco, receptionist, portiere_notte
+async function bozzaOrdine(req, res) {
+  try {
+    const result = await pool.query(`
+      SELECT p.id, p.nome, p.unita_misura, p.soglia_minima,
+             COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) AS giacenza,
+             (
+               SELECT m2.fornitore_id FROM movimenti_magazzino m2
+               WHERE m2.prodotto_id = p.id AND m2.tipo = 'carico' AND m2.fornitore_id IS NOT NULL
+               ORDER BY m2.data DESC LIMIT 1
+             ) AS fornitore_id
+      FROM prodotti p
+      LEFT JOIN movimenti_magazzino m ON m.prodotto_id = p.id
+      WHERE p.attivo = true
+      GROUP BY p.id
+      HAVING COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) < p.soglia_minima
+      ORDER BY p.nome
+    `);
+    const fornitoriRes = await pool.query('SELECT id, nome, contatto, email, telefono FROM fornitori WHERE attivo = true');
+    const fornitoriById = Object.fromEntries(fornitoriRes.rows.map(f => [f.id, f]));
+
+    const gruppi = {};
+    for (const p of result.rows) {
+      const giacenza = parseFloat(p.giacenza);
+      const soglia = parseFloat(p.soglia_minima);
+      const quantitaSuggerita = Math.round(Math.max(soglia - giacenza, 0) * 100) / 100;
+      const chiave = p.fornitore_id || 'nessuno';
+      if (!gruppi[chiave]) {
+        gruppi[chiave] = {
+          fornitore: p.fornitore_id ? fornitoriById[p.fornitore_id] || null : null,
+          prodotti: [],
+        };
+      }
+      gruppi[chiave].prodotti.push({
+        id: p.id, nome: p.nome, unita_misura: p.unita_misura,
+        giacenza, soglia_minima: soglia, quantita_suggerita: quantitaSuggerita,
+      });
+    }
+    res.json({ gruppi: Object.values(gruppi) });
+  } catch (err) {
+    console.error('bozzaOrdine error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
 // GET /api/magazzino/food-cost?da=YYYY-MM-DD&a=YYYY-MM-DD — spesa carichi periodo ÷ coperti periodo
 // Accessibile a: admin, titolare
 async function foodCostPeriodo(req, res) {
@@ -263,4 +372,5 @@ module.exports = {
   listaFornitori, creaFornitore,
   registraMovimento, listaMovimenti,
   alertSottoscorta, foodCostPeriodo,
+  storicoPrezzi, alertScadenze, bozzaOrdine,
 };

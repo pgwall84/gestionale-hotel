@@ -49,6 +49,7 @@ router.get('/sala/stream',
 router.get('/config',              verificaToken, ruoli(...TUTTI_OP), sala.listaConfig);
 router.post('/config',             verificaToken, ruoli(...SALA_W),   sala.creaConfig);
 router.patch('/config/:id/attiva', verificaToken, ruoli(...SALA_W),   sala.attivaConfig);
+router.delete('/config/:id',       verificaToken, ruoli(...SALA_W),   sala.eliminaConfig);
 
 // ── Tavoli ────────────────────────────────────────────────────────────────────
 router.get('/tavoli',        verificaToken, ruoli(...TUTTI_OP), sala.listaTavoli);

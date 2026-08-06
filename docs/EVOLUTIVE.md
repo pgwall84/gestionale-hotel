@@ -11,10 +11,26 @@ Modulo 1.6 — Ristorante (gap noti, da completare prima del go-live):
   Eliminazione configurazione sala: bloccare se ha tavoli associati,
   consentire solo se vuota. (eliminaConfigurazione non implementata)
 
-Modulo 1.7 — Magazzino (evolutive, non ora):
-  Storico prezzi per prodotto nel tempo
-  Generazione automatica bozza ordine fornitore quando prodotto sotto soglia
-  Alert scadenze progressivi (7 giorni, 3 giorni, giorno stesso)
+Modulo 1.7 — Magazzino:
+  ✅ [FATTO 06/08/2026] Storico prezzi per prodotto (GET
+    /api/magazzino/prodotti/:id/storico-prezzi, nessuna nuova tabella — i
+    prezzi erano già in movimenti_magazzino.costo_unitario), alert scadenze
+    progressivi scaduto/urgente(≤3gg)/attenzione(≤7gg) (GET
+    /api/magazzino/scadenze) e bozza ordine fornitori raggruppata (GET
+    /api/magazzino/bozza-ordine, quantità suggerita = soglia_minima -
+    giacenza). Limite noto sulla bozza ordine: `prodotti` non ha un
+    fornitore in anagrafica (schema non lo prevede) — il fornitore per
+    riga è inferito dall'ultimo carico con fornitore per quel prodotto; se
+    non esiste mai stato un carico con fornitore, il prodotto finisce nel
+    gruppo "Fornitore non determinato" invece di sparire. Limite noto
+    sull'alert scadenze: nessun tracciamento a lotti nel gestionale — mostra
+    i carichi registrati con data_scadenza, non "cosa resta davvero di quel
+    lotto in giacenza" (stesso limite già esistente per l'alert sottoscorta,
+    basato su giacenza aggregata). UI in frontend/app/magazzino/page.jsx:
+    banner scadenze, tap su un prodotto apre lo storico prezzi, pulsante
+    "Bozza ordine fornitori" (visibile solo se c'è almeno un prodotto sotto
+    soglia). Non ancora eseguiti test automatici (da fare al prossimo giro
+    con Marco, stesso pattern manuale usato per il modulo Manutenzione).
   DA APPROFONDIRE — scansione barcode/QR poco affidabile da foto telefono
     (testato su Samsung + Chrome, stesso errore "no MultiFormat Readers"
     anche con BarcodeDetector nativo attivato e immagine ridimensionata).
@@ -46,6 +62,22 @@ CORRETTO in quella sessione, ma verificare l'impatto visibile):
   ✅ **Eccezione risolta il 31/07/2026**: `frontend/app/login/page.jsx`
   aveva la stessa chiave sbagliata (`err?.response?.data?.errore`) con un
   fallback hardcoded diverso — corretta in `.error`.
+
+  ⚠️ **Correzione alla nota sopra (06/08/2026)**: la premessa "TUTTI i
+  controller rispondono con `{ error: '...' }`" era falsa già allora o è
+  regredita da allora — verificato oggi: 22 file controller usano `errore:`
+  (italiano, 230 occorrenze) contro 18 file che usano `error:` (inglese,
+  170 occorrenze), alcuni file usano entrambe. La modifica del 17/07 a
+  `api.js` (leggere solo `.error`) quindi mostrava il messaggio "Errore
+  {status}" generico per metà circa degli endpoint, non per nessuno —
+  scoperto costruendo `DELETE /api/ristorante/config/:id` (risponde
+  `errore`, i messaggi specifici non arrivavano all'utente). Corretto
+  definitivamente in modo non fragile: `api.js` ora legge
+  `json?.errore || json?.error`, funziona con entrambe le convenzioni
+  invece di richiedere di uniformare 40 file controller. Non urgente
+  uniformare i controller a una sola chiave — se si tocca comunque un
+  controller per altri motivi, preferire `error` (inglese) perché è quello
+  documentato in CLAUDE.md Sezione 5, ma non è più bloccante.
 
 ✅ tests/e2e/login.spec.js — getByLabel non trovava i campi (scoperto
 17/07/2026, CORRETTO il 31/07/2026): aggiunti `htmlFor`/`id` su
