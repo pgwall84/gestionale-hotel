@@ -154,7 +154,7 @@ async function aggiornaStato(req, res) {
            note_risoluzione = COALESCE($2, note_risoluzione),
            gestito_da = $3,
            aggiornato_il = now(),
-           risolta_il = CASE WHEN $1 = 'risolta' THEN now() ELSE risolta_il END
+           risolta_il = CASE WHEN $1::VARCHAR = 'risolta' THEN now() ELSE risolta_il END
        WHERE id = $4
        RETURNING *`,
       [stato, note_risoluzione || null, req.utente.id, id]

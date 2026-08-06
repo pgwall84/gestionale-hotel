@@ -1829,3 +1829,74 @@ non ancora sottoscritto).
 se procedere con 5.2 Fase B (pre check-in self-service da remoto, può
 riusare Resend già configurato), 2.5 Fase 2 (schedina Alloggiati Web),
 2.6 (ROSS1000, ancora in pausa) o 1.10 (deploy VPS), quando vorrà.
+
+---
+
+## 06/08/2026 — Nuovo modulo: Manutenzione/guasti (evolutiva competitiva)
+
+Prima voce sviluppata dalla lista "evolutive competitive" (gap vs Mews/
+Cloudbeds/RoomRaccoon, aggiunta il 05/08/2026 a `docs/EVOLUTIVE.md`) — non
+faceva parte della roadmap originale di CLAUDE.md Sezione 8. Il titolare ha
+chiesto esplicitamente: segnalazione aperta a tutto il personale, pagina
+dedicata.
+
+**Design deciso col titolare prima di scrivere codice**: gestione stato
+(presa in carico/risolta) riservata ad admin/titolare, non a chi segnala;
+luogo = camera (selezione dalla lista) oppure una delle aree comuni fisse
+dell'hotel (bar, sala ristorante, cucina, lavanderia, lavaggio piatti,
+magazzino, garage, altro — lista corretta in corsa: "sale" tolta, aggiunto
+"magazzino"); foto opzionale (riusa multer, stesso pattern di
+`archivioController.js`); alert in Dashboard per segnalazioni aperte/in
+lavorazione, stesso criterio già in uso per le scadenze HR (rosso se
+priorità alta).
+
+**File nuovi**: `database/migrations/030_segnalazioni_manutenzione.sql`,
+`backend/controllers/manutenzioneController.js`,
+`backend/routes/manutenzione.js`, `frontend/app/manutenzione/page.jsx`,
+`tests/api/manutenzione.test.js`. **File modificati**: `backend/app.js`,
+`shared/ruoli.js`, `frontend/lib/ruoli.js`,
+`frontend/components/layout/Sidebar.tsx`,
+`backend/controllers/dashboardController.js`.
+
+**Bug reale trovato dai test, non anticipabile da codice**: `PATCH
+/api/manutenzione/:id/stato` falliva sempre con 500. Causa: la query
+`UPDATE` usava il parametro `$1` sia in `SET stato = $1` sia dentro `CASE
+WHEN $1 = 'risolta' THEN now() ELSE risolta_il END` — PostgreSQL non
+riesce a dedurre un tipo unico per `$1` tra `character varying` (colonna
+`stato`) e `text` (il confronto letterale) e rifiuta la query già in fase
+di parsing, prima di guardare il valore reale (per questo falliva anche
+con `in_lavorazione`, non solo con `risolta`). Corretto con un cast
+esplicito: `CASE WHEN $1::VARCHAR = 'risolta' ...`.
+
+**Test generati a mano, non con lo script agente**: `node
+tests/agent/genera-test.js manutenzione` ha fallito per credito esaurito
+sull'account Anthropic API configurato in `backend/.env` (separato
+dall'abbonamento usato per questa sessione stessa) — non risolvibile da
+qui, richiede ricarica su console.anthropic.com. Scritti a mano invece,
+stesso schema di copertura richiesto da CLAUDE.md Sezione 9 (auth,
+validazione, logica business, permessi per ruolo). Punto tecnico non
+ovvio: i token sintetici di `tests/helpers/auth.js` (`authHeader.titolare()`
+ecc.) usano id utente fissi (1-7) che non è garantito esistano nel DB reale
+del titolare dopo mesi di uso — `segnalato_da`/`gestito_da` hanno una FK su
+`users(id)`, quindi le operazioni di scrittura usano invece un utente
+reale creato ad hoc con l'helper `creaUtenteDiTest` (già esistente nel
+progetto, mai usato finora per questo scopo). **20/20 test verdi,
+confermati dal titolare in locale.**
+
+**Scoperta separata, non causata da questa sessione**: preparando il
+commit sono emersi 109 file mai committati — sostanzialmente tutti i
+moduli da 2.2 in poi (tariffe, pacchetti, Alloggiati Web, pre check-in,
+ROSS1000, offerte email, CampoData, scanner OCR documento) esistevano solo
+su disco, senza alcuna rete di sicurezza di versionamento. Su richiesta
+del titolare, gestito con un commit di recupero storico separato dal
+commit pulito del modulo Manutenzione — **verificare al prossimo giro che
+entrambi i commit siano stati effettivamente pushati**, non dato per
+scontato qui essendo un'operazione lasciata al titolare (i comandi git
+dal sandbox lasciano un `.git/index.lock` che né titolare né assistente
+riescono a rimuovere in modo pulito — causa mai isolata con certezza,
+vedi anche il repo `sito-hotel` per lo stesso sintomo).
+
+**Non fatto in questa sessione, deliberatamente**: nessuna delle altre due
+voci "evolutive competitive" priorità alta (CRM ospiti con preferenze/tag,
+upsell automatico in-stay) — il titolare ha chiesto di sviluppare prima
+solo il modulo manutenzione.

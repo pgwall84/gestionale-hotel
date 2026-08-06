@@ -361,10 +361,20 @@ esplicitamente "cosa manca" oltre agli aspetti funzionali di lancio.
 
   PRIORITÀ ALTA (impatto ricavi/operatività alto, costo di sviluppo
   contenuto o nessuna nuova dipendenza a pagamento):
-  - Modulo manutenzione/guasti: nessuna tabella, nessuna UI per segnalare
-    e tracciare manutenzioni ordinarie/straordinarie (rubinetto rotto, TV
-    guasta). Gap operativo concreto su una struttura di 20 camere, zero
-    dipendenze esterne — sviluppabile come gli altri moduli gratuiti.
+  - [FATTO 06/08/2026] Modulo manutenzione/guasti: nuova tabella
+    `segnalazioni_manutenzione` (migration 030), controller/route
+    `/api/manutenzione`, pagina `/manutenzione`, alert Dashboard. Tutto il
+    personale segnala (camera o area comune — bar/sala ristorante/cucina/
+    lavanderia/lavaggio piatti/magazzino/garage/altro — foto opzionale);
+    gestione stato (presa in carico/risolta) riservata ad admin/titolare
+    (shared/ruoli.js sezione `manutenzione`). Bug reale corretto durante i
+    test: `PATCH .../stato` falliva sempre con 500 (parametro `$1` usato
+    sia in `SET stato = $1` sia in `CASE WHEN $1 = 'risolta'` — Postgres
+    non deduce un tipo unico tra `character varying` e `text` e rifiuta la
+    query in fase di parsing) — corretto con cast esplicito `$1::VARCHAR`.
+    20/20 test verdi in locale (`tests/api/manutenzione.test.js`, scritto
+    a mano: lo script `genera-test.js` non ha funzionato in questa sessione
+    per credito esaurito sull'account Anthropic usato dallo script).
   - Upsell automatico in-stay (upgrade camera, late checkout, cena al
     ristorante triggerati a un punto preciso del soggiorno, non solo
     campagna email manuale come oggi "Offerte"): si appoggia
