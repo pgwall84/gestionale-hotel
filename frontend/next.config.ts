@@ -7,7 +7,7 @@ const nextConfig: NextConfig = {
     // evitando che rilevi il package-lock.json della root del monorepo (usato da Jest)
     root: path.resolve(__dirname),
   },
-  allowedDevOrigins: ['192.168.1.6'],
+  allowedDevOrigins: ['192.168.1.8'],
 };
 
 export default nextConfig;

@@ -14,7 +14,7 @@ schema e della UI.
 
 ---
 
-## Stato al 26/07/2026
+## Stato al 31/07/2026
 
 **Implementato e in uso:**
 - Ospiti — anagrafica CRUD, documento sempre mascherato, svela-documento loggato
@@ -25,10 +25,15 @@ schema e della UI.
 - Vista griglia/planning (drag-and-drop, `/planning-camere`)
 - Form "Nuova prenotazione" (pulsante + click su cella vuota)
 - Pulsanti di transizione stato nel pannello dettaglio: check-in, conferma, check-out, annulla
+- **2.2 — Tariffe, stagionalità, pacchetti** (completato e verificato il
+  31/07/2026 — migration eseguita, 74 test automatici verdi, verifica
+  manuale end-to-end): categorie camera (`tipi_camera`), listino per
+  categoria con stagionalità (`tariffe`), pacchetti a prezzo fisso
+  (`pacchetti`), auto-calcolo tariffa nel form "Nuova prenotazione" con
+  override manuale sempre disponibile.
 
 **Non ancora costruito** (roadmap Fase 2A/2B, tabella in CLAUDE.md Sezione 8):
-- 2.2 — Tariffe, stagionalità, pacchetti all-inclusive (il planning oggi mostra solo camera/date/stato, non prezzi dinamici)
-- 2.3 — Integrazione WuBook/WooDoo (channel manager, webhook, `canale_origine` diverso da `diretta` è già nello schema ma inerte)
+- 2.3 — Integrazione WuBook/WooDoo (channel manager, webhook, `canale_origine` diverso da `diretta` è già nello schema ma inerte). La mappatura vera e propria `tipi_camera.id ↔ canale ↔ codice_esterno` si farà qui — oggi `tipi_camera.note` è solo un appunto manuale.
 - 2.4 — Tassa di soggiorno
 - 2.5 — Alloggiati Web (invio schedine) — vedi note di dettaglio più sotto, già verificate sui manuali ufficiali
 - 2.6 — Export ROSS1000/ISTAT
@@ -116,16 +121,64 @@ online via WuBook arriveranno da webhook in modulo 2.3, gestiti diversamente).
 | POST | `/api/gruppi` | A,T,R | Crea gruppo |
 | PATCH | `/api/gruppi/:id` | A,T,R | Aggiorna referente/nome |
 
+### A.7 — Tipi camera (modulo 2.2)
+
+| Metodo | Path | Permessi | Descrizione |
+|---|---|---|---|
+| GET | `/api/tipi-camera` | A,T,R (lettura) | Elenco categorie, con conteggio camere assegnate |
+| POST | `/api/tipi-camera` | A,T (scrittura) | Crea categoria (`nome` univoco, `capienza_max`, `note`) |
+| PATCH | `/api/tipi-camera/:id` | A,T (scrittura) | Modifica categoria |
+| DELETE | `/api/tipi-camera/:id` | A,T (scrittura) | Elimina categoria, `409` se referenziata da camere o tariffe |
+
+`note` è un campo libero per annotare a mano il riferimento alla categoria
+sui canali OTA (es. "Booking.com: Camera Doppia Standard") — non una vera
+mappatura, che arriverà con il modulo 2.3.
+
+### A.8 — Tariffe (modulo 2.2)
+
+| Metodo | Path | Permessi | Descrizione |
+|---|---|---|---|
+| GET | `/api/tariffe?tipo_camera_id=` | A,T,R (lettura) | Elenco fasce tariffarie, filtro opzionale per categoria |
+| GET | `/api/tariffe/calcola?tipo_camera_id=&data_arrivo=&data_partenza=` | A,T,R (lettura) | Somma `prezzo_notte` per ogni notte del soggiorno (`data_partenza` esclusa). Se una o più notti non hanno tariffa configurata, ritorna `prezzo_totale: null` e l'elenco in `notti_scoperte` invece di un totale silenziosamente incompleto |
+| POST | `/api/tariffe` | A,T (scrittura) | Crea fascia (`tipo_camera_id`, `nome_stagione`, `data_inizio`, `data_fine`, `prezzo_notte`). `409` se le date si sovrappongono a una fascia esistente per la stessa categoria |
+| PATCH | `/api/tariffe/:id` | A,T (scrittura) | Modifica fascia, stesso `409` di sovrapposizione |
+| DELETE | `/api/tariffe/:id` | A,T (scrittura) | Elimina fascia |
+
+Vincolo anti-sovrapposizione a livello DB (`EXCLUDE USING gist`, come
+l'anti-overbooking di `soggiorni`): due fasce della stessa categoria non
+possono avere periodi che si intersecano.
+
+### A.9 — Pacchetti (modulo 2.2)
+
+| Metodo | Path | Permessi | Descrizione |
+|---|---|---|---|
+| GET | `/api/pacchetti?attivo=true` | A,T,R (lettura) | Elenco pacchetti, filtro opzionale su `attivo` |
+| POST | `/api/pacchetti` | A,T (scrittura) | Crea pacchetto (`nome`, `descrizione`, `num_notti`, `prezzo_totale`) |
+| PATCH | `/api/pacchetti/:id` | A,T (scrittura) | Modifica pacchetto, incluso il toggle `attivo` |
+
+Nessun `DELETE`: un soggiorno passato può referenziare ancora un pacchetto
+non più in vendita — la "eliminazione" da UI disattiva soltanto.
+
+### A.10 — Camere (estensione modulo 2.2)
+
+| Metodo | Path | Permessi | Descrizione |
+|---|---|---|---|
+| PATCH | `/api/camere/:id/tipo` | soloTitolare (A,T) | Assegna `tipo_camera_id` a una camera |
+
+`GET /api/camere` ora include anche `piano`, `tipo_camera_id`, `tipo_camera_nome`.
+
 ### Tabella permessi per ruolo
 
-| Ruolo | Ospiti | Prenotazioni | Soggiorni/ospiti | Gruppi | Pagamenti |
-|---|---|---|---|---|---|
-| admin, titolare, receptionist | lettura+scrittura+svela | lettura+scrittura+stato | lettura+scrittura | lettura+scrittura | lettura+scrittura |
-| portiere_notte | sola lettura, no svela | lettura + solo transizione `check_in` | sola lettura | sola lettura | nessun accesso |
-| cameriere, cuoco, dipendente | nessun accesso | nessun accesso | nessun accesso | nessun accesso | nessun accesso |
+| Ruolo | Ospiti | Prenotazioni | Soggiorni/ospiti | Gruppi | Pagamenti | Tipi camera / Tariffe / Pacchetti |
+|---|---|---|---|---|---|---|
+| admin, titolare | lettura+scrittura+svela | lettura+scrittura+stato | lettura+scrittura | lettura+scrittura | lettura+scrittura | lettura+scrittura |
+| receptionist | lettura+scrittura+svela | lettura+scrittura+stato | lettura+scrittura | lettura+scrittura | lettura+scrittura | sola lettura |
+| portiere_notte | sola lettura, no svela | lettura + solo transizione `check_in` | sola lettura | sola lettura | nessun accesso | nessun accesso |
+| cameriere, cuoco, dipendente | nessun accesso | nessun accesso | nessun accesso | nessun accesso | nessun accesso | nessun accesso |
 
 Tradotto in `shared/ruoli.js` come oggetto per azione (non array flat) nelle
-chiavi `ospiti`, `prenotazioni`, `soggiorni`, `gruppi`, `pagamenti`.
+chiavi `ospiti`, `prenotazioni`, `soggiorni`, `gruppi`, `pagamenti`,
+`tipi_camera`, `tariffe`, `pacchetti`.
 
 ### Non incluso in questo contratto (rimandato)
 
@@ -336,6 +389,81 @@ Popolato il 17/07/2026 per le 20 camere reali (bande da 5: 1-5→1, 6-10→2,
 11-15→3, 16-21→4 con 17 mancante; l'unità `'app'` resta NULL, è un
 appartamento esterno, non un dato dimenticato).
 
+### B.10 — `tipi_camera` (modulo 2.2, migration `018_tariffe_pacchetti.sql`)
+
+```sql
+CREATE TABLE tipi_camera (
+  id            SERIAL PRIMARY KEY,
+  nome          VARCHAR(50) NOT NULL UNIQUE,
+  capienza_max  SMALLINT,
+  note          TEXT,       -- riferimento manuale alla categoria OTA, finché non c'è il modulo 2.3
+  created_at    TIMESTAMP NOT NULL DEFAULT now()
+);
+```
+
+Seed delle 5 categorie concordate: Singola, Doppia uso singola, Matrimoniale,
+Tripla, Quadrupla. Tabella vera (non `VARCHAR` libero) per avere un `id`
+stabile da referenziare sia dal listino tariffe sia, in futuro, dalla
+mappatura OTA del modulo 2.3.
+
+`camere.tipo_camera_id INTEGER REFERENCES tipi_camera(id)` — nullable, da
+assegnare manualmente alle camere esistenti dopo la migration (stesso
+pattern già usato per `camere.piano`).
+
+### B.11 — `tariffe` (modulo 2.2)
+
+```sql
+CREATE TABLE tariffe (
+  id              SERIAL PRIMARY KEY,
+  tipo_camera_id  INTEGER NOT NULL REFERENCES tipi_camera(id),
+  nome_stagione   VARCHAR(100),
+  data_inizio     DATE NOT NULL,
+  data_fine       DATE NOT NULL,
+  prezzo_notte    NUMERIC(10,2) NOT NULL,
+  created_at      TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at      TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT chk_tariffe_date CHECK (data_fine >= data_inizio),
+  CONSTRAINT chk_tariffe_prezzo CHECK (prezzo_notte > 0)
+);
+
+ALTER TABLE tariffe ADD CONSTRAINT excl_tariffe_tipo_camera_overlap
+  EXCLUDE USING gist (
+    tipo_camera_id WITH =,
+    daterange(data_inizio, data_fine, '[]') WITH &&
+  );
+```
+
+Range inclusivo su entrambi gli estremi (`'[]'`): qui si definiscono confini
+di stagione (giorno di calendario), diverso da `soggiorni` dove `'[)'`
+esclude il giorno di partenza (quella è una notte di soggiorno, questa è un
+confine di calendario). Due fasce della stessa categoria non possono avere
+periodi sovrapposti — stesso meccanismo dell'anti-overbooking su `soggiorni`.
+
+### B.12 — `pacchetti` (modulo 2.2)
+
+```sql
+CREATE TABLE pacchetti (
+  id             SERIAL PRIMARY KEY,
+  nome           VARCHAR(255) NOT NULL,
+  descrizione    TEXT,
+  num_notti      INTEGER NOT NULL,
+  prezzo_totale  NUMERIC(10,2) NOT NULL,
+  attivo         BOOLEAN NOT NULL DEFAULT true,
+  created_at     TIMESTAMP NOT NULL DEFAULT now(),
+  updated_at     TIMESTAMP NOT NULL DEFAULT now(),
+  CONSTRAINT chk_pacchetti_notti CHECK (num_notti > 0),
+  CONSTRAINT chk_pacchetti_prezzo CHECK (prezzo_totale > 0)
+);
+```
+
+Prezzo fisso indipendente dal calcolo per notte (es. "Weekend Relax 2 notti"
+a 250€ tutto compreso, non derivato dal listino `tariffe`). Nessun `DELETE`
+fisico previsto lato API — solo `attivo = false`.
+
+`soggiorni.pacchetto_id INTEGER REFERENCES pacchetti(id)` — nullable. Quando
+valorizzato, il form usa `pacchetti.prezzo_totale` come `tariffa_totale`
+(comunque sempre sovrascrivibile a mano, come il resto del campo).
+
 ### Ruoli e permessi — decisione presa
 
 Niente nuovo ruolo "governante": si riusano i 7 ruoli esistenti. Ospiti
@@ -396,6 +524,36 @@ rapido — l'assegnazione a un gruppo si fa come azione separata. Su `409`
 (camera occupata) il form resta aperto con messaggio, l'utente corregge e
 riprova — non perde i dati inseriti. Su successo: refetch griglia, nuova
 barra `opzione` (ambra) visibile subito.
+
+### Tariffe (`/tariffe`) e Pacchetti (`/pacchetti`) — modulo 2.2
+
+Due pagine nuove, sotto voce sidebar "OSPITALITÀ" (lettura per receptionist,
+scrittura solo admin/titolare, controlli di modifica nascosti lato UI per chi
+non può scrivere — coerente col backend).
+
+`/tariffe` — tre sezioni in sequenza: categorie camera (CRUD `tipi_camera`),
+assegnazione categoria a ciascuna camera esistente (tabella con select
+inline, `PATCH /api/camere/:id/tipo`), listino per categoria selezionata
+(CRUD `tariffe`, errore leggibile su sovrapposizione date).
+
+`/pacchetti` — lista con toggle attivo/disattivo (mai `DELETE`), form
+crea/modifica (nome, descrizione, notti, prezzo totale).
+
+Form "Nuova prenotazione" (`/planning-camere`) esteso con:
+- Select "Pacchetto (opzionale)" — se scelto, `tariffa_totale` si imposta al
+  prezzo del pacchetto (comunque sovrascrivibile).
+- Auto-calcolo tariffa da listino quando non c'è pacchetto selezionato: al
+  cambiare camera/date, chiama `GET /api/tariffe/calcola` con il
+  `tipo_camera_id` della camera scelta e precompila `tariffa_totale` — solo
+  se il campo è vuoto o coincide ancora con l'ultimo valore proposto in
+  automatico (se l'utente lo ha modificato a mano, non viene sovrascritto).
+  Se ci sono notti senza tariffa configurata, mostra un avviso invece di un
+  totale silenziosamente incompleto.
+
+**Non ancora fatto in questa sessione** (fuori scope, vedi
+`docs/EVOLUTIVE.md`): il drag-and-drop della griglia planning (`PATCH
+/api/soggiorni/:id`) non ricalcola automaticamente la tariffa quando si
+sposta una prenotazione — resta manuale come prima del modulo 2.2.
 
 ### Pulsanti di transizione stato (pannello dettaglio)
 

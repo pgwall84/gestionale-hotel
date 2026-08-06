@@ -10,6 +10,7 @@ import AppShell from '@/components/layout/AppShell';
 import StatusBadge from '@/components/ui/StatusBadge';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
+import CampoData from '@/components/ui/CampoData';
 
 export default function PaginaChecklist() {
   const { utente } = useAuth();
@@ -61,8 +62,8 @@ export default function PaginaChecklist() {
         {/* Selettore data + stato */}
         <div className="flex items-center justify-between mb-4 gap-3">
           <div className="flex items-center gap-2">
-            <input type="date" value={data} onChange={e => setData(e.target.value)}
-                   className="px-3 rounded-lg text-sm outline-none"
+            <CampoData value={data} onChange={v => setData(v)}
+                   className="px-3"
                    style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
             {esistente && <StatusBadge status="green" label="Compilata" />}
           </div>

@@ -11,6 +11,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
+  BrushCleaning, StickyNote, Circle, CheckCircle, Mail,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
@@ -18,9 +19,30 @@ import {
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
+import CampoData from '@/components/ui/CampoData';
+
+// Larghezza colonna giorno: MINIMA, non fissa (fix 31/07/2026 — la griglia
+// deve riempire lo spazio disponibile, non lasciare spazio vuoto a destra
+// quando ci sono poche colonne come in vista 7gg). Le colonne usano
+// `minmax(LARGHEZZA_COLONNA_MIN, 1fr)` in CSS Grid: si allargano da sole per
+// riempire lo spazio disponibile, senza scendere sotto questo minimo — il
+// browser gestisce la reattività al resize, nessuna misura JS necessaria.
+const LARGHEZZA_COLONNA_MIN = 56;
+// Vista "Mese" (fix 31/07/2026, seguito): 28-31 colonne non ci stanno con lo
+// stesso minimo delle viste 7gg/14gg — 31 × 56px = 1736px, oltre la larghezza
+// utile su quasi tutti gli schermi, quindi si finiva comunque a scorrere in
+// orizzontale. Minimo più stretto solo per 'mese' (56px resta invariato per
+// 7/14gg, dove le celle contengono anche il testo del giorno settimana).
+const LARGHEZZA_COLONNA_MIN_MESE = 32;
+const LARGHEZZA_COL_CAMERA = 180; // colonna nome camera, fissa
 
 const RUOLI_TRASCINA = ['admin', 'titolare', 'receptionist'];
-const LARGHEZZA_COLONNA = 56; // px — colonna giorno, fissa (necessaria per il calcolo del delta nel drag)
+// Gestione Stato Camere dalla scopetta (fermata/partenza/pronta/note) —
+// stessi ruoli di shared/ruoli.js sezione 'camere'.scrittura: include anche
+// portiere_notte (che non trascina prenotazioni, ma gestisce lo stato camere
+// durante il turno di notte), esclude cameriere (limitato a "segna pronta"
+// nella pagina /camere dedicata, non ha accesso a questa griglia).
+const RUOLI_GESTIONE_CAMERE = ['admin', 'titolare', 'receptionist', 'portiere_notte'];
 
 const STATI_COLORI = {
   opzione:    { bg: 'var(--status-amber-bg)',     text: 'var(--status-amber-text)',     label: 'Opzione' },
@@ -47,8 +69,12 @@ const CANALI_ORIGINE = [
 
 // ── Helper date (aritmetica in ora locale, stesso pattern di app/prenotazioni/page.jsx) ──
 
+// Mai new Date().toISOString() qui: converte in UTC e in Italia (UTC+1/+2)
+// fa perdere un giorno per un paio d'ore ogni notte (bug gemello di quello
+// corretto il 31/07/2026 in frontend/app/camere/page.jsx — spostaGiorno).
 function oggi() {
-  return new Date().toISOString().split('T')[0];
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
 }
 
 function spostaData(d, giorni) {
@@ -84,12 +110,40 @@ function calcolaGiorni(ancora, rangeModo) {
   return Array.from({ length: n }, (_, i) => spostaData(ancora, i));
 }
 
-function formatGiornoBreve(d) {
-  return new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric' });
+// soloNumero=true (vista Mese, colonna stretta): solo il numero, niente
+// giorno della settimana — a 32px "gio 30" non ci starebbe leggibile.
+function formatGiornoBreve(d, soloNumero = false) {
+  return new Date(d + 'T00:00:00').toLocaleDateString(
+    'it-IT',
+    soloNumero ? { day: 'numeric' } : { weekday: 'short', day: 'numeric' }
+  );
 }
 
 function formatDataEstesa(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' });
+}
+
+function capitalizza(s) {
+  return s.charAt(0).toUpperCase() + s.slice(1);
+}
+
+// Etichetta mese/anno del periodo visualizzato (fix 31/07/2026 — in alto non
+// c'era da nessuna parte l'indicazione del mese, solo "ven 31 – gio 6" senza
+// contesto). "Luglio 2026" se il range sta in un solo mese, "Luglio -
+// Agosto 2026" se lo attraversa (anno ripetuto solo se diverso).
+function formatMesePeriodo(giorni) {
+  if (!giorni.length) return '';
+  const primo = new Date(giorni[0] + 'T00:00:00');
+  const ultimo = new Date(giorni[giorni.length - 1] + 'T00:00:00');
+  const meseAnno = (d) => capitalizza(d.toLocaleDateString('it-IT', { month: 'long', year: 'numeric' }));
+  if (primo.getMonth() === ultimo.getMonth() && primo.getFullYear() === ultimo.getFullYear()) {
+    return meseAnno(primo);
+  }
+  const soloMese = (d) => capitalizza(d.toLocaleDateString('it-IT', { month: 'long' }));
+  if (primo.getFullYear() === ultimo.getFullYear()) {
+    return `${soloMese(primo)} - ${soloMese(ultimo)} ${primo.getFullYear()}`;
+  }
+  return `${meseAnno(primo)} - ${meseAnno(ultimo)}`;
 }
 
 // Colonna (1-indexed, relativa alla riga giorni) coperta dalla barra,
@@ -131,7 +185,16 @@ function Barra({ soggiorno, style, puoTrascinare, onApri }) {
         cursor: puoTrascinare ? 'grab' : 'pointer',
       }}
       className="rounded-md px-2 py-1 text-[11px] font-medium truncate m-0.5 flex items-center select-none"
-      title={`${soggiorno.ospite_nome} ${soggiorno.ospite_cognome} — ${colori.label}`}
+      // Tooltip più dettagliato (04/08/2026, richiesto dal titolare) — prima
+      // mostrava solo nome/stato, ora anche le date e il numero ospiti/
+      // tariffa, tutti dati già presenti nella risposta della griglia
+      // (nessuna chiamata in più). \n rende righe separate nel tooltip nativo.
+      title={
+        `${soggiorno.ospite_nome} ${soggiorno.ospite_cognome}\n` +
+        `${formatDataEstesa(soggiorno.data_arrivo)} → ${formatDataEstesa(soggiorno.data_partenza)}\n` +
+        `${soggiorno.num_ospiti} ${soggiorno.num_ospiti === 1 ? 'ospite' : 'ospiti'} · Stato: ${colori.label}` +
+        (soggiorno.tariffa_totale ? ` · €${Number(soggiorno.tariffa_totale).toFixed(2)}` : '')
+      }
     >
       {soggiorno.ospite_cognome}
     </div>
@@ -140,19 +203,44 @@ function Barra({ soggiorno, style, puoTrascinare, onApri }) {
 
 // ── Riga camera (droppable) ─────────────────────────────────────────────────
 
-function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, onApriDettaglio, onCellaVuota }) {
+function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGestireCamere, statoOggi, larghezzaColonnaMin, onApriDettaglio, onCellaVuota, onApriStatoCamera }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `camera-${camera.camera_id}`,
     data: { cameraId: camera.camera_id },
   });
 
+  const pronta = !!statoOggi?.pronta;
+  const haNota = !!statoOggi?.note;
+
   return (
     <>
       <div
         style={{ gridColumn: 1, gridRow: rigaGrid }}
-        className="flex items-center px-3 text-xs font-medium border-b sticky left-0"
+        // border-r aggiunto il 31/07/2026 — mancava la riga verticale tra la
+        // colonna camera e il primo giorno visibile (spesso "oggi", dato che
+        // la vista parte da oggi di default): l'header ha border-l su ogni
+        // colonna giorno, ma il corpo qui non aveva il border-r equivalente
+        // per la prima colonna, unico punto dove i due bordi non combaciano.
+        className="flex items-center justify-between gap-1 px-3 text-xs font-medium border-b border-r sticky left-0 bg-white"
       >
-        {camera.numero !== 'app' ? `Camera ${camera.numero}` : camera.nome}
+        <span className="truncate">{camera.numero !== 'app' ? `Camera ${camera.numero}` : camera.nome}</span>
+        {/* Scopetta = stato pulizia di OGGI (non della data del range visibile):
+            rossa se non pronta, verde se pronta. Click apre il popup di
+            gestione (fermata/partenza/pronta/note) — stesse funzionalità di
+            "Stato Camere". Icona nota visibile solo se c'è una nota per oggi. */}
+        <div className="flex items-center gap-1 shrink-0">
+          {haNota && <StickyNote size={12} style={{ color: 'var(--muted-foreground)' }} title={statoOggi.note} />}
+          <button
+            type="button"
+            onClick={() => onApriStatoCamera(camera)}
+            disabled={!puoGestireCamere}
+            title={pronta ? 'Camera pronta (oggi) — clicca per gestire' : 'Camera da pulire (oggi) — clicca per gestire'}
+            className="p-0.5 rounded"
+            style={{ cursor: puoGestireCamere ? 'pointer' : 'default' }}
+          >
+            <BrushCleaning size={13} style={{ color: pronta ? 'var(--status-green-text)' : 'var(--status-red-text)' }} />
+          </button>
+        </div>
       </div>
 
       <div
@@ -161,7 +249,7 @@ function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, onApriDe
           gridColumn: `2 / ${giorni.length + 2}`,
           gridRow: rigaGrid,
           display: 'grid',
-          gridTemplateColumns: `repeat(${giorni.length}, ${LARGHEZZA_COLONNA}px)`,
+          gridTemplateColumns: `repeat(${giorni.length}, minmax(${larghezzaColonnaMin}px, 1fr))`,
           gridTemplateRows: '40px',
           background: isOver ? 'var(--status-blue-bg)' : undefined,
         }}
@@ -207,6 +295,10 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   const [inModifica, setInModifica] = useState(false);
   const [salvataggio, setSalvataggio] = useState(false);
   const [form, setForm] = useState(null);
+  const [testEmailInCorso, setTestEmailInCorso] = useState(null); // 'conferma' | 'promemoria' | 'recensione' | null
+  const [testEmailEsito, setTestEmailEsito] = useState(null); // { tipo, ok, motivo?, destinatario? }
+  const [preCheckinInCorso, setPreCheckinInCorso] = useState(false);
+  const [preCheckinEsito, setPreCheckinEsito] = useState(null);
 
   const carica = useCallback(async () => {
     try {
@@ -331,6 +423,53 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   const puoCheckIn = puoScrivere || utente?.ruolo === 'portiere_notte';
   const puoCheckOut = puoScrivere && dati?.stato === 'check_in';
   const puoAnnullare = puoScrivere && ['opzione', 'confermata'].includes(dati?.stato);
+  // Pulsante di test email (modulo 5.3, 04/08/2026) — riservato ad
+  // admin/titolare, vedi shared/ruoli.js 'prenotazioni'.test_email. Bypassa
+  // stato/date reali della prenotazione, serve solo a verificare l'invio.
+  const puoTestEmail = ['admin', 'titolare'].includes(utente?.ruolo);
+
+  async function inviaTestEmail(tipo) {
+    setTestEmailInCorso(tipo);
+    setTestEmailEsito(null);
+    try {
+      const risposta = await api.post(`/prenotazioni/${prenotazioneId}/test-email`, { tipo });
+      setTestEmailEsito({ tipo, ...risposta.data });
+    } catch (err) {
+      setTestEmailEsito({ tipo, ok: false, motivo: err.message || 'Errore nella richiesta' });
+    } finally {
+      setTestEmailInCorso(null);
+    }
+  }
+
+  // Invio manuale (reale) del link di pre check-in (modulo 5.2 Fase B,
+  // 04/08/2026) — a differenza del test email qui l'invito è registrato
+  // (prenotazioni.pre_checkin_inviato_at): il job del promemoria non lo
+  // includerà una seconda volta.
+  // Segnalato dal titolare (04/08/2026): ogni invio genera un token nuovo e
+  // invalida subito il link precedente (voluto, vedi backend/lib/preCheckin.js)
+  // — se si reinvia mentre l'ospite ha ancora aperto il vecchio link, quello
+  // smette di funzionare. Se pre_checkin_inviato_at è già valorizzato, il
+  // bottone diventa "Invia di nuovo" con conferma esplicita, per non farlo
+  // scattare per sbaglio.
+  async function inviaPreCheckin() {
+    if (dati?.pre_checkin_inviato_at) {
+      const conferma = window.confirm(
+        'Il pre check-in era già stato inviato per questa prenotazione. Inviarlo di nuovo genera un nuovo link e rende subito non valido quello precedente (se l\'ospite lo ha ancora aperto, smetterà di funzionare). Procedere?'
+      );
+      if (!conferma) return;
+    }
+    setPreCheckinInCorso(true);
+    setPreCheckinEsito(null);
+    try {
+      const risposta = await api.post(`/prenotazioni/${prenotazioneId}/invia-pre-checkin`);
+      setPreCheckinEsito(risposta.data);
+      if (risposta.data?.ok) setDati(d => ({ ...d, pre_checkin_inviato_at: new Date().toISOString() }));
+    } catch (err) {
+      setPreCheckinEsito({ ok: false, motivo: err.message || 'Errore nella richiesta' });
+    } finally {
+      setPreCheckinInCorso(false);
+    }
+  }
 
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
@@ -469,6 +608,72 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                   <X size={14} /> Annulla prenotazione
                 </button>
               )}
+
+              {puoScrivere && (
+                <div className="space-y-1.5">
+                  {dati.pre_checkin_inviato_at && !preCheckinEsito && (
+                    <p className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+                      Pre check-in già inviato il {new Date(dati.pre_checkin_inviato_at).toLocaleString('it-IT')}
+                    </p>
+                  )}
+                  <button
+                    onClick={inviaPreCheckin}
+                    disabled={preCheckinInCorso}
+                    className="w-full rounded-lg py-2 text-sm font-medium border disabled:opacity-60"
+                  >
+                    {preCheckinInCorso ? 'Invio in corso...' : dati.pre_checkin_inviato_at ? 'Invia di nuovo il link pre check-in' : 'Invia link pre check-in'}
+                  </button>
+                  {preCheckinEsito && (
+                    <p className="text-xs rounded-md px-2 py-1.5"
+                       style={{
+                         background: preCheckinEsito.ok ? 'var(--status-green-bg)' : 'var(--status-red-bg)',
+                         color: preCheckinEsito.ok ? 'var(--status-green-text)' : 'var(--status-red-text)',
+                       }}>
+                      {preCheckinEsito.ok ? `Inviato a ${preCheckinEsito.destinatario}` : `Non inviato: ${preCheckinEsito.motivo}`}
+                    </p>
+                  )}
+                </div>
+              )}
+
+              {puoTestEmail && (
+                <div className="rounded-lg border p-3 space-y-2">
+                  <p className="text-xs font-medium flex items-center gap-1.5">
+                    <Mail size={13} /> Invio di test (solo admin/titolare)
+                  </p>
+                  <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                    Bypassa stato e date reali — invia subito l'email indicata, per verificare che il flusso funzioni.
+                  </p>
+                  <div className="flex gap-2">
+                    {[
+                      { tipo: 'conferma', label: 'Conferma' },
+                      { tipo: 'promemoria', label: 'Promemoria' },
+                      { tipo: 'recensione', label: 'Recensione' },
+                    ].map(({ tipo, label }) => (
+                      <button
+                        key={tipo}
+                        onClick={() => inviaTestEmail(tipo)}
+                        disabled={testEmailInCorso !== null}
+                        className="flex-1 rounded-lg py-1.5 text-xs font-medium border"
+                      >
+                        {testEmailInCorso === tipo ? '...' : label}
+                      </button>
+                    ))}
+                  </div>
+                  {testEmailEsito && (
+                    <p
+                      className="text-xs rounded-md px-2 py-1.5"
+                      style={{
+                        background: testEmailEsito.ok ? 'var(--status-green-bg)' : 'var(--status-red-bg)',
+                        color: testEmailEsito.ok ? 'var(--status-green-text)' : 'var(--status-red-text)',
+                      }}
+                    >
+                      {testEmailEsito.ok
+                        ? `Inviata (${testEmailEsito.tipo}) a ${testEmailEsito.destinatario}`
+                        : `Non inviata (${testEmailEsito.tipo}): ${testEmailEsito.motivo || 'errore sconosciuto'}`}
+                    </p>
+                  )}
+                </div>
+              )}
             </div>
           )}
 
@@ -491,15 +696,15 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
               <div className="grid grid-cols-2 gap-2">
                 <div>
                   <label className="text-xs font-medium block mb-1">Arrivo</label>
-                  <input type="date" value={form.data_arrivo}
-                         onChange={(e) => setForm(f => ({ ...f, data_arrivo: e.target.value }))}
-                         className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                  <CampoData value={form.data_arrivo}
+                         onChange={(v) => setForm(f => ({ ...f, data_arrivo: v }))}
+                         className="border px-2 py-1.5" />
                 </div>
                 <div>
                   <label className="text-xs font-medium block mb-1">Partenza</label>
-                  <input type="date" value={form.data_partenza}
-                         onChange={(e) => setForm(f => ({ ...f, data_partenza: e.target.value }))}
-                         className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                  <CampoData value={form.data_partenza}
+                         onChange={(v) => setForm(f => ({ ...f, data_partenza: v }))}
+                         className="border px-2 py-1.5" />
                 </div>
               </div>
               <div>
@@ -549,6 +754,15 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
   const [canaleOrigine, setCanaleOrigine] = useState('diretta');
   const [note, setNote] = useState('');
 
+  // Modulo 2.2 — pacchetto opzionale (prezzo fisso, ha priorità) e
+  // auto-calcolo tariffa dal listino quando non c'è un pacchetto selezionato.
+  // tariffaAutoValore tiene traccia dell'ultimo valore proposto in automatico:
+  // se l'utente lo modifica a mano, il ricalcolo successivo non lo sovrascrive.
+  const [pacchetti, setPacchetti] = useState([]);
+  const [pacchettoId, setPacchettoId] = useState('');
+  const [tariffaAutoValore, setTariffaAutoValore] = useState(null);
+  const [avvisoTariffa, setAvvisoTariffa] = useState(null);
+
   const [ospiteSelezionato, setOspiteSelezionato] = useState(null);
   const [ricercaOspite, setRicercaOspite] = useState('');
   const [risultatiOspiti, setRisultatiOspiti] = useState([]);
@@ -587,6 +801,56 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
   function validaDate(arrivo, partenza) {
     setErroreDate(arrivo && partenza && partenza <= arrivo ? 'La partenza deve essere successiva all\'arrivo.' : null);
   }
+
+  // Carica i pacchetti attivi una sola volta all'apertura del form.
+  useEffect(() => {
+    api.get('/pacchetti?attivo=true').then(res => setPacchetti(res.data)).catch(() => setPacchetti([]));
+  }, []);
+
+  function selezionaPacchetto(id) {
+    setPacchettoId(id);
+    setAvvisoTariffa(null);
+    if (id) {
+      const pacchetto = pacchetti.find(p => String(p.id) === String(id));
+      if (pacchetto) {
+        setTariffaTotale(String(pacchetto.prezzo_totale));
+        setTariffaAutoValore(Number(pacchetto.prezzo_totale));
+      }
+    }
+  }
+
+  // Auto-calcolo tariffa dal listino (modulo 2.2): solo se non è stato
+  // selezionato un pacchetto (ha priorità) e la camera scelta ha una
+  // categoria assegnata. Sovrascrive il campo solo se vuoto o se coincide
+  // ancora con l'ultimo valore proposto in automatico — se l'utente lo ha
+  // modificato a mano, resta come l'ha lasciato.
+  useEffect(() => {
+    if (pacchettoId) return;
+    if (!cameraId || !dataArrivo || !dataPartenza || dataPartenza <= dataArrivo) return;
+    const camera = elencoCamere.find(c => String(c.camera_id) === String(cameraId));
+    if (!camera?.tipo_camera_id) { setAvvisoTariffa(null); return; }
+
+    let annullato = false;
+    (async () => {
+      try {
+        const res = await api.get(
+          `/tariffe/calcola?tipo_camera_id=${camera.tipo_camera_id}&data_arrivo=${dataArrivo}&data_partenza=${dataPartenza}`
+        );
+        if (annullato) return;
+        if (res.data.prezzo_totale !== null) {
+          setTariffaTotale(prev => (prev === '' || Number(prev) === tariffaAutoValore ? String(res.data.prezzo_totale) : prev));
+          setTariffaAutoValore(res.data.prezzo_totale);
+          setAvvisoTariffa(null);
+        } else {
+          setAvvisoTariffa(`Tariffa non configurata per ${res.data.notti_scoperte.length} notte/i del periodo — inserisci il totale a mano.`);
+        }
+      } catch {
+        setAvvisoTariffa(null);
+      }
+    })();
+    return () => { annullato = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [cameraId, dataArrivo, dataPartenza, pacchettoId, elencoCamere]);
 
   async function creaNuovoOspite() {
     setErroreNuovoOspite(null);
@@ -632,6 +896,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
           data_partenza: dataPartenza,
           num_ospiti: Number(numOspiti) || 1,
           tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+          pacchetto_id: pacchettoId ? Number(pacchettoId) : null,
         },
       });
       onCreato();
@@ -773,24 +1038,36 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
           <div className="grid grid-cols-2 gap-2">
             <div>
               <label className="text-xs font-medium block mb-1">Arrivo</label>
-              <input
-                type="date"
+              <CampoData
                 value={dataArrivo}
-                onChange={(e) => { setDataArrivo(e.target.value); validaDate(e.target.value, dataPartenza); }}
-                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                onChange={(v) => { setDataArrivo(v); validaDate(v, dataPartenza); }}
+                className="border px-2 py-1.5"
               />
             </div>
             <div>
               <label className="text-xs font-medium block mb-1">Partenza</label>
-              <input
-                type="date"
+              <CampoData
                 value={dataPartenza}
-                onChange={(e) => { setDataPartenza(e.target.value); validaDate(dataArrivo, e.target.value); }}
-                className="w-full border rounded-lg px-2 py-1.5 text-sm"
+                onChange={(v) => { setDataPartenza(v); validaDate(dataArrivo, v); }}
+                className="border px-2 py-1.5"
               />
             </div>
           </div>
           {erroreDate && <p className="text-xs" style={{ color: 'var(--status-red-text)' }}>{erroreDate}</p>}
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Pacchetto (opzionale)</label>
+            <select
+              value={pacchettoId}
+              onChange={(e) => selezionaPacchetto(e.target.value)}
+              className="w-full border rounded-lg px-2 py-1.5 text-sm"
+            >
+              <option value="">Nessun pacchetto — tariffa da listino</option>
+              {pacchetti.map(p => (
+                <option key={p.id} value={p.id}>{p.nome} — €{Number(p.prezzo_totale).toFixed(2)} ({p.num_notti} notti)</option>
+              ))}
+            </select>
+          </div>
 
           <div className="grid grid-cols-2 gap-2">
             <div>
@@ -815,6 +1092,9 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
               />
             </div>
           </div>
+          {avvisoTariffa && (
+            <p className="text-xs" style={{ color: 'var(--hotel-amber)' }}>{avvisoTariffa}</p>
+          )}
 
           <div>
             <label className="text-xs font-medium block mb-1">Canale origine</label>
@@ -856,11 +1136,120 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
   );
 }
 
+// ── Popup Stato Camera (scopetta) ───────────────────────────────────────────
+// Stesse funzionalità della pagina "Stato Camere" (/camere) ma per la camera
+// cliccata nel planning, sempre riferite a OGGI (non alla data del range
+// visualizzato) — la pulizia è un'operazione giornaliera, non legata al
+// giorno che si sta guardando in griglia.
+// Modulo 5.1 (03/08/2026): fermata/partenza non sono più toggle manuali qui
+// — sono calcolate dal backend da `soggiorni` (vedi camereController.js),
+// mostrate in sola lettura. Note: shared/ruoli.js sezione 'camere'.scrittura.
+// Pronta: sezione 'camere'.pulizia (invariato per questa griglia, dato che
+// RUOLI_GESTIONE_CAMERE non include cameriere/dipendente — quei ruoli non
+// hanno comunque accesso a /planning-camere, usano /camere per "pronta").
+
+function PopupStatoCamera({ camera, statoOggi, onChiudi, onSalvato }) {
+  const arrivo = !!statoOggi?.arrivo;
+  const partenza = !!statoOggi?.partenza;
+  const [pronta, setPronta] = useState(!!statoOggi?.pronta);
+  const [note, setNote] = useState(statoOggi?.note || '');
+  const [salvataggio, setSalvataggio] = useState(false);
+  const [errore, setErrore] = useState(null);
+
+  async function salva() {
+    setSalvataggio(true);
+    setErrore(null);
+    const dataOggi = oggi();
+    try {
+      await api.post('/camere/stato', { camera_id: camera.camera_id, data: dataOggi, note });
+      await api.post('/camere/pronta', { camera_id: camera.camera_id, data: dataOggi, pronta });
+      await onSalvato();
+      onChiudi();
+    } catch (err) {
+      setErrore(err.message || 'Errore nel salvataggio.');
+    } finally {
+      setSalvataggio(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="w-full max-w-sm bg-white rounded-xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <p className="font-semibold text-sm">
+            Stato camera — {camera.numero !== 'app' ? `Camera ${camera.numero}` : camera.nome}
+          </p>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Riferito a oggi, {formatDataEstesa(oggi())}</p>
+
+          {errore && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {errore}
+            </div>
+          )}
+
+          {/* Sola lettura — calcolate da soggiorni (modulo 5.1), non più toggle */}
+          <div className="flex gap-2">
+            <div className="flex-1 py-2 rounded-lg text-xs font-medium border text-center"
+                 style={{
+                   background: arrivo ? 'var(--status-green-text)' : 'var(--background)',
+                   color: arrivo ? 'white' : 'var(--muted-foreground)',
+                 }}>
+              Fermata
+            </div>
+            <div className="flex-1 py-2 rounded-lg text-xs font-medium border text-center"
+                 style={{
+                   background: partenza ? 'var(--status-red-text)' : 'var(--background)',
+                   color: partenza ? 'white' : 'var(--muted-foreground)',
+                 }}>
+              Partenza
+            </div>
+          </div>
+
+          <button type="button" onClick={() => setPronta(p => !p)}
+                  className="w-full py-2 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5"
+                  style={{
+                    background: pronta ? 'var(--status-blue-text)' : 'var(--background)',
+                    color: pronta ? 'white' : 'var(--muted-foreground)',
+                  }}>
+            {pronta ? <CheckCircle size={13} /> : <Circle size={13} />}
+            {pronta ? 'Pronta' : 'Segna come pronta'}
+          </button>
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Note</label>
+            <textarea value={note} rows={2} onChange={(e) => setNote(e.target.value)}
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={salva} disabled={salvataggio}
+                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white disabled:opacity-60"
+                    style={{ background: 'var(--hotel-amber)' }}>
+              {salvataggio ? 'Salvataggio...' : 'Salva'}
+            </button>
+            <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">
+              Annulla
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Pagina principale ────────────────────────────────────────────────────────
 
 export default function PaginaPlanningCamere() {
   const { utente } = useAuth();
-  const [rangeModo, setRangeModo] = useState('7');
+  // Default 14 giorni (era 7) — richiesto dal titolare 04/08/2026.
+  const [rangeModo, setRangeModo] = useState('14');
   const [ancora, setAncora] = useState(oggi());
   const [righe, setRighe] = useState([]);
   const [loading, setLoading] = useState(true);
@@ -868,10 +1257,49 @@ export default function PaginaPlanningCamere() {
   const [dragErrore, setDragErrore] = useState(null);
   const [prenotazioneApertaId, setPrenotazioneApertaId] = useState(null);
   const [formNuovaPrenotazione, setFormNuovaPrenotazione] = useState(null);
+  const [statoOggiMap, setStatoOggiMap] = useState({}); // camera_id → {arrivo,partenza,pronta,note} di OGGI
+  const [cameraStatoAperta, setCameraStatoAperta] = useState(null); // camera su cui è aperto il popup scopetta
 
   const puoTrascinare = RUOLI_TRASCINA.includes(utente?.ruolo);
+  const puoGestireCamere = RUOLI_GESTIONE_CAMERE.includes(utente?.ruolo);
   const giorni = useMemo(() => calcolaGiorni(ancora, rangeModo), [ancora, rangeModo]);
   const oggiStr = oggi();
+
+  // Larghezza colonna dinamica (fix 31/07/2026, rivisto dopo verifica in UI:
+  // il primo tentativo con ResizeObserver + larghezza calcolata in px non
+  // riempiva lo spazio reale). Soluzione più robusta: `minmax(MIN, 1fr)`
+  // nativo di CSS Grid — ogni colonna giorno non scende mai sotto
+  // LARGHEZZA_COLONNA_MIN, ma si allarga automaticamente per riempire lo
+  // spazio disponibile (vista 7gg/14gg su schermi larghi); se lo spazio non
+  // basta nonostante il minimo, scrolla come prima (vedi però il minimo
+  // ridotto per 'mese' subito sotto, per ridurre i casi in cui questo serve)
+  // — nessuna misurazione JS necessaria, il browser lo fa da solo e reagisce
+  // subito al resize della finestra. Per il drag-and-drop (che deve
+  // convertire un delta in pixel in un numero di giorni) la larghezza
+  // effettiva viene letta dal DOM al momento del rilascio — vedi
+  // primaColonnaRef e handleDragEnd più sotto, non da uno stato calcolato,
+  // per restare sempre allineata al valore realmente disegnato dal browser.
+  const primaColonnaRef = useRef(null);
+  // Minimo colonna dipendente dalla vista: 'mese' usa un minimo più stretto
+  // (fix 31/07/2026, seguito) per far stare le 28-31 colonne senza scroll
+  // orizzontale — vedi LARGHEZZA_COLONNA_MIN_MESE in cima al file.
+  const larghezzaColonnaMin = rangeModo === 'mese' ? LARGHEZZA_COLONNA_MIN_MESE : LARGHEZZA_COLONNA_MIN;
+
+  // Stato pulizia/note di oggi per tutte le camere, per colorare la scopetta
+  // nella riga camera — indipendente dal range di date visualizzato.
+  const caricaStatoOggi = useCallback(async () => {
+    try {
+      const risposta = await api.get(`/camere?data=${oggiStr}`);
+      const map = {};
+      risposta.data.camere.forEach(c => { map[c.id] = c; });
+      setStatoOggiMap(map);
+    } catch {
+      // non bloccante: la scopetta resta semplicemente grigia/rossa di default
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  useEffect(() => { caricaStatoOggi(); }, [caricaStatoOggi]);
 
   const sensors = useSensors(useSensor(PointerSensor, { activationConstraint: { distance: 5 } }));
 
@@ -953,7 +1381,12 @@ export default function PaginaPlanningCamere() {
   const elencoCamere = useMemo(() => {
     const mappa = new Map();
     righe.forEach(r => {
-      if (!mappa.has(r.camera_id)) mappa.set(r.camera_id, { camera_id: r.camera_id, numero: r.camera_numero, nome: r.camera_nome });
+      if (!mappa.has(r.camera_id)) {
+        mappa.set(r.camera_id, {
+          camera_id: r.camera_id, numero: r.camera_numero, nome: r.camera_nome,
+          tipo_camera_id: r.tipo_camera_id, // modulo 2.2 — usato per l'auto-calcolo tariffa nel form
+        });
+      }
     });
     return [...mappa.values()];
   }, [righe]);
@@ -1002,7 +1435,10 @@ export default function PaginaPlanningCamere() {
     if (!over) return;
     const soggiorno = active.data.current.soggiorno;
     const nuovaCameraId = over.data.current.cameraId;
-    const deltaGiorni = Math.round(delta.x / LARGHEZZA_COLONNA);
+    // Larghezza reale letta dal DOM (colonne fluide con minmax(...,1fr) —
+    // non c'è più un valore fisso calcolato in JS da tenere sincronizzato).
+    const larghezzaColonnaAttuale = primaColonnaRef.current?.offsetWidth || larghezzaColonnaMin;
+    const deltaGiorni = Math.round(delta.x / larghezzaColonnaAttuale);
 
     if (deltaGiorni === 0 && nuovaCameraId === soggiorno.camera_id) return;
 
@@ -1036,9 +1472,16 @@ export default function PaginaPlanningCamere() {
 
           <div className="flex items-center gap-2">
             <button onClick={vaiIndietro} className="p-1.5 rounded-lg border bg-white"><ChevronLeft size={16} /></button>
-            <p className="text-xs font-medium min-w-32 text-center">
-              {formatGiornoBreve(giorni[0])} – {formatGiornoBreve(giorni[giorni.length - 1])}
-            </p>
+            <div className="min-w-32 text-center">
+              {/* Mese/anno aggiunto il 31/07/2026 — prima non c'era da nessuna
+                  parte un'indicazione del mese, solo il range giorno/giorno. */}
+              <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                {formatMesePeriodo(giorni)}
+              </p>
+              <p className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
+                {formatGiornoBreve(giorni[0])} – {formatGiornoBreve(giorni[giorni.length - 1])}
+              </p>
+            </div>
             <button onClick={vaiAvanti} className="p-1.5 rounded-lg border bg-white"><ChevronRight size={16} /></button>
           </div>
 
@@ -1087,21 +1530,22 @@ export default function PaginaPlanningCamere() {
               <div
                 style={{
                   display: 'grid',
-                  gridTemplateColumns: `180px repeat(${giorni.length}, ${LARGHEZZA_COLONNA}px)`,
+                  gridTemplateColumns: `${LARGHEZZA_COL_CAMERA}px repeat(${giorni.length}, minmax(${larghezzaColonnaMin}px, 1fr))`,
                   gridTemplateRows: `36px repeat(${numRighe}, auto)`,
                 }}
               >
                 {/* Header: colonna camera */}
-                <div style={{ gridColumn: 1, gridRow: 1 }} className="border-b bg-gray-50 sticky left-0 z-10" />
+                <div style={{ gridColumn: 1, gridRow: 1 }} className="border-b border-r bg-gray-50 sticky left-0 z-10" />
                 {/* Header: giorni */}
                 {giorni.map((g, i) => (
                   <div
                     key={g}
+                    ref={i === 0 ? primaColonnaRef : undefined}
                     style={{ gridColumn: i + 2, gridRow: 1 }}
                     className="flex items-center justify-center text-[10px] font-medium border-b border-l"
                   >
                     <span style={{ color: g === oggiStr ? 'var(--hotel-amber)' : 'var(--muted-foreground)' }}>
-                      {formatGiornoBreve(g)}
+                      {formatGiornoBreve(g, rangeModo === 'mese')}
                     </span>
                   </div>
                 ))}
@@ -1129,8 +1573,12 @@ export default function PaginaPlanningCamere() {
                           rigaGrid={riga}
                           oggiStr={oggiStr}
                           puoTrascinare={puoTrascinare}
+                          puoGestireCamere={puoGestireCamere}
+                          statoOggi={statoOggiMap[camera.camera_id]}
+                          larghezzaColonnaMin={larghezzaColonnaMin}
                           onApriDettaglio={setPrenotazioneApertaId}
                           onCellaVuota={apriFormDaCella}
+                          onApriStatoCamera={setCameraStatoAperta}
                         />
                       );
                       riga++;
@@ -1162,6 +1610,15 @@ export default function PaginaPlanningCamere() {
             setFormNuovaPrenotazione(null);
             await caricaGriglia();
           }}
+        />
+      )}
+
+      {cameraStatoAperta && (
+        <PopupStatoCamera
+          camera={cameraStatoAperta}
+          statoOggi={statoOggiMap[cameraStatoAperta.camera_id]}
+          onChiudi={() => setCameraStatoAperta(null)}
+          onSalvato={caricaStatoOggi}
         />
       )}
     </AppShell>

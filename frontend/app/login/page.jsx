@@ -26,7 +26,11 @@ export default function PaginaLogin() {
       await login(email, password);
       router.replace('/home');
     } catch (err) {
-      setErrore(err?.response?.data?.errore || 'Errore di connessione. Riprova.');
+      // Fix 31/07/2026 (docs/EVOLUTIVE.md): la chiave era 'errore' (italiano),
+      // ma tutti i controller backend rispondono con 'error' (inglese,
+      // convenzione CLAUDE.md Sezione 5) — un login fallito per password
+      // errata mostrava sempre il fallback generico, mai il motivo reale.
+      setErrore(err?.response?.data?.error || 'Errore di connessione. Riprova.');
     } finally {
       setCaricamento(false);
     }
@@ -50,10 +54,14 @@ export default function PaginaLogin() {
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
 
           <div>
-            <label className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>
+            {/* htmlFor/id aggiunti il 31/07/2026 (docs/EVOLUTIVE.md): senza
+                associazione programmatica label↔input, tests/e2e/login.spec.js
+                (page.getByLabel(/email/i)) andava in timeout. */}
+            <label htmlFor="email" className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>
               Email
             </label>
             <input
+              id="email"
               type="email"
               value={email}
               onChange={e => setEmail(e.target.value)}
@@ -67,11 +75,12 @@ export default function PaginaLogin() {
 
           {/* Password con toggle mostra/nascondi */}
           <div>
-            <label className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>
+            <label htmlFor="password" className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>
               Password
             </label>
             <div className="relative">
               <input
+                id="password"
                 type={mostraPassword ? 'text' : 'password'}
                 value={password}
                 onChange={e => setPassword(e.target.value)}
@@ -94,7 +103,10 @@ export default function PaginaLogin() {
           </div>
 
           {errore && (
-            <div className="px-3 py-2.5 rounded-lg text-[13px]"
+            // role="alert" aggiunto insieme al fix sopra: il test e2e
+            // "credenziali errate" cerca [role="alert"], .errore, .error —
+            // nessuno dei tre comparava prima su questo div.
+            <div role="alert" className="px-3 py-2.5 rounded-lg text-[13px]"
                  style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
               {errore}
             </div>

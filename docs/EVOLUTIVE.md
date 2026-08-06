@@ -23,14 +23,6 @@ Modulo 1.7 — Magazzino (evolutive, non ora):
     hardware invece della fotocamera del telefono, se il volume di scansioni
     giornaliere rende l'inserimento manuale troppo lento in pratica.
 
-Modulo 1.3 — Camere:
-  Robustezza query camere: GET /api/camere usa CAST(numero AS INTEGER) senza
-  gestione errore — un valore non numerico in camere.numero rompe l'intero
-  endpoint con 500 invece di un errore leggibile. Scoperto incidentalmente
-  il 16/07/2026 con dati di scarto di test, non ancora capitato in
-  produzione. Da sistemare quando si tocca di nuovo il modulo Camere
-  (validazione a monte sull'INSERT, o query più difensiva).
-
 frontend/lib/api.js — messaggi di errore backend (scoperto 17/07/2026,
 CORRETTO in quella sessione, ma verificare l'impatto visibile):
   L'helper leggeva `json?.errore` (chiave italiana) per costruire
@@ -51,27 +43,18 @@ CORRETTO in quella sessione, ma verificare l'impatto visibile):
   moduli, verificare se l'utente segnala un messaggio d'errore "nuovo" o
   "mai visto prima"**: è questo bug che finalmente si vede, non una
   regressione introdotta dal tocco successivo.
-  **Eccezione non coperta dal fix**: `frontend/app/login/page.jsx` non usa
-  `err.message` — legge `err?.response?.data?.errore || 'Errore di
-  connessione. Riprova.'` con la STESSA chiave sbagliata ma un fallback
-  hardcoded diverso. Resta silenziosamente sbagliata: un login fallito per
-  password errata mostra ancora il fuorviante "Errore di connessione.
-  Riprova." invece del motivo reale. Non toccata, da correggere quando si
-  tocca di nuovo il modulo login (stesso fix: `err?.response?.data?.error`).
+  ✅ **Eccezione risolta il 31/07/2026**: `frontend/app/login/page.jsx`
+  aveva la stessa chiave sbagliata (`err?.response?.data?.errore`) con un
+  fallback hardcoded diverso — corretta in `.error`.
 
-tests/e2e/login.spec.js — getByLabel non trova i campi (scoperto
-17/07/2026, non corretto):
-  `frontend/app/login/page.jsx` ha due `<label>` (Email, Password) senza
-  `htmlFor`/`id` a collegarli ai rispettivi `<input>` — nessuna
-  associazione programmatica. `login.spec.js` usa `page.getByLabel(/email/i)`
-  e `page.getByLabel(/password/i)`, che quindi non trovano mai i campi e
-  vanno in timeout (verificato: lo stesso identico errore si riproduce nel
-  nuovo `tests/e2e/planning-camere.spec.js` finché non è stato riscritto
-  con `getByPlaceholder`). `login.spec.js` esistente molto probabilmente
-  fallisce già oggi in CI/locale, indipendentemente da questa sessione.
-  Fix quando si riprende: aggiungere `htmlFor="email"`/`id="email"` (e
-  coppia analoga per password) in `login/page.jsx`, oppure riscrivere il
-  test con `getByPlaceholder`/selettore diretto sull'input.
+✅ tests/e2e/login.spec.js — getByLabel non trovava i campi (scoperto
+17/07/2026, CORRETTO il 31/07/2026): aggiunti `htmlFor`/`id` su
+`label`/`input` email e password in `login/page.jsx`, più `role="alert"`
+sul banner di errore (necessario perché il terzo test, "credenziali
+errate", lo cercasse con successo — non comparabile prima con nessuno dei
+selettori `[role="alert"], .errore, .error` usati dal test). Non ancora
+rieseguito con Playwright reale in questa sessione (nessun accesso a
+dev server/browser dal sandbox) — verificare al prossimo giro locale.
 
 Modulo 1.8 — Dashboard (evolutive, non ora):
   Food cost % sul fatturato (spesa materie prime / ricavi ristorante × 100)
@@ -137,25 +120,68 @@ riprendono i moduli 2.3/3.2/4.1):
   - Switch-off di TeamSystem Hospitality: finestra novembre 2026 o
     febbraio 2027 — **mai in estate** (alta stagione, nessun cambio di
     sistema critico durante il periodo di massimo carico)
-  - Punti ancora da scegliere: provider italiano certificato per
-    l'intermediario Alloggiati Web (modulo 2.5); formato dati richiesto dal
-    Comune per la tassa di soggiorno (modulo 2.4)
+  - Punti ancora da scegliere: formato dati richiesto dal Comune per la
+    tassa di soggiorno (modulo 2.4). Alloggiati Web (2.5): deciso SOAP
+    diretto a WS_ALLOGGIATI, nessun intermediario — vedi voce dedicata
+    sotto "Modulo 2.5" per lo stato reale.
+
+Planning camere — vista Mese (31/07/2026): colonne giorno a 32px minimo
+  (LARGHEZZA_COLONNA_MIN_MESE) per stare senza scroll orizzontale, con solo
+  il numero del giorno in header (niente giorno settimana). Non ancora
+  verificato su tablet stretti/mobile se resta leggibile e se il tocco sulla
+  barra prenotazione resta comodo a quella larghezza — da controllare alla
+  prima verifica visiva in vista Mese, eventualmente alzare leggermente il
+  minimo se troppo stretto in pratica.
+
+Modulo 2.2 — Tariffe/pacchetti (codice scritto 31/07/2026, evolutiva non
+  ora — SOSPESA su richiesta esplicita il 31/07/2026, non implementare senza
+  prima tornare a discuterne):
+  Il drag-and-drop della griglia planning (PATCH /api/soggiorni/:id) non
+  ricalcola automaticamente la tariffa quando si sposta una prenotazione a
+  un'altra camera/data — resta manuale come prima del modulo 2.2.
+  L'auto-calcolo da listino oggi vale solo nel form "Nuova prenotazione".
+  Punto aperto segnalato dal titolare: prima di implementare il ricalcolo
+  automatico va deciso cosa succede quando lo spostamento è tra camere di
+  TIPOLOGIA/DIMENSIONE diversa (es. doppia → matrimoniale, o camere con
+  capienza diversa) — ricalcolare silenziosamente al prezzo della nuova
+  categoria potrebbe non essere quello che si vuole (es. differenza di
+  prezzo verso l'ospite da gestire esplicitamente, o spostamento consentito
+  solo se compatibile per numero ospiti). Da riprendere con una domanda
+  esplicita al titolare su come deve comportarsi in questo caso, prima di
+  scrivere la logica di ricalcolo.
+
+Tabella `camere` non tracciata da nessuna migration (scoperto 31/07/2026,
+  riordino Impostazioni▸Camere): in `database/migrations/` esiste solo un
+  `ALTER TABLE camere ADD COLUMN piano` (migration 017), nessun `CREATE
+  TABLE camere` — probabile setup manuale in una sessione precedente non
+  documentata. La migration 019 (colonna `attivo`) non ha tentato di
+  ricreare la tabella per non rischiare un disallineamento con lo schema
+  reale già in uso. Non urgente (la tabella esiste e funziona), ma da
+  sanare se si arriva a dover ricostruire il DB da zero (es. nuovo
+  ambiente, disaster recovery) — servirebbe uno `pg_dump --schema-only`
+  della tabella reale trasformato in una migration retroattiva.
 
 Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
-  2.2 Planning camere: tariffe, stagionalità, pacchetti all-inclusive
-    (il CRUD+griglia di base sono fatti, manca la parte prezzi/pacchetti)
-  2.3 Integrazione WuBook/WooDoo channel manager OTA
+  2.3 Integrazione WuBook/WooDoo channel manager OTA — la mappatura
+    tipo_camera.id ↔ canale ↔ codice_esterno è pronta (migration 020,
+    tabella tipi_camera_canali, UI in /tariffe — 31/07/2026), sostituisce il
+    vecchio appunto manuale in tipi_camera.note. Restano da fare: Fase 0
+    (sottoscrizione WuBook — non ancora fatta dal titolare, bloccante),
+    poi ricezione prenotazioni via webhook, invio disponibilità/tariffe.
   2.4 Tassa di soggiorno custom
-  2.5 Alloggiati Web via intermediario REST certificato (note implementative
-    già verificate sui manuali ufficiali, vedi docs/PRENOTAZIONI_FASE2.md)
+  2.5 Alloggiati Web — Fase 2 (generatore schedina + client SOAP + invio
+    reale Test/Send), vedi voce dedicata "Modulo 2.5" più sotto per lo
+    stato Fase 1b e il test reale ancora da fare
   2.6 Export ROSS1000/ISTAT
   3.1 Integrazione A-Cube API corrispettivi (scontrini — sostituisce Hugin RT-K50)
   3.2 Fatturazione B2B (rivalutare A-Cube vs Fatture in Cloud con commercialista)
   3.3 Pagamenti online Nexi + Stripe via WuBook
   4.1 Booking engine (Next.js + WuBook API)
   4.2 Welcome Book digitale multilingua
-  5.1 Check-in/check-out digitale + housekeeping
-  5.2 Pre check-in digitale + OCR + Omnitec (verificare API disponibili)
+  ✅ 5.1 Check-in/check-out digitale + housekeeping (03/08/2026)
+  ✅ 5.2 Fase A — scansione documento con OCR (04/08/2026, vedi voce dedicata
+    più sotto). Omnitec escluso dallo scope (chiavi camera, software
+    separato). Fase B (form self-service remoto + email) non iniziata.
   5.3 Email/SMS automatici (Brevo o SendGrid — piano gratuito sufficiente)
 
   Retention dati ospiti — calcolata a runtime, nessun job automatico per
@@ -163,8 +189,221 @@ Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
   cancellazione automatica alla scadenza è rimandato, il volume attuale
   (20 camere) non lo giustifica.
 
+Modulo 2.5 — Alloggiati Web, Fase 1b (codice completo 01/08/2026):
+  ✅ **Tabelle di codifica popolate con dati reali** (02/08/2026): il
+  titolare ha fornito 4 CSV reali (`stati.csv`, `comuni.csv`,
+  `documenti.csv`, `tipo_alloggiato.csv`, esportati dal portale web, non
+  dal SOAP) in `docs/alloggiati web/`. Importati in `alloggiati_codici`
+  con `backend/scripts/importaCodiciAlloggiatiCsv.js` (script una tantum,
+  stesso upsert usato da "Sincronizza ora" — rieseguibile senza rischi,
+  la sincronizzazione reale sovrascrive semplicemente questi dati).
+  Verificato: pagina Impostazioni ▸ Alloggiati Web mostra correttamente lo
+  stato "sincronizzato" per le 3 tabelle, tendine in `/clienti` popolate.
+  ⚠️ **Resta MAI TESTATA la sincronizzazione SOAP reale** contro
+  `WS_ALLOGGIATI` — quanto sopra usa CSV scaricati a mano dal portale, non
+  una chiamata `GenerateToken`/`Tabella`. Nessuna credenziale è mai stata
+  usata nell'ambiente di sviluppo. Prima di considerare la sincronizzazione
+  automatica davvero conclusa, il titolare deve:
+  - compilare `ALLOGGIATI_UTENTE`/`ALLOGGIATI_PASSWORD`/`ALLOGGIATI_WSKEY`
+    in `backend/.env` con le credenziali reali (già in possesso)
+  - premere "Sincronizza ora" in locale e verificare che `GenerateToken` e
+    `Tabella` rispondano come previsto dal client scritto a mano
+    (`backend/lib/alloggiatiSoapClient.js`) — in particolare l'header
+    `Content-Type`/`action` SOAP è un'assunzione dai manuali, mai
+    verificata contro il servizio vero
+  - verificare `MANUALEPASSAGGIO.pdf` (aggiunto 02/08/2026 in docs/alloggiati
+    web/): descrive una migrazione del login portale da certificato
+    digitale a "codici dispositivo" — da capire se riguarda anche
+    l'autenticazione SOAP (`GenerateToken`) prima del primo sync reale
+  Il parsing CSV (separatore auto-rilevato `;`/`,`, colonna1=codice/
+  colonna2=descrizione) è stato verificato contro i 4 file reali — questo
+  punto non è più un'ipotesi. Se la prima sincronizzazione reale fallisce,
+  il problema è quindi isolato all'autenticazione/trasporto SOAP, non al
+  parsing. Vedi docs/DIARIO_SESSIONI.md, voci 01/08/2026 e 02/08/2026, per
+  il dettaglio tecnico completo.
+  ✅ **Non più bloccante per l'operatività** (corretto 01/08/2026, vedi voce
+  sotto "Modulo 2.5 — testo libero"): prima di questo fix, senza
+  sincronizzazione i campi documento/nazionalità in `/clienti` non erano
+  proprio scrivibili. Ora lo sono sempre — la sincronizzazione resta
+  comunque da fare per abbinare i codici ufficiali, necessari solo
+  quando si arriverà all'invio reale della schedina (Fase 2).
+
+Modulo 2.5 — testo libero per documento/nazionalità (fix 01/08/2026,
+  segnalato dal titolare): la Fase 1b iniziale rendeva i campi
+  stato/comune di nascita, cittadinanza, tipo documento e luogo di
+  rilascio compilabili SOLO scegliendo un codice da `alloggiati_codici`
+  — se quella tabella era vuota (sincronizzazione mai fatta), la
+  reception non poteva registrare alcun dato di documento. Corretto:
+  aggiunte colonne `*_testo` (migration 023) sempre scrivibili a mano,
+  indipendenti dalla sincronizzazione; il codice ufficiale si abbina solo
+  se il testo corrisponde a un suggerimento sincronizzato — un'icona ✓
+  nel campo indica quando è successo. Punto aperto per il futuro,
+  esplicitamente rimandato: prima dell'invio reale della schedina (Fase
+  2) andrà aggiunto un controllo che segnali i campi con testo ma senza
+  codice abbinato, perché vadano completati prima di poter inviare.
+
+✅ Modulo 2.5 — lettura automatica documento al check-in: RISOLTA dal
+  modulo 5.2 Fase A (04/08/2026). `ScannerDocumento.jsx` (OCR client-side
+  su foto del documento, con ritaglio manuale della zona MRZ prima della
+  lettura) precompila proprio i campi `*_testo` di `/clienti` — esattamente
+  l'idea qui sotto, confermata sul campo.
+
+Modulo 5.2 — limiti noti dell'OCR documento, dopo test reali su CIE
+  (04/08/2026, non bloccanti — il form resta sempre modificabile a mano):
+  - Il numero documento non viene MAI precompilato, per scelta: è sulla
+    riga MRZ più vicina al codice a barre, risultata la meno leggibile in
+    assoluto nei test reali (carte lucide/olografiche). Rischio di
+    prefillare un dato sbagliato giudicato peggiore di lasciarlo vuoto.
+  - Il nome a volte esce con rumore residuo (es. "S MICHELE LLLKLS" invece
+    di "MICHELE") quando l'OCR legge il separatore cognome/nome con
+    caratteri spuri in mezzo — sempre comunque riconoscibile e correggibile
+    a mano, mai un campo silenziosamente sbagliato senza indizi.
+  - Il titolare valuterà in futuro l'acquisto di un lettore ottico MRZ
+    hardware dedicato (es. Regula, DENSO WAVE) se il volume di check-in
+    reali renderà la correzione manuale troppo lenta in pratica — stessa
+    logica già adottata per il barcode/QR magazzino (modulo 1.7 sopra).
+    Nessuna azione da intraprendere ora.
+  - Dettaglio tecnico completo dell'iterazione (Otsu, ritaglio, modello
+    OCR-B, parsing tollerante): `docs/DIARIO_SESSIONI.md`, voce 04/08/2026.
+
+Modulo 5.1 — riordino menu/sidebar (segnalato dal titolare 03/08/2026, non
+  sviluppare ora). Aggiungendo "Arrivi/Partenze" la sezione OSPITALITÀ della
+  sidebar arriva a 7 voci — il titolare ha notato che il menu sta
+  diventando ampio. Nessuna richiesta specifica di come riorganizzarlo,
+  solo la segnalazione. Da riprendere in una sessione dedicata quando si
+  hanno più voci da raggruppare (es. dopo i due punti sotto).
+  Nota emersa nella stessa conversazione: esiste già oggi un'ambiguità di
+  naming, non introdotta da questa sessione — la sidebar ha due voci
+  entrambe chiamate "Prenotazioni": una in OSPITALITÀ → `/planning-camere`
+  (griglia camere) e una in RISTORANTE → `/prenotazioni` (prenotazioni
+  tavoli), e la bottom-nav mobile di receptionist/portiere_notte punta
+  "Prenotaz." a `/prenotazioni` (ristorante), non al planning camere. Utile
+  chiarire quando si affronta il riordino.
+
+Modulo 5.1 — pagina "Prenotazioni" dedicata in forma di tabella (idea
+  futura del titolare, 03/08/2026, non sviluppare ora). Oggi l'unico modo
+  di consultare le prenotazioni camere è la griglia visuale
+  `/planning-camere` (drag-and-drop, pensata per pianificare). Il titolare
+  immagina anche una vista tabellare (elenco ricercabile/ordinabile,
+  filtri per stato/canale/data) per una consultazione più rapida —
+  complementare alla griglia, non un sostituto. Nessuno schema/endpoint
+  nuovo necessario: stessa fonte `GET /api/prenotazioni/griglia` o una
+  query simile, solo una presentazione diversa.
+
+Modulo 5.1 — sezione marketing invio email/SMS/WhatsApp: ✅ PARZIALMENTE
+  RISOLTA (04/08/2026, estensione modulo 5.3). Realizzata la parte email:
+  sezione sidebar "MARKETING" ▸ Offerte (invio a clienti specifici o a tutti
+  quelli con consenso marketing, storico invii) + Impostazioni ▸ Testi email
+  (oggetto/corpo delle 3 email automatiche + footer comune, editabili da
+  admin/titolare). SMS e WhatsApp restano non implementati — richiederebbero
+  un provider a pagamento, fuori dalla sequenza di moduli gratuiti seguita
+  finora (stessa ragione per cui 5.3 non include SMS). Dettaglio tecnico:
+  `docs/DIARIO_SESSIONI.md`, voce 04/08/2026.
+
+Menu mobile — assegnazione ruolo↔voci provvisoria (fix 04/08/2026, non
+  ritoccare senza chiederlo). Corretta la bottom nav mobile (icone rapide
+  disallineate dal menu desktop, vedi diario 04/08/2026), ma sia le 4 icone
+  rapide per ruolo sia, più in generale, cosa vede ciascun ruolo nel
+  gestionale sono state scelte "a naso" in questa sessione. Il titolare ha
+  chiesto esplicitamente di rivederle quando il progetto sarà a regime (uso
+  quotidiano consolidato, non più fase di test) — non trattarle come
+  definitive nel frattempo.
+
+Modulo 5.3 — Offerte dedicate, limiti noti (04/08/2026, non ora):
+  Invio sincrono: POST /api/offerte-email invia e attende tutti i
+    destinatari uno per uno (pausa di 150ms tra un invio e l'altro) prima
+    di rispondere — per una lista di poche centinaia di clienti è
+    accettabile, ma se la lista dei clienti con consenso marketing crescesse
+    molto andrebbe spostato su un job in background (stesso pattern di
+    backend/jobs/promemoriaEmail.js) invece di tenere la richiesta HTTP
+    aperta.
+  Modalità "tutti i clienti con consenso" non coperta da test automatici
+    (tests/api/offerte-email.test.js copre solo la selezione manuale, per
+    non scrivere righe reali nello storico di produzione durante i test) —
+    verificata solo manualmente dal titolare via UI.
+  SMS/WhatsApp non implementati, vedi voce sopra "sezione marketing".
+
+Modulo 5.2 Fase B — testo consenso privacy nel form pubblico di pre check-in
+  (segnalato dal titolare 04/08/2026, non bloccante): il testo GDPR/TULPS
+  mostrato all'ospite in frontend/app/pre-checkin/[token]/page.jsx è stato
+  scritto in modo pragmatico durante lo sviluppo, MAI fatto verificare da un
+  legale/DPO. Da rivedere prima che il form sia davvero raggiunto da ospiti
+  reali (quindi comunque non prima di 1.10 Deploy VPS).
+
+Trasversale — CampoData (selettore anno sui calendari, 05/08/2026):
+  segnalato dal titolare che il calendario nativo del browser costringe ad
+  andare indietro mese per mese per cambiare anno (problema soprattutto
+  sulle date di nascita, fino a 110 anni indietro). Soluzione attuale:
+  nuovo componente frontend/components/ui/CampoData.jsx — input
+  type="date" nativo + un <select> anno separato accanto, applicato a
+  tutti e 30 i campi data del gestionale (14 file). Funziona ed è stato
+  implementato, ma il titolare non è convinto esteticamente/UX
+  ("non mi piace molto come soluzione") — da considerare provvisoria.
+  Da valutare in futuro: un vero componente calendario custom (libreria
+  o fatto in casa) con navigazione anno più fluida/integrata invece del
+  select accostato. Nessuna libreria valutata finora — se si riprende,
+  ricordare la convenzione CLAUDE.md di motivare ogni nuova dipendenza
+  nel piano prima di installarla.
+
 Fase 3 (futuro):
   6.1 HACCP avanzato (temperature, scongelo, cotture)
   6.2 Agente AI interno per titolare e staff
   6.3 Revenue management (RevPAR, suggerimenti tariffari)
+
+Evolutive competitive — gap rispetto ai leader PMS internazionali (Mews,
+Cloudbeds, RoomRaccoon), emerse da un confronto esplicito il 05/08/2026.
+Non funzionalità mancanti per andare in produzione — quello resta la
+Sezione 8 di CLAUDE.md — ma differenziali che i PMS di riferimento hanno
+oggi e questo gestionale no. Da NON lavorare proattivamente, stesso
+principio del resto di questo file: si consultano quando si torna a
+discutere la direzione del progetto, o quando il titolare chiede
+esplicitamente "cosa manca" oltre agli aspetti funzionali di lancio.
+
+  PRIORITÀ ALTA (impatto ricavi/operatività alto, costo di sviluppo
+  contenuto o nessuna nuova dipendenza a pagamento):
+  - Modulo manutenzione/guasti: nessuna tabella, nessuna UI per segnalare
+    e tracciare manutenzioni ordinarie/straordinarie (rubinetto rotto, TV
+    guasta). Gap operativo concreto su una struttura di 20 camere, zero
+    dipendenze esterne — sviluppabile come gli altri moduli gratuiti.
+  - Upsell automatico in-stay (upgrade camera, late checkout, cena al
+    ristorante triggerati a un punto preciso del soggiorno, non solo
+    campagna email manuale come oggi "Offerte"): si appoggia
+    all'infrastruttura Resend già in produzione (modulo 5.3), solo nuova
+    logica di trigger — nessuna nuova dipendenza a pagamento.
+  - CRM ospiti con preferenze/tag (piano alto, allergie ricorrenti,
+    occasioni speciali): oggi `ospiti` ha solo consenso marketing, nessun
+    campo per preferenze riutilizzabili. Propedeutico a personalizzare
+    upsell e comunicazioni — basso costo (solo schema + UI), alto valore
+    per una struttura di dimensioni piccole dove il rapporto ospite è
+    diretto.
+
+  PRIORITÀ MEDIA (valore reale, ma richiede integrazioni esterne o
+  costo/complessità maggiore):
+  - Messaggistica WhatsApp Business per comunicazioni pre-arrivo/durante
+    il soggiorno: standard de facto in Italia, spesso più economico di un
+    provider SMS dedicato (già escluso in 5.3 per costo) — ma richiede
+    comunque account WhatsApp Business API e provider terzo, quindi non
+    è "gratis" come il resto della sequenza 01/08/2026.
+  - Gestione reputazione/recensioni aggregata (Google/Booking/TripAdvisor
+    in un unico cruscotto con alert su recensioni negative): oggi solo un
+    widget TripAdvisor statico sul sito. Richiede integrazioni API terze,
+    spesso a pagamento (es. TrustYou) — da valutare il costo prima.
+
+  PRIORITÀ BASSA / FUTURA (alto valore ma alta complessità, o dipende da
+  altro lavoro non ancora fatto):
+  - Revenue management realmente automatico (ricalcolo tariffe più volte
+    al giorno in base a domanda/pace/competitor, non solo "suggerimenti"):
+    è già 6.3 in roadmap Fase 3, ma lì è scritto come consiglio al
+    titolare dopo un anno di storico — i PMS di riferimento lo fanno agire
+    da solo. Da riprendere in ottica più ambiziosa quando si arriva a 6.3,
+    non prima.
+  - Rate shopping / monitoraggio prezzi competitor in zona: poco utile da
+    solo, ha senso soprattutto abbinato al punto sopra — stessa sequenza.
+  - Deposito cauzionale/no-show protection con carta virtuale: alto
+    valore per proteggere le prenotazioni dirette, ma dipende
+    tecnicamente dai pagamenti online (Nexi/Stripe via WuBook, già
+    bloccati su sottoscrizione non fatta — vedi Fase 2 sopra). Non
+    sviluppabile prima di quello.
+  - API pubblica / webhook verso terzi: bassa urgenza finché l'unico
+    partner esterno pianificato resta WuBook (già previsto ad hoc in 2.3).
 ```

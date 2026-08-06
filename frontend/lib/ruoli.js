@@ -40,6 +40,20 @@ export const PERMESSI_SEZIONI = {
   hr_scadenze:    [A, T],
   hr_documenti:   [A, T],
   ristorante_prenotazioni: [A, T, R, P],
+  tassa_soggiorno: {
+    lettura:         [A, T, R],
+    scrittura:       [A, T, R],
+    configurazione:  [A, T],
+  },
+
+  alloggiati: {
+    lettura:      [A, T, R, P],
+    sincronizza:  [A, T],
+  },
+
+  // Manutenzione/guasti (06/08/2026) — tutti segnalano e vedono, solo
+  // admin/titolare gestiscono lo stato (controllo fatto lato pagina).
+  manutenzione: TUTTI,
 };
 
 export function puoAccedere(ruolo, sezione) {

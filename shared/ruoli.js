@@ -62,6 +62,14 @@ const PERMESSI_SEZIONI = {
     scrittura:       [A, T, R],
     stato:           [A, T, R],
     stato_check_in:  [A, T, R, P],
+    // Invio manuale di test delle email automatiche (modulo 5.3, 04/08/2026)
+    // — bypassa date/stato reali, utile solo per verificare che il flusso
+    // funzioni durante lo sviluppo. Riservato ad admin/titolare.
+    test_email:      [A, T],
+    // Invio manuale (reale, non di test) del link di pre check-in (modulo
+    // 5.2 Fase B, 04/08/2026) — stessi ruoli di 'scrittura', la reception
+    // deve poterlo mandare quando serve.
+    invia_pre_checkin: [A, T, R],
   },
 
   // Ospiti (Fase 2) — permessi differenziati per azione (non un unico array
@@ -85,6 +93,75 @@ const PERMESSI_SEZIONI = {
     scrittura:  [A, T, R],
   },
 
+  // Stato Camere — fermata/partenza/pronta/note (POST /api/camere/stato).
+  // Estesa il 31/07/2026 da soloTitolare (solo admin/titolare) a includere
+  // anche receptionist e portiere_notte, che gestiscono operativamente i
+  // check-in/check-out e devono poter segnare lo stato camera. Cameriere
+  // resta limitato a "segna pronta" (POST /api/camere/pronta, non gated da
+  // questa sezione — vedi backend/routes/camere.js).
+  //
+  // 'anagrafica' (31/07/2026, task preliminare al modulo 2.3): creare/
+  // modificare/attivare-disattivare una camera fisica. Riservata ad
+  // admin/titolare — DELIBERATAMENTE più ristretta di 'scrittura' (che
+  // arriva a receptionist/portiere_notte): chi gestisce lo stato
+  // giornaliero non deve poter far sparire una camera dall'anagrafica.
+  camere: {
+    scrittura:   [A, T, R, P],
+    anagrafica:  [A, T],
+    // 'pulizia' (modulo 5.1, 03/08/2026): segnare una camera pulita/da
+    // pulire (POST /api/camere/pronta). Prima non era ristretta a nessun
+    // ruolo specifico — deciso dal titolare: tutti tranne cuoco (la
+    // cameriera che pulisce è già 'cameriere', riusato, nessun nuovo ruolo
+    // "governante" — stessa decisione presa in PRENOTAZIONI_FASE2.md).
+    pulizia:     [A, T, R, C, P, D],
+  },
+
+  // Tipi camera, Tariffe, Pacchetti (Fase 2A, modulo 2.2) — stesso pattern di
+  // 'ospiti'/'soggiorni': admin/titolare/receptionist in lettura (serve alla
+  // reception per vedere/consultare i prezzi durante una prenotazione),
+  // scrittura riservata ad admin/titolare (decisione di prezzo). Nessun
+  // accesso per portiere_notte (come 'pagamenti' — non gli serve nel check-in
+  // notturno). Vedi docs/PRENOTAZIONI_FASE2.md.
+  tipi_camera: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T],
+  },
+  tariffe: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T],
+  },
+  pacchetti: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T],
+  },
+
+  // Mappatura canali OTA (Modulo 2.3, Fase 1, 31/07/2026) — stesso pattern
+  // di 'tariffe'/'tipi_camera': lettura anche a receptionist (consultazione),
+  // scrittura riservata ad admin/titolare (configurazione).
+  canali_ota: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T],
+  },
+
+  // Tassa di soggiorno (Modulo 2.4, Fase 2A) — lettura/scrittura (calcolo e
+  // riscossione) anche a receptionist, che gestisce il check-out; 'configurazione'
+  // (nuova aliquota) riservata ad admin/titolare, stesso criterio di
+  // 'tariffe'/'tipi_camera': è una decisione, non un'operazione di reception.
+  tassa_soggiorno: {
+    lettura:         [A, T, R],
+    scrittura:       [A, T, R],
+    configurazione:  [A, T],
+  },
+
+  // Alloggiati Web (Modulo 2.5, Fase 1b) — 'lettura' serve durante la
+  // compilazione della scheda ospite (tendine nazionalità/documento),
+  // stessi ruoli di 'ospiti'.lettura. 'sincronizza' tocca le credenziali
+  // del servizio esterno: solo admin/titolare, come 'tassa_soggiorno'.configurazione.
+  alloggiati: {
+    lettura:      [A, T, R, P],
+    sincronizza:  [A, T],
+  },
+
   // Pulizie (Fase 2) — dipendente + receptionist segnano "fatta/da fare".
   // Vista non espone mai l'anagrafica ospite, solo tipo/completamento camera.
   pulizie:        [D, R],
@@ -106,6 +183,58 @@ const PERMESSI_SEZIONI = {
   pagamenti: {
     lettura:    [A, T, R],
     scrittura:  [A, T, R],
+  },
+
+  // Testi delle email automatiche + footer comune (Modulo 5.3, estensione
+  // 04/08/2026, richiesta esplicita del titolare) — configurazione, non
+  // operatività quotidiana: riservata ad admin/titolare, come 'tariffe'/
+  // 'tassa_soggiorno'.configurazione.
+  email_template: {
+    lettura:    [A, T],
+    scrittura:  [A, T],
+  },
+
+  // Offerte dedicate via email (Modulo 5.3, estensione 04/08/2026) — invio
+  // verso clienti con consenso marketing, riservato ad admin/titolare.
+  offerte_email: {
+    lettura:    [A, T],
+    scrittura:  [A, T],
+  },
+
+  // Export ROSS1000/ISTAT (Modulo 2.6, Fase 1 — 04/08/2026): solo
+  // generazione XML per verifica manuale, nessun invio reale. Dati di
+  // pubblica sicurezza/statistica, riservato ad admin/titolare.
+  ross1000: {
+    lettura: [A, T],
+  },
+
+  // Pre check-in self-service (Modulo 5.2 Fase B, 04/08/2026) — coda di
+  // revisione lato reception: stessi ruoli di 'ospiti' (chi può scrivere
+  // ospiti può applicare/scartare una richiesta). Il form pubblico
+  // (backend/routes/preCheckinPubblico.js) non passa da qui: nessuna
+  // autenticazione, protetto solo dal token nel link.
+  pre_checkin: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T, R],
+  },
+
+  // Nuclei familiari (Modulo 5.2 Fase B, estensione 04/08/2026) — stessi
+  // permessi di 'ospiti': lettura anche a portiere_notte (consultazione),
+  // scrittura ad admin/titolare/receptionist.
+  nuclei_familiari: {
+    lettura:    [A, T, R, P],
+    scrittura:  [A, T, R],
+  },
+
+  // Manutenzione/guasti (nuovo modulo, 06/08/2026) — tutto il personale può
+  // segnalare (crea) e vedere le segnalazioni (lettura, trasparenza ed
+  // evita doppie segnalazioni sullo stesso guasto); solo admin/titolare
+  // aggiornano lo stato (gestione: presa in carico, risoluzione) —
+  // decisione esplicita del titolare.
+  manutenzione: {
+    lettura:  TUTTI,
+    crea:     TUTTI,
+    gestione: [A, T],
   },
 
   // Sezioni riservate ad admin e titolare

@@ -25,29 +25,55 @@ const DOC_MASCHERATO = `
 `;
 
 // Colonne pubbliche restituite da lista/dettaglio/crea/aggiorna — mai documento_numero.
+// Le colonne *_testo (migration 023) sono il testo libero che la reception
+// scrive leggendo il documento fisico — sempre compilabile, indipendente
+// dalla sincronizzazione Alloggiati Web. Le *_codice (migration 016)
+// restano solo per l'invio schedina (Fase 2), valorizzate solo quando il
+// testo corrisponde a un suggerimento delle tabelle sincronizzate.
 const COLONNE_PUBBLICHE = `
-  id, nome, cognome, sesso, data_nascita, stato_nascita_codice,
-  comune_nascita_codice, provincia_nascita, cittadinanza_codice,
-  documento_tipo_codice, luogo_rilascio_codice, email, telefono, note,
+  id, nome, cognome, sesso, data_nascita,
+  stato_nascita_codice, stato_nascita_testo,
+  comune_nascita_codice, comune_nascita_testo,
+  provincia_nascita,
+  cittadinanza_codice, cittadinanza_testo,
+  documento_tipo_codice, documento_tipo_testo,
+  documento_scadenza,
+  luogo_rilascio_codice, luogo_rilascio_testo,
+  stato_residenza_codice, stato_residenza_testo,
+  comune_residenza_codice, comune_residenza_testo,
+  email, telefono, note,
   consenso_marketing, consenso_marketing_data, created_at, updated_at,
+  nucleo_familiare_id,
   ${DOC_MASCHERATO}
 `;
 
-// GET /api/ospiti?search=... — autocomplete per nome/cognome, max 20 risultati.
+// Sottoquery riusata in lista(): numero di soggiorni non cancellati
+// dell'ospite. Sottoquery invece di JOIN+GROUP BY per non dover qualificare
+// con alias tutte le colonne di COLONNE_PUBBLICHE (usata anche altrove senza
+// prefisso tabella) — nessuna ambiguità, nessun rischio di rompere dettaglio/
+// crea/aggiorna che riusano la stessa costante.
+const NUMERO_SOGGIORNI = `
+  (SELECT COUNT(*) FROM soggiorni s WHERE s.ospite_id = ospiti.id AND s.cancellato = false) AS numero_soggiorni
+`;
+
+// GET /api/ospiti?search=... — lista/autocomplete per nome/cognome, max 20
+// risultati. Usata sia dalla sezione Clienti (ricerca) sia dall'autocomplete
+// del form "Nuova prenotazione" (Fase 2) — numero_soggiorni è un campo in
+// più, non rompe il consumo esistente lato prenotazioni.
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 async function lista(req, res) {
   const search = (req.query.search || '').trim();
   try {
     const result = search
       ? await pool.query(
-          `SELECT ${COLONNE_PUBBLICHE} FROM ospiti
+          `SELECT ${COLONNE_PUBBLICHE}, ${NUMERO_SOGGIORNI} FROM ospiti
            WHERE nome ILIKE $1 OR cognome ILIKE $1
            ORDER BY cognome, nome
            LIMIT 20`,
           [`%${search}%`]
         )
       : await pool.query(
-          `SELECT ${COLONNE_PUBBLICHE} FROM ospiti
+          `SELECT ${COLONNE_PUBBLICHE}, ${NUMERO_SOGGIORNI} FROM ospiti
            ORDER BY created_at DESC
            LIMIT 20`
         );
@@ -94,9 +120,15 @@ async function dettaglio(req, res) {
 // Accessibile a: admin, titolare, receptionist (scrittura).
 async function crea(req, res) {
   const {
-    nome, cognome, sesso, data_nascita, stato_nascita_codice,
-    comune_nascita_codice, provincia_nascita, cittadinanza_codice,
-    documento_tipo_codice, documento_numero, luogo_rilascio_codice,
+    nome, cognome, sesso, data_nascita,
+    stato_nascita_codice, stato_nascita_testo,
+    comune_nascita_codice, comune_nascita_testo,
+    provincia_nascita,
+    cittadinanza_codice, cittadinanza_testo,
+    documento_tipo_codice, documento_tipo_testo, documento_numero, documento_scadenza,
+    luogo_rilascio_codice, luogo_rilascio_testo,
+    stato_residenza_codice, stato_residenza_testo,
+    comune_residenza_codice, comune_residenza_testo,
     email, telefono, note, consenso_marketing,
   } = req.body;
 
@@ -110,19 +142,33 @@ async function crea(req, res) {
   try {
     const result = await pool.query(
       `INSERT INTO ospiti (
-         nome, cognome, sesso, data_nascita, stato_nascita_codice,
-         comune_nascita_codice, provincia_nascita, cittadinanza_codice,
-         documento_tipo_codice, documento_numero, luogo_rilascio_codice,
+         nome, cognome, sesso, data_nascita,
+         stato_nascita_codice, stato_nascita_testo,
+         comune_nascita_codice, comune_nascita_testo,
+         provincia_nascita,
+         cittadinanza_codice, cittadinanza_testo,
+         documento_tipo_codice, documento_tipo_testo, documento_numero, documento_scadenza,
+         luogo_rilascio_codice, luogo_rilascio_testo,
+         stato_residenza_codice, stato_residenza_testo,
+         comune_residenza_codice, comune_residenza_testo,
          email, telefono, note, consenso_marketing, consenso_marketing_data
        ) VALUES (
-         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15,
-         CASE WHEN $15 THEN NOW() ELSE NULL END
+         $1, $2, $3, $4, $5, $6, $7, $8, $9, $10, $11, $12, $13, $14, $15, $16, $17,
+         $18, $19, $20, $21,
+         $22, $23, $24, $25,
+         CASE WHEN $25 THEN NOW() ELSE NULL END
        )
        RETURNING ${COLONNE_PUBBLICHE}`,
       [
-        nome, cognome, sesso || null, data_nascita || null, stato_nascita_codice || null,
-        comune_nascita_codice || null, provincia_nascita || null, cittadinanza_codice || null,
-        documento_tipo_codice || null, documento_numero || null, luogo_rilascio_codice || null,
+        nome, cognome, sesso || null, data_nascita || null,
+        stato_nascita_codice || null, stato_nascita_testo || null,
+        comune_nascita_codice || null, comune_nascita_testo || null,
+        provincia_nascita || null,
+        cittadinanza_codice || null, cittadinanza_testo || null,
+        documento_tipo_codice || null, documento_tipo_testo || null, documento_numero || null, documento_scadenza || null,
+        luogo_rilascio_codice || null, luogo_rilascio_testo || null,
+        stato_residenza_codice || null, stato_residenza_testo || null,
+        comune_residenza_codice || null, comune_residenza_testo || null,
         email || null, telefono || null, note || null, consenso_marketing ?? false,
       ]
     );
@@ -137,9 +183,15 @@ async function crea(req, res) {
 // Accessibile a: admin, titolare, receptionist (scrittura).
 async function aggiorna(req, res) {
   const {
-    nome, cognome, sesso, data_nascita, stato_nascita_codice,
-    comune_nascita_codice, provincia_nascita, cittadinanza_codice,
-    documento_tipo_codice, documento_numero, luogo_rilascio_codice,
+    nome, cognome, sesso, data_nascita,
+    stato_nascita_codice, stato_nascita_testo,
+    comune_nascita_codice, comune_nascita_testo,
+    provincia_nascita,
+    cittadinanza_codice, cittadinanza_testo,
+    documento_tipo_codice, documento_tipo_testo, documento_numero, documento_scadenza,
+    luogo_rilascio_codice, luogo_rilascio_testo,
+    stato_residenza_codice, stato_residenza_testo,
+    comune_residenza_codice, comune_residenza_testo,
     email, telefono, note, consenso_marketing,
   } = req.body;
 
@@ -155,24 +207,40 @@ async function aggiorna(req, res) {
          sesso                 = COALESCE($3, sesso),
          data_nascita          = COALESCE($4, data_nascita),
          stato_nascita_codice  = COALESCE($5, stato_nascita_codice),
-         comune_nascita_codice = COALESCE($6, comune_nascita_codice),
-         provincia_nascita     = COALESCE($7, provincia_nascita),
-         cittadinanza_codice   = COALESCE($8, cittadinanza_codice),
-         documento_tipo_codice = COALESCE($9, documento_tipo_codice),
-         documento_numero      = COALESCE($10, documento_numero),
-         luogo_rilascio_codice = COALESCE($11, luogo_rilascio_codice),
-         email                 = COALESCE($12, email),
-         telefono              = COALESCE($13, telefono),
-         note                  = COALESCE($14, note),
-         consenso_marketing    = COALESCE($15, consenso_marketing),
-         consenso_marketing_data = CASE WHEN $15 IS TRUE THEN NOW() ELSE consenso_marketing_data END,
+         stato_nascita_testo   = COALESCE($6, stato_nascita_testo),
+         comune_nascita_codice = COALESCE($7, comune_nascita_codice),
+         comune_nascita_testo  = COALESCE($8, comune_nascita_testo),
+         provincia_nascita     = COALESCE($9, provincia_nascita),
+         cittadinanza_codice   = COALESCE($10, cittadinanza_codice),
+         cittadinanza_testo    = COALESCE($11, cittadinanza_testo),
+         documento_tipo_codice = COALESCE($12, documento_tipo_codice),
+         documento_tipo_testo  = COALESCE($13, documento_tipo_testo),
+         documento_numero      = COALESCE($14, documento_numero),
+         documento_scadenza    = COALESCE($15, documento_scadenza),
+         luogo_rilascio_codice = COALESCE($16, luogo_rilascio_codice),
+         luogo_rilascio_testo  = COALESCE($17, luogo_rilascio_testo),
+         stato_residenza_codice  = COALESCE($18, stato_residenza_codice),
+         stato_residenza_testo   = COALESCE($19, stato_residenza_testo),
+         comune_residenza_codice = COALESCE($20, comune_residenza_codice),
+         comune_residenza_testo  = COALESCE($21, comune_residenza_testo),
+         email                 = COALESCE($22, email),
+         telefono              = COALESCE($23, telefono),
+         note                  = COALESCE($24, note),
+         consenso_marketing    = COALESCE($25, consenso_marketing),
+         consenso_marketing_data = CASE WHEN $25 IS TRUE THEN NOW() ELSE consenso_marketing_data END,
          updated_at            = NOW()
-       WHERE id = $16
+       WHERE id = $26
        RETURNING ${COLONNE_PUBBLICHE}`,
       [
-        nome || null, cognome || null, sesso || null, data_nascita || null, stato_nascita_codice || null,
-        comune_nascita_codice || null, provincia_nascita || null, cittadinanza_codice || null,
-        documento_tipo_codice || null, documento_numero || null, luogo_rilascio_codice || null,
+        nome || null, cognome || null, sesso || null, data_nascita || null,
+        stato_nascita_codice || null, stato_nascita_testo || null,
+        comune_nascita_codice || null, comune_nascita_testo || null,
+        provincia_nascita || null,
+        cittadinanza_codice || null, cittadinanza_testo || null,
+        documento_tipo_codice || null, documento_tipo_testo || null, documento_numero || null, documento_scadenza || null,
+        luogo_rilascio_codice || null, luogo_rilascio_testo || null,
+        stato_residenza_codice || null, stato_residenza_testo || null,
+        comune_residenza_codice || null, comune_residenza_testo || null,
         email || null, telefono || null, note || null,
         consenso_marketing === undefined ? null : consenso_marketing,
         req.params.id,
@@ -217,4 +285,26 @@ async function svelaDocumento(req, res) {
   }
 }
 
-module.exports = { lista, dettaglio, crea, aggiorna, svelaDocumento, DOC_MASCHERATO };
+// POST /api/ospiti/:id/nucleo — collega/scollega un cliente esistente a un
+// nucleo familiare (modulo 5.2 Fase B, estensione 04/08/2026). body:
+// { nucleo_familiare_id } — un id esistente per collegare, null per
+// scollegare. Non crea il nucleo: va creato prima con
+// POST /api/nuclei-familiari (nucleiFamiliariController.crea).
+async function impostaNucleo(req, res) {
+  const { nucleo_familiare_id } = req.body;
+  try {
+    const result = await pool.query(
+      'UPDATE ospiti SET nucleo_familiare_id = $1, updated_at = NOW() WHERE id = $2 RETURNING id, nucleo_familiare_id',
+      [nucleo_familiare_id || null, req.params.id]
+    );
+    if (!result.rows.length) {
+      return res.status(404).json({ error: 'Ospite non trovato' });
+    }
+    res.json(result.rows[0]);
+  } catch (err) {
+    console.error('imposta nucleo familiare error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+module.exports = { lista, dettaglio, crea, aggiorna, svelaDocumento, impostaNucleo, DOC_MASCHERATO };

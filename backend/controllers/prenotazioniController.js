@@ -8,6 +8,7 @@
 const pool = require('../config/db');
 const { DOC_MASCHERATO } = require('./anagraficaOspitiController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
+const { inviaConfermaPrenotazione, inviaPromemoriaPreArrivo, inviaRichiestaRecensione, inviaInvitoPreCheckin } = require('../lib/emailPrenotazioni');
 
 // Mappa esplicita delle transizioni di stato ammesse — non if/else sparsi.
 // Qualunque transizione fuori da questa mappa è un 400.
@@ -21,12 +22,17 @@ const TRANSIZIONI_VALIDE = {
 // GET /api/prenotazioni/griglia?data_inizio=&data_fine= — vista planning.
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 // LEFT JOIN a partire da camere (non da soggiorni): la griglia deve mostrare
-// SEMPRE tutte le camere come righe, comprese quelle libere nel range
+// SEMPRE tutte le camere ATTIVE come righe, comprese quelle libere nel range
 // richiesto (altrimenti non sarebbe possibile trascinarci sopra una
 // prenotazione) — le colonne soggiorno_id/prenotazione_id ecc. sono NULL
-// per una camera senza soggiorni nel range. Ordinamento numerico esplicito
+// per una camera senza soggiorni nel range. Filtro c.attivo = true
+// (Impostazioni▸Camere, 31/07/2026): una camera disattivata non deve
+// comparire come riga prenotabile, ma i suoi soggiorni storici restano
+// interrogabili altrove (dettaglio prenotazione, scheda ospite). Ordinamento numerico esplicito
 // su camere.numero (VARCHAR) per evitare l'ordine lessicografico ('10'
 // prima di '2') — stesso pattern di guardia già usato in camereController.
+// c.tipo_camera_id (modulo 2.2) serve al form "Nuova prenotazione" per
+// chiamare GET /api/tariffe/calcola in base alla categoria della camera scelta.
 async function griglia(req, res) {
   const { data_inizio, data_fine } = req.query;
   if (!data_inizio || !data_fine) {
@@ -35,6 +41,7 @@ async function griglia(req, res) {
   try {
     const result = await pool.query(
       `SELECT c.id AS camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
+              c.tipo_camera_id,
               s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
               p.id AS prenotazione_id, p.stato AS prenotazione_stato,
               o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
@@ -43,6 +50,7 @@ async function griglia(req, res) {
          AND daterange(s.data_arrivo, s.data_partenza, '[)') && daterange($1, $2, '[)')
        LEFT JOIN prenotazioni p ON p.id = s.prenotazione_id
        LEFT JOIN ospiti o ON o.id = s.ospite_id
+       WHERE c.attivo = true
        ORDER BY c.piano NULLS LAST,
                 CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END,
                 s.data_arrivo`,
@@ -144,13 +152,14 @@ async function crea(req, res) {
     const prenotazione = prenotazioneResult.rows[0];
 
     const soggiornoResult = await client.query(
-      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale, pacchetto_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         prenotazione.id, soggiorno.camera_id, soggiorno.ospite_id,
         soggiorno.data_arrivo, soggiorno.data_partenza,
         soggiorno.num_ospiti || 1, soggiorno.tariffa_totale || null,
+        soggiorno.pacchetto_id || null, // modulo 2.2 — se valorizzato, tariffa_totale viene dal pacchetto (comunque libera)
       ]
     );
 
@@ -200,13 +209,14 @@ async function aggiungiSoggiorno(req, res) {
     }
 
     const soggiornoResult = await client.query(
-      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale)
-       VALUES ($1, $2, $3, $4, $5, $6, $7)
+      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale, pacchetto_id)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8)
        RETURNING *`,
       [
         req.params.id, soggiorno.camera_id, soggiorno.ospite_id,
         soggiorno.data_arrivo, soggiorno.data_partenza,
         soggiorno.num_ospiti || 1, soggiorno.tariffa_totale || null,
+        soggiorno.pacchetto_id || null,
       ]
     );
 
@@ -302,6 +312,16 @@ async function aggiornaStato(req, res) {
 
     await client.query('COMMIT');
     res.json(result.rows[0]);
+
+    // Email di conferma — dopo aver già risposto al client: l'invio (Resend,
+    // rete esterna) non deve mai far attendere né fallire la risposta HTTP.
+    // inviaConfermaPrenotazione è "best effort" al suo interno (logga e
+    // ritorna, non lancia mai) — comunque avvolta qui per sicurezza.
+    if (statoRichiesto === 'confermata') {
+      inviaConfermaPrenotazione(req.params.id).catch(err => {
+        console.error('invio email conferma prenotazione — errore imprevisto:', err.message);
+      });
+    }
   } catch (err) {
     await client.query('ROLLBACK');
     console.error('aggiorna stato prenotazione error:', err);
@@ -311,4 +331,58 @@ async function aggiornaStato(req, res) {
   }
 }
 
-module.exports = { griglia, dettaglio, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, TRANSIZIONI_VALIDE };
+// POST /api/prenotazioni/:id/test-email — invio manuale di test (modulo 5.3,
+// 04/08/2026). Accessibile a: admin, titolare (azione 'test_email', vedi
+// shared/ruoli.js). A differenza della conferma automatica in aggiornaStato,
+// qui l'invio è ATTESO (non fire-and-forget): serve a mostrare all'admin
+// l'esito reale — utile perché promemoria/recensione normalmente partono
+// solo dal job giornaliero (backend/jobs/promemoriaEmail.js) in base a date
+// calcolate, quindi altrimenti non testabili senza aspettare o manipolare
+// il DB. Bypassa stato/date reali della prenotazione: non aggiorna nulla se
+// non l'eventuale colonna email_*_inviata_at già gestita dentro emailPrenotazioni.js.
+const INVIO_PER_TIPO = {
+  conferma:    inviaConfermaPrenotazione,
+  promemoria:  inviaPromemoriaPreArrivo,
+  recensione:  inviaRichiestaRecensione,
+};
+
+async function testEmail(req, res) {
+  const { tipo } = req.body;
+  const invia = INVIO_PER_TIPO[tipo];
+  if (!invia) {
+    return res.status(400).json({ error: `tipo deve essere uno tra: ${Object.keys(INVIO_PER_TIPO).join(', ')}.` });
+  }
+  try {
+    const controllo = await pool.query('SELECT id FROM prenotazioni WHERE id = $1', [req.params.id]);
+    if (!controllo.rows.length) {
+      return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+    const esito = await invia(req.params.id);
+    res.json(esito);
+  } catch (err) {
+    console.error('test invio email prenotazione error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// POST /api/prenotazioni/:id/invia-pre-checkin — invio manuale (reale) del
+// link di pre check-in (modulo 5.2 Fase B, 04/08/2026). Accessibile a:
+// admin, titolare, receptionist (azione 'invia_pre_checkin'). A differenza
+// di testEmail, qui l'invito viene davvero registrato
+// (prenotazioni.pre_checkin_inviato_at) — il job del promemoria non lo
+// includerà una seconda volta.
+async function inviaPreCheckin(req, res) {
+  try {
+    const controllo = await pool.query('SELECT id FROM prenotazioni WHERE id = $1', [req.params.id]);
+    if (!controllo.rows.length) {
+      return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+    const esito = await inviaInvitoPreCheckin(req.params.id);
+    res.json(esito);
+  } catch (err) {
+    console.error('invia pre-checkin error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+module.exports = { griglia, dettaglio, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };

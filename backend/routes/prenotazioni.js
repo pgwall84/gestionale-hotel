@@ -41,4 +41,11 @@ router.patch('/:id/stato',  richiedeTransizioneStato,                    ctrl.ag
 router.get('/:id/pagamenti',  richiedeAzione('pagamenti', 'lettura'),   pagamentiCtrl.listaPerPrenotazione);
 router.post('/:id/pagamenti', richiedeAzione('pagamenti', 'scrittura'), pagamentiCtrl.creaPerPrenotazione);
 
+// Invio manuale di test delle email automatiche (modulo 5.3, 04/08/2026) —
+// riservato ad admin/titolare, vedi shared/ruoli.js sezione 'prenotazioni'.test_email.
+router.post('/:id/test-email', richiedeAzione('prenotazioni', 'test_email'), ctrl.testEmail);
+
+// Invio manuale (reale) del link di pre check-in (modulo 5.2 Fase B, 04/08/2026).
+router.post('/:id/invia-pre-checkin', richiedeAzione('prenotazioni', 'invia_pre_checkin'), ctrl.inviaPreCheckin);
+
 module.exports = router;

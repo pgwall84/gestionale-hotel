@@ -23,6 +23,19 @@ const ospitiRoutes       = require('./routes/ospiti');
 const prenotazioniRoutes = require('./routes/prenotazioni');
 const soggiorniRoutes    = require('./routes/soggiorni');
 const gruppiRoutes       = require('./routes/gruppi');
+const tipiCameraRoutes   = require('./routes/tipiCamera');
+const tariffeRoutes      = require('./routes/tariffe');
+const pacchettiRoutes    = require('./routes/pacchetti');
+const canaliOtaRoutes    = require('./routes/canaliOta');
+const tassaSoggiornoRoutes = require('./routes/tassaSoggiorno');
+const alloggiatiRoutes = require('./routes/alloggiati');
+const emailTemplateRoutes = require('./routes/emailTemplate');
+const offerteEmailRoutes  = require('./routes/offerteEmail');
+const preCheckinRoutes         = require('./routes/preCheckin');
+const preCheckinPubblicoRoutes = require('./routes/preCheckinPubblico');
+const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
+const ross1000Routes           = require('./routes/ross1000');
+const manutenzioneRoutes       = require('./routes/manutenzione');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -76,6 +89,22 @@ app.use('/api/ospiti',   ospitiRoutes);
 app.use('/api/prenotazioni', prenotazioniRoutes);
 app.use('/api/soggiorni',    soggiorniRoutes);
 app.use('/api/gruppi',       gruppiRoutes);
+app.use('/api/tipi-camera',  tipiCameraRoutes);
+app.use('/api/tariffe',      tariffeRoutes);
+app.use('/api/pacchetti',    pacchettiRoutes);
+app.use('/api/canali-ota',   canaliOtaRoutes);
+app.use('/api/tassa-soggiorno', tassaSoggiornoRoutes);
+app.use('/api/alloggiati', alloggiatiRoutes);
+app.use('/api/email-template', emailTemplateRoutes);
+app.use('/api/offerte-email',  offerteEmailRoutes);
+app.use('/api/pre-checkin',          preCheckinRoutes);
+// Pubblica (nessun verificaToken) — DEVE stare dopo /api/pre-checkin per
+// evitare ambiguità di prefisso, anche se i path non si sovrappongono
+// (/api/pre-checkin/:id vs /api/pre-checkin-pubblico/:token).
+app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
+app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
+app.use('/api/ross1000',             ross1000Routes);
+app.use('/api/manutenzione',         manutenzioneRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));

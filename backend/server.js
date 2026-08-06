@@ -3,10 +3,16 @@
 // I test usano app.js direttamente tramite Supertest — senza occupare porte.
 
 const app  = require('./app');
+const { avviaJobPromemoriaEmail } = require('./jobs/promemoriaEmail');
 const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
   console.log(`Server gestionale hotel avviato sulla porta ${PORT}`);
   console.log(`Ambiente: ${process.env.NODE_ENV || 'development'}`);
   console.log(`Health check: http://localhost:${PORT}/api/health`);
+
+  // Job email (modulo 5.3) — avviato solo qui, mai in app.js: app.js è
+  // importato anche dai test Jest (Supertest), un cron avviato lì girerebbe
+  // anche durante la suite di test.
+  avviaJobPromemoriaEmail();
 });

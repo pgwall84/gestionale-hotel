@@ -1,0 +1,16 @@
+-- Migration 019 — Impostazioni: anagrafica camere.
+-- Task preliminare al modulo 2.3 (WuBook/WooDoo), deciso il 31/07/2026:
+-- prima di costruire l'integrazione OTA, si sposta la gestione strutturale
+-- delle camere (categorie, assegnazione categoria→camera, e ora anche
+-- l'anagrafica delle camere fisiche) fuori da /tariffe in una nuova
+-- sezione "Impostazioni ▸ Camere".
+--
+-- La tabella `camere` esiste già nel database (usata da tutti i moduli
+-- Fase 1/2A) ma non risulta creata da nessuna migration tracciata in questa
+-- cartella — probabile setup manuale in una sessione precedente non
+-- documentata. Questa migration NON tenta di ricreare la tabella (rischio
+-- di disallineamento con lo schema reale già in uso), fa solo l'aggiunta
+-- additiva necessaria per l'anagrafica: un flag `attivo` per poter
+-- "rimuovere" una camera dall'uso quotidiano senza mai una DELETE reale
+-- (la camera resta referenziata da soggiorni/stato_camere storici).
+ALTER TABLE camere ADD COLUMN IF NOT EXISTS attivo BOOLEAN NOT NULL DEFAULT true;

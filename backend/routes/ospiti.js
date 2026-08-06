@@ -16,5 +16,8 @@ router.get('/:id',                  richiedeAzione('ospiti', 'lettura'),        
 router.post('/',                    richiedeAzione('ospiti', 'scrittura'),       ctrl.crea);
 router.patch('/:id',                richiedeAzione('ospiti', 'scrittura'),       ctrl.aggiorna);
 router.post('/:id/svela-documento', richiedeAzione('ospiti', 'svela_documento'), ctrl.svelaDocumento);
+// Nucleo familiare (modulo 5.2 Fase B, 04/08/2026) — collega/scollega un
+// cliente esistente, stesso permesso di 'scrittura' su ospiti.
+router.post('/:id/nucleo',          richiedeAzione('ospiti', 'scrittura'),       ctrl.impostaNucleo);
 
 module.exports = router;

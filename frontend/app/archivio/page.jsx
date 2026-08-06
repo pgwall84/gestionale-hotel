@@ -7,6 +7,7 @@ import { useState, useEffect, useCallback } from 'react';
 import { Archive, Upload, Download, Trash2, X } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import api from '@/lib/api';
+import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
 
 const CATEGORIE = {
   resoconto_z: 'Resoconto Z',
@@ -95,11 +96,11 @@ export default function ArchivioPage() {
             <option value="">Tutte le categorie</option>
             {Object.entries(CATEGORIE).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
           </select>
-          <input type="date" value={dataDa} onChange={e => setDataDa(e.target.value)}
-                 className="rounded-lg px-3 py-2 text-sm"
+          <CampoData value={dataDa} onChange={v => setDataDa(v)} minAnno={ANNO_CORRENTE - 20} maxAnno={ANNO_CORRENTE}
+                 className="px-3 py-2"
                  style={{ background: 'var(--muted)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
-          <input type="date" value={dataA} onChange={e => setDataA(e.target.value)}
-                 className="rounded-lg px-3 py-2 text-sm"
+          <CampoData value={dataA} onChange={v => setDataA(v)} minAnno={ANNO_CORRENTE - 20} maxAnno={ANNO_CORRENTE}
+                 className="px-3 py-2"
                  style={{ background: 'var(--muted)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
         </div>
 
@@ -190,8 +191,8 @@ function BottomSheetUpload({ onCarica, onAnnulla, loading }) {
           {Object.entries(CATEGORIE).map(([val, label]) => <option key={val} value={val}>{label}</option>)}
         </select>
 
-        <input type="date" value={dataDocumento} onChange={e => setDataDocumento(e.target.value)}
-               className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+        <CampoData value={dataDocumento} onChange={v => setDataDocumento(v)} minAnno={ANNO_CORRENTE - 20} maxAnno={ANNO_CORRENTE}
+               className="p-3" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
 
         <input type="file" accept="image/*,application/pdf" onChange={e => setFile(e.target.files?.[0] || null)}
                className="w-full text-sm" style={{ color: 'var(--foreground)' }} />

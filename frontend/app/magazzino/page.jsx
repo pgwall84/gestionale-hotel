@@ -10,6 +10,7 @@ import { Package, AlertTriangle, Plus, Truck, Camera, X } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
+import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
 
 function meseCorrente() {
   const oggi = new Date();
@@ -315,8 +316,9 @@ function BottomSheetConsegna({ prodotti, fornitori, onSalva, onAnnulla, loading 
         <div className="flex gap-2">
           <div className="flex-1">
             <label className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Scadenza</label>
-            <input type="date" value={dataScadenza} onChange={e => setDataScadenza(e.target.value)}
-                   className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
+            <CampoData value={dataScadenza} onChange={v => setDataScadenza(v)}
+                   minAnno={ANNO_CORRENTE - 1} maxAnno={ANNO_CORRENTE + 5}
+                   className="p-3" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
           </div>
           <input type="text" placeholder="N. DDT" value={ddtNumero} onChange={e => setDdtNumero(e.target.value)}
                  className="flex-1 rounded-xl p-3 text-sm self-end" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />

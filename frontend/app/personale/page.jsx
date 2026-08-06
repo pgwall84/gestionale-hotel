@@ -7,6 +7,7 @@ import StatusBadge from '@/components/ui/StatusBadge';
 import DataTable from '@/components/ui/DataTable';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
+import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
 
 const TABS_TITOLARE = [
   { id: 'presenze',  label: 'Presenze' },
@@ -866,8 +867,8 @@ function TabPresenze() {
           {[['da', 'Dal', da, setDa], ['a', 'Al', a, setA]].map(([, lbl, val, set]) => (
             <div key={lbl}>
               <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>{lbl}</label>
-              <input type="date" value={val} onChange={e => set(e.target.value)}
-                     className="px-2 rounded-lg text-sm outline-none"
+              <CampoData value={val} onChange={v => set(v)}
+                     className="px-2"
                      style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
             </div>
           ))}
@@ -1000,8 +1001,8 @@ function TabFerie() {
             {[['data_inizio', 'Dal'], ['data_fine', 'Al']].map(([k, lbl]) => (
               <div key={k}>
                 <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>{lbl}</label>
-                <input type="date" required value={form[k]} onChange={e => setForm({ ...form, [k]: e.target.value })}
-                       className="w-full px-2 rounded-lg text-sm outline-none"
+                <CampoData required value={form[k]} onChange={v => setForm({ ...form, [k]: v })}
+                       className="px-2"
                        style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
               </div>
             ))}
@@ -1101,9 +1102,10 @@ function TabScadenze({ utenti }) {
           </div>
           <div>
             <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Scadenza *</label>
-            <input type="date" required value={form.data_scadenza}
-                   onChange={e => setForm({ ...form, data_scadenza: e.target.value })}
-                   className="w-full px-2 rounded-lg text-sm outline-none"
+            <CampoData required value={form.data_scadenza}
+                   onChange={v => setForm({ ...form, data_scadenza: v })}
+                   minAnno={ANNO_CORRENTE - 1} maxAnno={ANNO_CORRENTE + 15}
+                   className="px-2"
                    style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
           </div>
           <div>
@@ -1208,9 +1210,10 @@ function TabDocumenti({ utenti }) {
                     style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }}>
               {TIPI.map(t => <option key={t} value={t}>{t.replace('_', ' ')}</option>)}
             </select>
-            <input type="date" value={form.data_documento}
-                   onChange={e => setForm({ ...form, data_documento: e.target.value })}
-                   className="px-2 rounded-lg text-sm outline-none"
+            <CampoData value={form.data_documento}
+                   onChange={v => setForm({ ...form, data_documento: v })}
+                   minAnno={ANNO_CORRENTE - 30} maxAnno={ANNO_CORRENTE}
+                   className="px-2"
                    style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
           </div>
           <input ref={fileRef} type="file" accept=".pdf,.jpg,.jpeg,.png"
@@ -1489,8 +1492,8 @@ function TabOspiti() {
     <form onSubmit={salva} className="max-w-sm flex flex-col gap-4">
       <div>
         <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Data</label>
-        <input type="date" value={data} onChange={e => setData(e.target.value)}
-               className="px-3 rounded-lg text-sm outline-none"
+        <CampoData value={data} onChange={v => setData(v)}
+               className="px-3"
                style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
       </div>
       <div className="grid grid-cols-3 gap-3">

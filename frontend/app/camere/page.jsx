@@ -1,8 +1,12 @@
 'use client';
 
-// Pagina Camere — griglia per piano, 5 camere per riga.
-// Admin/titolare: editano fermata, partenza, note.
-// Cameriere: vede lo stato e può marcare "pronta".
+// Pagina Stato Camere (ex "Camere") — griglia per piano, 5 camere per riga.
+// Modulo 5.1 (03/08/2026): fermata/partenza non sono più editabili a mano,
+// sono calcolate dal backend in tempo reale da `soggiorni` (vedi commento
+// in camereController.js) — qui sono sola lettura per tutti i ruoli.
+// Admin/titolare/receptionist/portiere_notte: editano solo le note.
+// Admin/titolare/receptionist/cameriere/portiere_notte/dipendente (non
+// cuoco): possono marcare "pronta" (shared/ruoli.js sezione 'camere'.'pulizia').
 
 import { useState, useEffect, useCallback } from 'react';
 import { ChevronLeft, ChevronRight, CheckCircle, Circle } from 'lucide-react';
@@ -26,7 +30,7 @@ function fmt(d) {
 }
 
 // Singola card camera — compatta
-function CardCamera({ camera, puoEditare, puoMarcare, onAggiorna, salvando }) {
+function CardCamera({ camera, puoEditare, puoPulire, onAggiorna, salvando }) {
   const [noteAperta, setNoteAperta] = useState(false);
   const isSalvando = salvando === camera.id;
 
@@ -71,28 +75,8 @@ function CardCamera({ camera, puoEditare, puoMarcare, onAggiorna, salvando }) {
                                 style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}>Pronta ✓</span>}
       </div>
 
-      {/* Toggle fermata/partenza — solo admin/titolare */}
-      {puoEditare && (
-        <div className="flex gap-1">
-          <button onClick={() => onAggiorna(camera, 'arrivo', !haFermata)}
-                  className="flex-1 py-1 rounded text-[10px] font-medium transition-colors"
-                  style={{
-                    background: haFermata ? 'var(--status-green-text)' : 'var(--background)',
-                    color: haFermata ? 'white' : 'var(--muted-foreground)',
-                    border: '0.5px solid var(--border)',
-                  }}>F</button>
-          <button onClick={() => onAggiorna(camera, 'partenza', !haPartenza)}
-                  className="flex-1 py-1 rounded text-[10px] font-medium transition-colors"
-                  style={{
-                    background: haPartenza ? 'var(--status-red-text)' : 'var(--background)',
-                    color: haPartenza ? 'white' : 'var(--muted-foreground)',
-                    border: '0.5px solid var(--border)',
-                  }}>P</button>
-        </div>
-      )}
-
-      {/* Pulsante pronta — cameriere (e admin) se c'è attività */}
-      {(puoMarcare || puoEditare) && haAttivita && (
+      {/* Pulsante pronta — chiunque possa pulire, se c'è attività oggi */}
+      {puoPulire && haAttivita && (
         <button onClick={() => onAggiorna(camera, 'pronta', !camera.pronta)}
                 className="w-full py-1 rounded text-[10px] font-medium flex items-center justify-center gap-1 transition-colors"
                 style={{
@@ -130,16 +114,31 @@ function CardCamera({ camera, puoEditare, puoMarcare, onAggiorna, salvando }) {
   );
 }
 
+// Data odierna in formato locale YYYY-MM-DD — MAI new Date().toISOString(),
+// che converte in UTC e in Italia (UTC+1/+2) fa perdere un giorno (bug
+// scoperto il 31/07/2026: il pulsante "avanti" non cambiava nulla e
+// "indietro" saltava di 2 giorni — vedi spostaGiorno sotto, stesso bug).
+function oggiLocale() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 export default function PaginaCamere() {
   const { utente } = useAuth();
-  const oggi = new Date().toISOString().split('T')[0];
+  const oggi = oggiLocale();
   const [data, setData] = useState(oggi);
   const [camereMap, setCamereMap] = useState({});
   const [loading, setLoading] = useState(true);
   const [salvando, setSalvando] = useState(null);
 
-  const puoEditare = ['admin', 'titolare'].includes(utente?.ruolo);
-  const puoMarcare = utente?.ruolo === 'cameriere';
+  // Stato Camere (rinominata da "Camere" il 31/07/2026, spostata in sidebar
+  // sotto OSPITALITÀ). Modulo 5.1 (03/08/2026): fermata/partenza sono ora
+  // sola lettura per tutti (calcolate da soggiorni) — puoEditare resta solo
+  // per le note (shared/ruoli.js sezione 'camere'.'scrittura').
+  // puoPulire (sezione 'camere'.'pulizia'): tutti tranne cuoco, decisione
+  // esplicita del titolare — prima "segna pronta" era senza restrizioni.
+  const puoEditare = ['admin', 'titolare', 'receptionist', 'portiere_notte'].includes(utente?.ruolo);
+  const puoPulire = ['admin', 'titolare', 'receptionist', 'cameriere', 'portiere_notte', 'dipendente'].includes(utente?.ruolo);
 
   const carica = useCallback(async () => {
     setLoading(true);
@@ -154,27 +153,25 @@ export default function PaginaCamere() {
 
   useEffect(() => { carica(); }, [carica]);
 
+  // Aritmetica su anno/mese/giorno locali, mai toISOString() — stesso
+  // pattern sicuro di spostaData() in frontend/app/planning-camere/page.jsx.
   function spostaGiorno(delta) {
-    const d = new Date(data + 'T00:00:00');
-    d.setDate(d.getDate() + delta);
-    setData(d.toISOString().split('T')[0]);
+    const [y, m, g] = data.split('-').map(Number);
+    const d = new Date(y, m - 1, g + delta);
+    setData(`${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`);
   }
 
+  // campo qui è solo 'pronta' o 'note' — arrivo/partenza non sono più
+  // scrivibili da questa pagina (modulo 5.1, calcolati da soggiorni).
   async function aggiorna(camera, campo, valore) {
-    if (campo === 'pronta' ? (!puoEditare && !puoMarcare) : !puoEditare) return;
+    if (campo === 'pronta' ? !puoPulire : !puoEditare) return;
     setCamereMap(prev => ({ ...prev, [camera.numero]: { ...prev[camera.numero], [campo]: valore } }));
     setSalvando(camera.id);
     try {
       if (campo === 'pronta') {
         await api.post('/camere/pronta', { camera_id: camera.id, data, pronta: valore });
       } else {
-        const cam = camereMap[camera.numero];
-        await api.post('/camere/stato', {
-          camera_id: camera.id, data,
-          arrivo:   campo === 'arrivo'   ? valore : cam.arrivo,
-          partenza: campo === 'partenza' ? valore : cam.partenza,
-          note:     campo === 'note'     ? valore : cam.note,
-        });
+        await api.post('/camere/stato', { camera_id: camera.id, data, note: valore });
       }
     } catch { carica(); }
     finally { setSalvando(null); }
@@ -188,7 +185,7 @@ export default function PaginaCamere() {
   const totAttive = camere.filter(c => c.arrivo || c.partenza).length;
 
   return (
-    <AppShell titolo="Camere">
+    <AppShell titolo="Stato Camere">
 
       {/* Navigazione data */}
       <div className="flex items-center justify-between mb-4">
@@ -221,12 +218,6 @@ export default function PaginaCamere() {
             <span className="font-bold">{val}</span> {label}
           </div>
         ))}
-        {puoEditare && (
-          <div className="flex items-center gap-2 ml-auto text-[10px]" style={{ color: 'var(--muted-foreground)' }}>
-            <span className="font-bold" style={{ color: 'var(--status-green-text)' }}>F</span> = Fermata &nbsp;
-            <span className="font-bold" style={{ color: 'var(--status-red-text)' }}>P</span> = Partenza
-          </div>
-        )}
       </div>
 
       {/* Griglia per piano */}
@@ -249,7 +240,7 @@ export default function PaginaCamere() {
                       key={num}
                       camera={camera}
                       puoEditare={puoEditare}
-                      puoMarcare={puoMarcare}
+                      puoPulire={puoPulire}
                       onAggiorna={aggiorna}
                       salvando={salvando}
                     />

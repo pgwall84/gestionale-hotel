@@ -8,6 +8,7 @@ import {
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
+import CampoData from '@/components/ui/CampoData';
 
 // ─── OCR ──────────────────────────────────────────────────────────────────────
 const REGEX_TARGA = /\b([A-Z]{2}\d{3}[A-Z]{2})\b/g;
@@ -546,8 +547,8 @@ export default function PaginaZTL() {
             ].map(({ k, label }) => (
               <div key={k}>
                 <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>{label}</label>
-                <input type="date" value={formManuale[k]} onChange={e => setFormManuale(p => ({ ...p, [k]: e.target.value }))}
-                       className="w-full px-3 py-2 rounded-lg text-sm outline-none"
+                <CampoData value={formManuale[k]} onChange={v => setFormManuale(p => ({ ...p, [k]: v }))}
+                       className="px-3 py-2"
                        style={{ border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--foreground)' }} />
               </div>
             ))}

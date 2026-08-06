@@ -9,11 +9,13 @@ module.exports = {
   // Carica le variabili d'ambiente di test prima di ogni suite
   globalSetup: './tests/setup.js',
 
+  // Chiude il pool pg dell'app (backend/config/db.js) alla fine di ogni file di
+  // test — gira nello stesso module registry del test, a differenza di
+  // globalSetup che gira in un processo separato
+  setupFilesAfterEnv: ['./tests/setup-after-env.js'],
+
   // Timeout generoso per query PostgreSQL lente in CI
   testTimeout: 15000,
-
-  // Forza l'uscita dopo i test (chiude il pool pg che altrimenti blocca Jest)
-  forceExit: true,
 
   // Output in italiano leggibile
   verbose: true,

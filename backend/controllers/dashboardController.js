@@ -1,4 +1,5 @@
 const pool = require('../config/db');
+const { LABEL_LUOGO } = require('./manutenzioneController');
 
 // GET /api/dashboard/alert
 // Aggrega alert reali da più moduli
@@ -95,6 +96,28 @@ async function alert(req, res) {
       });
     }
 
+    // ── Manutenzione: segnalazioni aperte o in lavorazione ────────────────────
+    // Modulo nuovo (06/08/2026) — priorità alta in rosso, il resto in ambra,
+    // stesso criterio già usato sopra per le scadenze HR.
+    const manutenzione = await pool.query(`
+      SELECT s.descrizione, s.priorita, s.luogo_tipo, c.numero AS camera_numero
+      FROM segnalazioni_manutenzione s
+      LEFT JOIN camere c ON c.id = s.camera_id
+      WHERE s.stato IN ('aperta', 'in_lavorazione')
+      ORDER BY (s.priorita = 'alta') DESC, s.created_at ASC
+      LIMIT 5
+    `);
+
+    for (const m of manutenzione.rows) {
+      const luogo = m.luogo_tipo === 'camera' ? `Camera ${m.camera_numero}` : (LABEL_LUOGO[m.luogo_tipo] || m.luogo_tipo);
+      alerts.push({
+        type: m.priorita === 'alta' ? 'red' : 'amber',
+        text: `${luogo} — ${m.descrizione}`,
+        category: 'Manutenzione',
+        link: '/manutenzione',
+      });
+    }
+
     res.json({ alerts });
   } catch (err) {
     console.error('Errore dashboard alert:', err);
@@ -116,15 +139,26 @@ async function kpi(req, res) {
   const dataAnnoScorso = `${parseInt(data.slice(0, 4)) - 1}${data.slice(4)}`;
 
   try {
-    // ── Camere: movimenti oggi (arrivo/partenza) — non "occupazione" in senso
-    // stretto, lo schema attuale non traccia un calendario prenotazioni (Fase 2.2)
-    const camereTotali = await pool.query('SELECT COUNT(*) AS tot FROM camere');
+    // ── Camere: movimenti oggi (arrivo/partenza) — calcolati da `soggiorni`,
+    // stessa fonte di camereController.js (modulo 5.1, 03/08/2026). Prima
+    // leggeva `stato_camere` (impostazione manuale, oggi dismessa): il vecchio
+    // commento "lo schema attuale non traccia un calendario prenotazioni"
+    // era superato dal modulo 2.2/Fase 2A, questo era l'ultimo punto rimasto
+    // disallineato — vedi docs/PRENOTAZIONI_FASE2.md Parte D "Pulizie".
+    const camereTotali = await pool.query('SELECT COUNT(*) AS tot FROM camere WHERE attivo = true');
+    // COUNT(DISTINCT camera_id), non COUNT(*): in un turnover stesso-giorno
+    // (chi parte + chi arriva e si ferma sulla stessa camera) due righe di
+    // `soggiorni` soddisfano la condizione ma è UNA sola camera con
+    // movimento — stesso significato "camere con attività" di prima
+    // (stato_camere aveva un vincolo camera_id+data univoco, un solo record).
     const movimentiOggi = await pool.query(
-      `SELECT COUNT(*) AS tot FROM stato_camere WHERE data = $1 AND (arrivo = true OR partenza = true)`,
+      `SELECT COUNT(DISTINCT camera_id) AS tot FROM soggiorni
+       WHERE cancellato = false AND (data_partenza = $1 OR (data_arrivo <= $1 AND data_partenza > $1))`,
       [data]
     );
     const movimentiAnnoScorso = await pool.query(
-      `SELECT COUNT(*) AS tot FROM stato_camere WHERE data = $1 AND (arrivo = true OR partenza = true)`,
+      `SELECT COUNT(DISTINCT camera_id) AS tot FROM soggiorni
+       WHERE cancellato = false AND (data_partenza = $1 OR (data_arrivo <= $1 AND data_partenza > $1))`,
       [dataAnnoScorso]
     );
 

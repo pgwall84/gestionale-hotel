@@ -18,10 +18,15 @@ const DOCUMENTO_TIPO = 'CI';
 
 let ospiteId;
 let ospiteCreatoId; // creato dal test POST, ripulito a parte
+let cameraTestId;
+let prenotazioneTestId;
 
 afterAll(async () => {
   const db = getPool();
   await db.query(`DELETE FROM audit_log WHERE risorsa_tipo = 'ospiti' AND risorsa_id = $1`, [ospiteId]);
+  await db.query('DELETE FROM soggiorni WHERE ospite_id = $1', [ospiteId]);
+  if (prenotazioneTestId) await db.query('DELETE FROM prenotazioni WHERE id = $1', [prenotazioneTestId]);
+  if (cameraTestId) await db.query('DELETE FROM camere WHERE id = $1', [cameraTestId]);
   await db.query('DELETE FROM ospiti WHERE cognome = $1', [COGNOME_TEST]);
   await chiudiPool();
 });
@@ -35,6 +40,31 @@ beforeAll(async () => {
     [COGNOME_TEST, DOCUMENTO_TIPO, DOCUMENTO_NUMERO]
   );
   ospiteId = r.rows[0].id;
+
+  // Fixture per il test numero_soggiorni della sezione Clienti (01/08/2026):
+  // un soggiorno attivo + uno cancellato, per verificare che il conteggio
+  // in lista() escluda i cancellati (stesso filtro usato in dettaglio()).
+  const camera = await db.query(
+    `INSERT INTO camere (numero, nome, piano) VALUES ($1, 'Camera Test Clienti', 9) RETURNING id`,
+    [`TEST-CLI${Date.now().toString().slice(-6)}`]
+  );
+  cameraTestId = camera.rows[0].id;
+
+  const prenotazione = await db.query(
+    `INSERT INTO prenotazioni (canale_origine, stato) VALUES ('diretta', 'confermata') RETURNING id`
+  );
+  prenotazioneTestId = prenotazione.rows[0].id;
+
+  await db.query(
+    `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale)
+     VALUES ($1, $2, $3, '2098-01-10', '2098-01-15', 1, 250)`,
+    [prenotazioneTestId, cameraTestId, ospiteId]
+  );
+  await db.query(
+    `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale, cancellato)
+     VALUES ($1, $2, $3, '2098-02-10', '2098-02-15', 1, 250, true)`,
+    [prenotazioneTestId, cameraTestId, ospiteId]
+  );
 });
 
 // ─── GET /api/ospiti ────────────────────────────────────────────────────────
@@ -68,6 +98,16 @@ describe('GET /api/ospiti', () => {
     expect(trovato).toBeDefined();
     expect(trovato).not.toHaveProperty('documento_numero');
     expect(trovato.documento_mascherato).toBe('CI · ••••4567');
+  });
+
+  test('numero_soggiorni conta solo i soggiorni non cancellati (sezione Clienti)', async () => {
+    const res = await request(app)
+      .get(`/api/ospiti?search=${encodeURIComponent(COGNOME_TEST)}`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const trovato = res.body.find(o => o.id === ospiteId);
+    expect(trovato).toBeDefined();
+    expect(Number(trovato.numero_soggiorni)).toBe(1);
   });
 });
 
@@ -154,6 +194,23 @@ describe('POST /api/ospiti', () => {
     ospiteCreatoId = res.body.id;
   });
 
+  // Modulo 5.2 Fase A (03/08/2026) — colonna aggiunta per l'OCR documento
+  // (MRZ), non richiesta da Alloggiati Web ma utile per un futuro alert
+  // "documento in scadenza". Nessuna colonna residenza (deciso dal titolare).
+  test('salva documento_scadenza → 201, presente nella risposta', async () => {
+    const res = await request(app)
+      .post('/api/ospiti')
+      .set(authHeader.receptionist())
+      .send({
+        nome: 'Marco',
+        cognome: `${COGNOME_TEST}_scadenza`,
+        documento_scadenza: '2030-05-20',
+      });
+    expect(res.status).toBe(201);
+    expect(res.body.documento_scadenza).toBe('2030-05-20');
+    await getPool().query('DELETE FROM ospiti WHERE id = $1', [res.body.id]);
+  });
+
   afterAll(async () => {
     if (ospiteCreatoId) {
       const db = getPool();
@@ -196,6 +253,40 @@ describe('PATCH /api/ospiti/:id', () => {
     expect(res.body.cognome).toBe(COGNOME_TEST);
     expect(res.body).not.toHaveProperty('documento_numero');
     expect(res.body.documento_mascherato).toBe('CI · ••••4567');
+  });
+
+  // Modulo 5.2 Fase A — stesso COALESCE degli altri campi opzionali: se
+  // omesso, resta invariato; se inviato, si aggiorna.
+  test('aggiorna documento_scadenza → 200', async () => {
+    const res = await request(app)
+      .patch(`/api/ospiti/${ospiteId}`)
+      .set(authHeader.admin())
+      .send({ documento_scadenza: '2028-11-03' });
+    expect(res.status).toBe(200);
+    expect(res.body.documento_scadenza).toBe('2028-11-03');
+  });
+
+  // Sezione Clienti — fix 01/08/2026: documento/nazionalità devono sempre
+  // essere salvabili a testo libero, indipendentemente dalla sincronizzazione
+  // delle tabelle di codifica Alloggiati Web (modulo 2.5).
+  test('salva cittadinanza a testo libero senza codice abbinato → 200, codice resta null', async () => {
+    const res = await request(app)
+      .patch(`/api/ospiti/${ospiteId}`)
+      .set(authHeader.receptionist())
+      .send({ cittadinanza_testo: 'Italiana', cittadinanza_codice: null });
+    expect(res.status).toBe(200);
+    expect(res.body.cittadinanza_testo).toBe('Italiana');
+    expect(res.body.cittadinanza_codice).toBeNull();
+  });
+
+  test('salva stato di nascita con testo e codice insieme (suggerimento selezionato) → 200, entrambi salvati', async () => {
+    const res = await request(app)
+      .patch(`/api/ospiti/${ospiteId}`)
+      .set(authHeader.receptionist())
+      .send({ stato_nascita_testo: 'Italia', stato_nascita_codice: '100000100' });
+    expect(res.status).toBe(200);
+    expect(res.body.stato_nascita_testo).toBe('Italia');
+    expect(res.body.stato_nascita_codice).toBe('100000100');
   });
 });
 
