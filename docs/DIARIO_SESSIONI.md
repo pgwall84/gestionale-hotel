@@ -1900,3 +1900,292 @@ vedi anche il repo `sito-hotel` per lo stesso sintomo).
 voci "evolutive competitive" priorità alta (CRM ospiti con preferenze/tag,
 upsell automatico in-stay) — il titolare ha chiesto di sviluppare prima
 solo il modulo manutenzione.
+
+---
+
+## 06/08/2026 — Workflow git/test/deploy, fix ristorante+magazzino, dashboard
+
+**Decisione di workflow (non tecnica, ma permanente)**: da questa sessione
+in poi, Cowork progetta e scrive il codice; il tab "Code" (Claude Code
+nativo sul PC del titolare, nessun ponte di sincronizzazione) esegue git,
+test e deploy del sito — mai più `git` dal sandbox Cowork su questi due
+repo, nemmeno in sola lettura (`git status`/`diff` inclusi: hanno
+riprodotto lo stesso `.git/index.lock` visto con i comandi di scrittura).
+Dettaglio completo del perché: memoria persistente
+`feedback_git_write_sito_hotel_da_marco.md`.
+
+**Ristorante — DELETE configurazione sala** (gap segnalato in
+`docs/EVOLUTIVE.md`, mai implementato prima: non c'era proprio nessun
+endpoint, non solo "senza blocco"). Aggiunto `DELETE
+/api/ristorante/config/:id` (`salaController.js` + `routes/ristorante.js`
++ bottone in `frontend/app/sala/page.jsx`): blocca se la configurazione è
+quella Standard (`is_default`), se è quella attualmente attiva, o se ha
+ancora tavoli associati (il vincolo FK `tavoli.configurazione_id` senza
+`ON DELETE` protegge comunque a livello DB, il controllo esplicito serve
+solo per un messaggio di errore leggibile invece del 500 generico).
+
+**Bug reale trovato testando il fix sopra — `frontend/lib/api.js`**: la
+nota in `docs/EVOLUTIVE.md` (sessione 17/07/2026) dava per risolto un
+disallineamento chiave `errore`/`error` tra backend e frontend. Non era
+vero, o è regredito: verificato con un conteggio reale, 22 file controller
+su 40 rispondono `{ errore: ... }` (italiano, 230 occorrenze) contro 18
+che rispondono `{ error: ... }` (inglese, 170 occorrenze) — `api.js`
+leggeva solo `.error`, quindi per circa metà del gestionale l'utente ha
+sempre visto "Errore {status}" generico invece del messaggio specifico del
+controller, incluso il nuovo DELETE configurazione sala appena scritto.
+Corretto in un punto solo, senza toccare 40 controller: `api.js` ora legge
+`json?.errore || json?.error`. Non urgente uniformare i controller a una
+sola chiave.
+
+**Magazzino — 3 evolutive da `docs/EVOLUTIVE.md`, tutte in un colpo**
+(storico prezzi, alert scadenze progressivi, bozza ordine fornitore
+automatica): 3 nuovi endpoint GET (`storico-prezzi/:id`, `scadenze`,
+`bozza-ordine`) + UI in `frontend/app/magazzino/page.jsx` (banner
+scadenze, storico prezzi al tap su un prodotto, bottone "Bozza ordine
+fornitori" visibile solo se c'è qualcosa sotto soglia). Limite reale non
+risolvibile senza una migration: `prodotti` non ha un fornitore fisso in
+anagrafica, quindi il fornitore per riga nella bozza ordine è inferito
+dall'ultimo carico ricevuto per quel prodotto — se non esiste, il prodotto
+finisce in un gruppo "Fornitore non determinato" invece di sparire.
+
+**Dashboard — 3 nuovi alert**, decisi col titolare dopo che gli ho
+riassunto cosa mostrava oggi (KPI + alert esistenti, nessuna sorpresa
+tecnica lì): prenotazioni in opzione con scadenza entro 48h (promemoria,
+nessun cambio di stato — il cron di scadenza automatica resta un'evolutiva
+separata), ospiti in arrivo oggi con documento incompleto per Alloggiati
+Web (sostituisce la richiesta letterale "invii Alloggiati Web in sospeso":
+quella tabella è sempre vuota perché il modulo 2.5 Fase 2 non è ancora
+iniziato, un alert lì sarebbe finto), pre check-in compilati in attesa di
+revisione reception. **Deliberatamente non aggiunto**: un quarto alert per
+export ROSS1000 in sospeso — non esiste nessun log di quando è stato
+generato l'ultimo export, servirebbe una tabella nuova; il titolare ha
+deciso di rimandarlo a quando il gestionale sarà operativo con dati reali
+(dopo 1.10 Deploy VPS).
+
+**Sito (`sito-hotel`) — pulsante WhatsApp flottante**: link diretto
+`wa.me` (nessuna WhatsApp Business API, decisione esplicita del titolare —
+prima il link gratuito, l'automazione si valuta più avanti separatamente),
+`components/ui/WhatsAppButton.tsx`, numero da `infoHotel.telefonoMobile`
+(Sanity). Stesso pattern del competitor locale Hotel Florida (verificato
+via ricerca: usa `wa.link`, non un'integrazione più complessa). Telegram
+richiesto insieme ma non fatto — confermato dal titolare che l'hotel non
+ha un account Telegram.
+
+**Iubenda (privacy/cookie policy sito) — approfondito, non implementato**:
+verificato via ricerca che il competitor locale Hotel Florida usa
+esattamente Iubenda (non un legale, non testo homemade), probabilmente
+configurato dalla loro agenzia web come pacchetto standard. Il titolare
+vuole creare l'account con la mail aziendale, non disponibile in questa
+sessione — rimandato. Nota utile per quando riprende: il piano Free di
+Iubenda (<1.000 pageview/mese) probabilmente copre già il sito oggi, dato
+il traffico quasi nullo sul dominio provvisorio Vercel.
+
+---
+
+## 09/08/2026 — Modulo 1.10: Deploy VPS netcup — COMPLETATO TECNICAMENTE ✅
+
+Sessione interamente eseguita in diretta con l'utente, comandi copiati/
+incollati passo-passo su una sessione SSH — nessun accesso diretto al
+server da questa sessione Cowork (limite di rete del sandbox: niente SSH
+in uscita). Guida operativa completa, pensata per essere usata da sola in
+futuro senza rileggere questa cronologia: `docs/DEPLOY_VPS_NETCUP.md`.
+
+**Provider confermato netcup** (non Hetzner, non Aruba — dettaglio
+decisionale completo in `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` Fase 1,
+incluso l'account Aruba sconosciuto legato alla P.IVA dell'hotel, non
+ancora chiarito). VPS Lite 1 G12s, Norimberga, Debian 13 (trixie) di
+default (non Ubuntu, non selezionabile in fase d'ordine).
+
+**Problemi reali incontrati e risolti (non nell'ordine di un piano
+teorico, nell'ordine in cui sono emersi facendo):**
+
+- **netcup ha due portali separati** (CCP fatturazione, SCP tecnico), non
+  documentato in modo ovvio — scoperto solo dopo che l'utente non trovava
+  nessuna sezione "Server" nel portale sbagliato (CCP).
+- **Copia della chiave SSH fallita silenziosamente**: `type file | ssh
+  host "cat >> ..."` da PowerShell Windows non trasferisce il contenuto
+  (limite noto del modo in cui PowerShell inoltra le pipe a un eseguibile
+  esterno) — `authorized_keys` restava a 0 byte senza errori visibili.
+  Fix: copia-incolla manuale del contenuto invece del piping.
+- **Incolla multi-riga da PowerShell in una shell remota inaffidabile**:
+  più comandi incollati insieme senza andare a capo si sono fusi in uno
+  solo più volte (es. un `sed` è diventato `sed...sql_configsed...`).
+  Regola adottata per tutta la sessione: un comando per riga, un incolla
+  alla volta, aspettare il prompt. Per contenuti multi-riga veri (file di
+  configurazione), usare `nano` invece di heredoc/piping da shell — dentro
+  un editor il rischio di fusione tra righe non esiste.
+- **bcrypt e sharp**: npm 11 blocca di default gli script di installazione
+  dei pacchetti nativi (`npm warn allow-scripts`). Senza approvarli
+  esplicitamente (`npm approve-scripts --allow-scripts-pending`), bcrypt
+  non avrebbe funzionato (login rotto) e sharp nemmeno (ottimizzazione
+  immagini Next.js rotta) — scoperto leggendo l'output invece di ignorare
+  un warning che sembrava innocuo.
+- **`!` nella password rompe bash**: `set +H` necessario, e va rilanciato
+  in ogni nuova sub-shell aperta con `su` (non eredita dalla shell padre).
+- **Le migration non ricostruiscono lo schema da un database vuoto**:
+  scoperto provando a rieseguire le 30 migration in ordine su un database
+  pulito — mancano CREATE TABLE iniziali (es. `ztl_prenotazioni`, mai
+  creata da nessun file della cartella `migrations/`) e l'ordine di
+  `sort -V` non è quello di esecuzione corretto (`005b` prima di `005`).
+  Cambiato approccio: `pg_dump` del database locale di sviluppo (fonte di
+  verità reale, testato da mesi) → `scp` → `psql -f` sul server, invece di
+  rincorrere l'ordine delle migration. **Da approfondire in una sessione
+  futura, non urgente**: perché la cartella migrations non è completa (chi
+  ha creato `ztl_prenotazioni` e quando, se non un file versionato).
+- **`REASSIGN OWNED BY postgres` fallito** su oggetti creati da estensioni
+  (`btree_gist`) — comportamento noto di PostgreSQL, non un errore.
+  Risolto con `GRANT ALL PRIVILEGES` invece di trasferire la proprietà.
+- **Kit di deploy preparato in sessione precedente (15/07/2026,
+  `files-deploy-vps/` nel repo) conteneva un bug reale**: il regex Nginx
+  per instradare le SSE del monitor cucina/sala cercava
+  `/api/(sala|cucina|ristorante)/sse`, ma verificato contro il codice
+  reale (`backend/controllers/comandeController.js`) gli endpoint veri
+  sono `/api/ristorante/cucina/stream` e `/api/ristorante/sala/stream` —
+  corretto prima di attivare la configurazione, altrimenti il monitor
+  cucina si sarebbe rotto silenziosamente in produzione.
+- **`.env` disallineato da quanto documentato in CLAUDE.md §7**: il codice
+  reale usa `DB_HOST/DB_PORT/DB_NAME/DB_USER/DB_PASSWORD` separati, non un
+  `DATABASE_URL` unico, e non usa affatto `JWT_REFRESH_SECRET` né
+  `ENCRYPTION_KEY` nonostante siano elencati come richiesti — la sezione
+  del documento non è mai stata allineata al codice. Non bloccante, da
+  chiarire in una sessione dedicata.
+
+**Risultato finale verificato**: `https://hdgolfo-gestionale.com`
+raggiungibile, certificato Let's Encrypt valido (scadenza 07/11/2026,
+rinnovo automatico configurato da certbot), backend connesso al database
+reale (dump dal locale, non le migration), PM2 persistente al riavvio
+(systemd), backup notturno locale programmato (cron 03:00, 14 giorni di
+storico). Verificato anche da questa sessione Cowork via richiesta HTTP
+diretta (non solo dall'utente).
+
+**Non completato in questa sessione, elenco completo in
+`docs/DEPLOY_VPS_NETCUP.md` §10**: audit di sicurezza pre-produzione
+(obbligatorio per §7 prima di considerare il modulo davvero chiuso — il
+backend ha segnalato 8 vulnerabilità npm, 1 critica, mai esaminate);
+backup offsite su Backblaze B2 (account non ancora creato, oggi il backup
+è solo locale sullo stesso server); test di ripristino reale di un
+backup; primo aggiornamento dell'app in produzione (sequenza scritta ma
+mai eseguita davvero).
+
+### Audit di sicurezza pre-produzione — COMPLETATO ✅ (stessa giornata, 09/08/2026)
+
+Ultimo checkpoint della Fase 1 (§7 di CLAUDE.md), fatto subito dopo il
+deploy invece di rimandarlo a una sessione separata.
+
+**npm audit backend**: 9 vulnerabilità segnalate durante l'installazione.
+Risolte senza breaking change con `npm audit fix`: `body-parser`,
+`brace-expansion` (×2), `ip-address` (usata da `express-rate-limit` per
+identificare l'IP client — rilevante perché un bug qui poteva in teoria
+aiutare a bypassare il rate limit). Lasciate come rischio accettato dopo
+analisi, non per pigrizia:
+- `tar`/`@mapbox/node-pre-gyp`/`bcrypt` (severità "critica" sulla carta) —
+  catena usata solo per compilare il binario nativo di bcrypt in fase di
+  `npm install`, mai eseguita a runtime, non raggiungibile da nessun input
+  utente.
+- `uuid`/`node-cron` (moderata) — `node-cron` la usa internamente per
+  generare id dei job pianificati, mai con input controllabile da un
+  utente esterno.
+- `xlsx`/SheetJS (alta, **nessuna correzione disponibile** — i
+  manutentori hanno smesso di pubblicare fix su npm) — verificato dove
+  viene usata: `ztlController.js` la usa per **importare** file Excel
+  reali (`xlsx.read(req.file.buffer...)`), superficie di attacco vera
+  (prototype pollution/ReDoS su un file caricato), ma l'endpoint
+  `/api/ztl/import` è protetto da `soloTitolare` — rischio limitato a un
+  account admin/titolare compromesso o ingannato, non aperto a chiunque.
+  **Scoperta collaterale**: `CLAUDE.md` §2 dice che il progetto usa
+  `exceljs` per gli export — falso, `exceljs` non è nemmeno tra le
+  dipendenze, si usa `xlsx` ovunque (anche per gli export di tassa di
+  soggiorno e timbrature, uso più sicuro perché lì il contenuto lo genera
+  il server, non lo legge da un file caricato). Da correggere la
+  documentazione; valutare migrazione a `exceljs` in una sessione
+  dedicata, non urgente.
+
+**npm audit frontend**: 6 vulnerabilità, tutte nella versione di Next.js
+installata (16.2.9) o nelle sue dipendenze bundlate (postcss, sharp) —
+incluse una SSRF nei rewrite e una disclosure di endpoint interni delle
+Server Function. Fix (`next@16.3.0`) segnalato da npm come "outside the
+stated dependency range": non forzato in questa sessione, va testato in
+locale (build + verifica funzionale) prima di toccare il server — non
+bloccante per il go-live di oggi, ma da programmare presto.
+
+**Controllo diretto sul codice** (non solo dipendenze):
+- SQLi: nessuna query costruita con concatenazione/interpolazione di
+  input utente su tutti i 38 controller del backend (verificati anche i
+  17 aggiunti dopo l'audit del 15/07: alloggiati, ross1000, manutenzione,
+  pre-checkin, offerte email, testi email, nuclei familiari).
+- XSS: zero `dangerouslySetInnerHTML`/`.innerHTML =`/`eval(` in tutto il
+  frontend.
+- IDOR/autorizzazione: tutte le nuove route hanno `router.use(verificaToken)`
+  + `richiedeAzione` per-endpoint, stesso pattern delle route più vecchie.
+- **Approfondimento mirato sulle route pubbliche di pre-checkin**
+  (`/api/pre-checkin-pubblico/:token`, l'unica superficie del gestionale
+  raggiungibile senza login per design): token generato con
+  `crypto.randomBytes(32)` (256 bit, infattibile da indovinare), salvato
+  in DB solo come hash SHA-256 (`backend/lib/preCheckin.js`, stesso
+  pattern di `refresh_tokens`), rate limit dedicato (30 richieste/15min
+  per IP), ogni ospite inviato viene validato contro l'insieme dei
+  soggiorni realmente collegati a quel token prima dell'INSERT — non si
+  può agganciare dati a una prenotazione diversa. Un nuovo invio invalida
+  sempre il precedente (comportamento intenzionale, già noto). Nessun
+  problema trovato.
+- Secret hardcoded o log di dati sensibili (password/token/documento in
+  chiaro): nessuno trovato.
+
+**Bug reale trovato e corretto**: `FRONTEND_URL` non era mai stata
+impostata nel `.env` di produzione. Impatto doppio — restringe il CORS in
+produzione (`backend/app.js`, mitigato comunque dal fatto che l'auth
+principale usa header `Authorization: Bearer`, non un cookie inviato
+automaticamente dal browser, e il cookie di refresh ha già
+`sameSite: strict`) — e soprattutto genera i link del pre-checkin inviati
+via email agli ospiti reali (`backend/lib/preCheckin.js`): senza,
+sarebbero stati link tipo `http://localhost:7000/...`, **inutilizzabili
+per un ospite vero**. Bug funzionale silenzioso, non solo di sicurezza.
+Corretto: `FRONTEND_URL=https://hdgolfo-gestionale.com` in
+`backend/.env`, backend riavviato e riverificato (database riconnesso
+correttamente, nessun errore nei log).
+
+Dettaglio completo e aggiornato: `docs/DEPLOY_VPS_NETCUP.md` §10.
+
+### Login rotto subito dopo l'audit — 2 bug reali, entrambi mai visibili prima del primo test vero
+
+L'audit di sicurezza aveva verificato codice e configurazione, ma nessuno
+aveva ancora provato un vero login attraverso Nginx (solo la home page era
+stata testata). Il titolare l'ha fatto subito dopo, ed è emerso che
+l'intera API era irraggiungibile — due bug distinti, entrambi presenti fin
+dal primo deploy, mascherati dal fatto che la home funzionava lo stesso
+(non fa chiamate `/api`):
+
+1. `frontend/lib/api.js` chiamava il backend su una porta diretta
+   (`:7001`), corretto per l'uso in LAN ma non raggiungibile in produzione
+   (porta chiusa dal firewall, nessun certificato SSL lì) — corretto
+   distinguendo produzione (percorso relativo, via Nginx) da sviluppo
+   (porta esplicita, invariato).
+2. Il blocco Nginx `location /api/` aveva `proxy_pass` con la barra
+   finale, che fa perdere il prefisso `/api/` prima di raggiungere
+   Express — ogni endpoint rispondeva 404. Il blocco SSE non aveva questo
+   problema (nessuna barra finale lì), motivo per cui non era stato
+   notato prima.
+
+Dettaglio tecnico completo di entrambi: `docs/DEPLOY_VPS_NETCUP.md` §4 e
+§5. **Il fix di `lib/api.js` è stato applicato prima come hotfix diretto
+sul server, poi corretto anche nel sorgente locale** — da verificare che
+sia stato committato dal tab Code prima del prossimo `git pull` sul
+server, altrimenti l'hotfix rischia di sparire.
+
+**Lezione per i prossimi deploy**: verificare sempre almeno una chiamata
+API reale (non solo la home page) prima di considerare un deploy
+verificato — la home che risponde non garantisce che il reverse proxy
+instradi correttamente anche `/api`.
+
+### Prossimo step
+
+Fase 1 chiusa, login verificato funzionante dopo i due fix sopra.
+**Prima cosa da fare alla prossima sessione**: confermare che
+`frontend/lib/api.js` sia stato committato/pushato dal tab Code (vedi
+sopra). Poi, prossimo modulo da decidere con il titolare a inizio sessione
+(2.3 WuBook, resta bloccato sulla sottoscrizione mai fatta; o altro). In
+parallelo, indipendente e non bloccante: chiarire con il commercialista
+l'account Aruba sconosciuto sulla P.IVA dell'hotel (vedi
+`docs/DOMANDE_APERTE_07-08-2026.md`); valutare l'upgrade a Next.js 16.3.0
+e la migrazione da `xlsx` a `exceljs` quando ci sarà una sessione libera
+per testarli con calma.

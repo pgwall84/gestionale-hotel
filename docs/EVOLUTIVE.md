@@ -116,7 +116,9 @@ Modulo 1.8 — Dashboard:
   genera al volo, senza salvare nulla). Servirebbe una piccola tabella di
   log (es. `ross1000_export_log`, una riga per export generato) prima di
   poter mostrare un alert reale invece di uno sempre vuoto o sempre pieno.
-  Da riprendere se il titolare conferma di volerla.
+  **Deciso dal titolare (06/08/2026): rimandato a quando il gestionale sarà
+  operativo con dati reali** (dopo 1.10 Deploy VPS) — non ha senso tracciare
+  export su dati di test. Non riproporlo prima di allora.
 
 Modulo 1.1 — HR Timbrature:
   ✅ Geolocalizzazione timbratura — implementata (Haversine + blocco raggio 50m
@@ -180,6 +182,41 @@ riprendono i moduli 2.3/3.2/4.1):
     tassa di soggiorno (modulo 2.4). Alloggiati Web (2.5): deciso SOAP
     diretto a WS_ALLOGGIATI, nessun intermediario — vedi voce dedicata
     sotto "Modulo 2.5" per lo stato reale.
+
+  ⚠️ **Verifica prezzi dal vivo (09/08/2026)**, prima di fidarsi di
+  qualunque cifra sopra — controllati i siti reali dei fornitori, nessun
+  pagamento effettuato:
+  - WuBook e A-Cube: **restano senza listino pubblico**, solo "contattaci"
+    — le cifre ~21€/mese (channel manager) e ~27€/mese (booking engine)
+    sono ancora solo una stima storica, non confermabile senza contattare
+    davvero il commerciale (vedi `docs/DOMANDE_APERTE_07-08-2026.md`).
+  - Stripe: confermato 1,5%+0,25€ per carte SEE, 2,5%+0,25€ extra-SEE —
+    listino pubblico e trasparente.
+  - Nexi: **nessuna commissione per transazione pubblicata** da nessuna
+    parte del sito — solo tramite contratto commerciale, a differenza di
+    Stripe. Da chiedere per iscritto prima di dare per buono qualunque
+    numero nel confronto costi.
+  - Fatture in Cloud: listino attuale (09/08/2026) è Forfettari 4€,
+    Standard 12€, Premium 21€, Premium Plus 29€, Complete 51€/mese.
+    **Nessuno di questi piani, con IVA, corrisponde ai 500€/anno che il
+    titolare paga oggi** — il più vicino è Premium Plus (348€+IVA ≈
+    425€/anno) o Complete (612€+IVA ≈ 747€/anno). Probabile piano
+    precedente/bloccato a un prezzo diverso, o add-on utenti extra sopra
+    Premium Plus — da verificare sull'ultima fattura reale, non
+    assumere quale piano sia.
+  - Iubenda: soglia del piano Essentials più alta di quanto scritto altrove
+    in questo repo — **25.000 pageview/mese**, non 1.000 (vedi anche
+    `sito-hotel/docs/EVOLUTIVE.md`, da allineare). Cifra esatta in euro non
+    verificata per un problema di rendering della pagina in questa sessione.
+  - VPS gestionale (1.10): Hetzner ha tolto la fascia economica dal listino
+    (CX, "Cost-Optimized", segnata "currently not available") — confermato
+    **netcup VPS Lite 1 G12s** (2vCPU/4GB/80GB, 5€/mese, impegno minimo 6
+    mesi fatturati in un'unica soluzione) al posto di Hetzner CPX22
+    (24,39€/mese per le stesse specifiche). Alternativa italiana valutata:
+    Aruba Cloud VPS O2A4 (2vCPU/4GB/40GB, 6,29€+IVA/mese ≈ 7,67€/mese) —
+    scartata per il doppio del prezzo di netcup a parità di specifiche
+    salvo preferenza esplicita per supporto in italiano. Dettaglio
+    completo in `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md`.
 
 Planning camere — vista Mese (31/07/2026): colonne giorno a 32px minimo
   (LARGHEZZA_COLONNA_MIN_MESE) per stare senza scroll orizzontale, con solo

@@ -8,10 +8,21 @@ function getApiUrl() {
     // Lato server (SSR): usa variabile d'ambiente
     return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
   }
-  // Lato client: deriva dall'hostname corrente del browser
-  // localhost:7000 → localhost:7001
-  // 192.168.1.5:7000 → 192.168.1.5:7001
+  // Lato client: deriva dall'hostname corrente del browser.
+  // In produzione (dietro Nginx, dominio pubblico) il backend non è
+  // raggiungibile su una porta diretta (7001 non è aperta nel firewall e
+  // non ha certificato SSL) — Nginx fa da reverse proxy per /api sotto lo
+  // stesso dominio/porta 443, quindi qui basta un percorso relativo alla
+  // stessa origine. In sviluppo LAN, invece, backend e frontend girano
+  // come due processi Node separati senza reverse proxy davanti, quindi
+  // serve ancora la porta esplicita 7001.
+  //   localhost:7000 → localhost:7001 (sviluppo)
+  //   192.168.1.5:7000 → 192.168.1.5:7001 (sviluppo, altro dispositivo LAN)
+  //   hdgolfo-gestionale.com → hdgolfo-gestionale.com/api (produzione, via Nginx)
   const { protocol, hostname } = window.location;
+  if (process.env.NODE_ENV === 'production') {
+    return `${protocol}//${hostname}/api`;
+  }
   return `${protocol}//${hostname}:7001/api`;
 }
 

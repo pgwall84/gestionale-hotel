@@ -347,12 +347,16 @@ Cronologia degli audit già svolti (cosa è stato verificato e corretto):
 | 1.7 | **Magazzino** — prodotti, QR/barcode, movimenti, alert, fornitori, food cost | ✅ Fatto |
 | 1.8 | **Dashboard KPI reali** — dati reali, alert aggregati, confronto anno precedente | ✅ Fatto |
 | 1.9 | **Archivio documentale** — upload foto, categorie, ricerca | ✅ Fatto |
-| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico (Hetzner CX22, ~€75-90/anno, dettaglio in `docs/DIARIO_SESSIONI.md`) | 🔜 Prossimo step |
+| 1.10 | **Deploy VPS** — Nginx, PM2, SSL, backup automatico (netcup VPS Lite 1 G12s, ~60€/anno, dettaglio in `docs/DEPLOY_VPS_NETCUP.md`) | ✅ Fatto (09/08/2026), incluso audit di sicurezza pre-produzione |
 | 1.11 | **Sito web** — Next.js + Sanity CMS + SEO + AEO, su Vercel, booking engine TS | ✅ Fatto (repo separato `sito-hotel`) |
 
-**Unico step rimasto della Fase 1: 1.10 — Deploy VPS.** Cronologia completa
-di come si è arrivati a ✅ su ciascun modulo (bug trovati, decisioni prese,
-deviazioni dal piano): `docs/DIARIO_SESSIONI.md`.
+**1.10 — Deploy VPS: completato, incluso l'audit di sicurezza (09/08/2026)**,
+gestionale raggiungibile in HTTPS su `https://hdgolfo-gestionale.com`
+(netcup VPS Lite 1 G12s). **Fase 1 chiusa.** Guida operativa completa del
+server (accesso, stack, database, deploy di aggiornamenti futuri, backup):
+`docs/DEPLOY_VPS_NETCUP.md`. Cronologia di come si è arrivati a ✅ su
+ciascun modulo (bug trovati, decisioni prese, deviazioni dal piano):
+`docs/DIARIO_SESSIONI.md`.
 
 ### FASE 2A — Sostituzione TS: prenotazioni e OTA
 
@@ -1136,6 +1140,29 @@ un vero componente calendario custom.
 
 ---
 
+**Workflow git/test/deploy (06/08/2026, permanente)**: da questa sessione
+Cowork progetta e scrive il codice; il tab "Code" (Claude Code nativo sul
+PC del titolare) esegue git, test e deploy del sito — mai `git` dal
+sandbox Cowork su questi due repo. Vedi `docs/DIARIO_SESSIONI.md`,
+voce 06/08/2026, per il perché.
+
+**Sessione 06/08/2026**: chiuse 3 evolutive minori segnalate dal titolare.
+Ristorante — `DELETE /api/ristorante/config/:id` (mancava del tutto, non
+solo senza blocco): blocca se Standard, se attiva, o se ha tavoli
+associati. Magazzino — storico prezzi prodotto, alert scadenze
+progressivi, bozza ordine fornitori (fornitore inferito dall'ultimo
+carico, nessuna anagrafica fornitore su `prodotti`). Dashboard — 3 nuovi
+alert (opzioni prenotazione in scadenza 48h, documenti Alloggiati Web
+incompleti per gli arrivi di oggi, pre check-in in attesa di revisione);
+un quarto (export ROSS1000 in sospeso) rimandato dal titolare a dopo il
+go-live, non costruibile senza una tabella di log nuova. Corretto anche un
+bug reale preesistente: `frontend/lib/api.js` leggeva solo la chiave
+`error` (inglese) dalle risposte del backend, ma 22 controller su 40
+rispondono `errore` (italiano) — per metà del gestionale l'utente vedeva
+sempre "Errore {status}" generico invece del messaggio specifico. Dettaglio
+completo, incluso il lavoro sul sito (`sito-hotel`, pulsante WhatsApp) e
+l'approfondimento su Iubenda: `docs/DIARIO_SESSIONI.md`, voce 06/08/2026.
+
 ## 17. DOCUMENTI DI PROGETTO
 
 Indice di dove si trova cosa, per evitare di ricreare doppioni:
@@ -1144,7 +1171,10 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 |---|---|
 | `CLAUDE.md` (questo file) | Identità, stack, ruoli, struttura, convenzioni, DB, sicurezza, roadmap — spec permanente |
 | `docs/PRENOTAZIONI_FASE2.md` | Contratto API + schema DB + UI del modulo Prenotazioni (Fase 2A), stato implementato/non implementato |
+| `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` | Piano di migrazione da TeamSystem al sistema interno, step-by-step con dipendenze e rischi, target dicembre 2026 |
+| `docs/confronto_costi_fase2.xlsx` | Tabella costi oggi vs a lavoro completo (Fase 2) |
 | `docs/DIARIO_SESSIONI.md` | Cronologia sessione-per-sessione: bug trovati, decisioni prese, deviazioni dal piano |
+| `docs/DEPLOY_VPS_NETCUP.md` | Guida operativa server di produzione (netcup): accesso, stack, database, Nginx/SSL, PM2, backup, come aggiornare l'app |
 | `docs/EVOLUTIVE.md` | Backlog di gap noti e miglioramenti rimandati, non urgenti |
 | `docs/MANUALEALBERGHI.pdf`, `docs/MANUALEWS.pdf` | Manuali ufficiali Alloggiati Web (WS_ALLOGGIATI Rev.01) — riferimento per il modulo 2.5 |
 | `docs/ross1000/tracciato.pdf` | Tracciato XML ufficiale ROSS1000/ISTAT Regione Liguria — riferimento per il modulo 2.6 |
@@ -1153,4 +1183,4 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 
 ---
 
-*Documento aggiornato al 05/08/2026 — Fase 1 quasi completa, deploy VPS (1.10) rimandato per decisione del titolare. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare).*
+*Documento aggiornato al 09/08/2026 — **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`.*
