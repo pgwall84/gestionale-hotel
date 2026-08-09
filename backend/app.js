@@ -41,6 +41,15 @@ const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
 const app = express();
 
+// Necessario dietro un reverse proxy (Nginx, in produzione): senza,
+// express-rate-limit rifiuta di funzionare quando vede l'header
+// X-Forwarded-For che Nginx aggiunge sempre (protezione anti-spoofing
+// della libreria) — e comunque, senza, tutte le richieste sembrerebbero
+// arrivare dallo stesso IP (quello locale di Nginx), condividendo lo
+// stesso limite di tentativi tra utenti diversi. In LAN (nessun Nginx
+// davanti) è innocuo: Express usa comunque l'IP diretto del client.
+app.set('trust proxy', 1);
+
 // ─── Middleware globali ───────────────────────────────────────────────────────
 
 // Helmet imposta già di default CSP, X-Content-Type-Options, X-Frame-Options,

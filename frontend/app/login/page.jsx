@@ -26,11 +26,12 @@ export default function PaginaLogin() {
       await login(email, password);
       router.replace('/home');
     } catch (err) {
-      // Fix 31/07/2026 (docs/EVOLUTIVE.md): la chiave era 'errore' (italiano),
-      // ma tutti i controller backend rispondono con 'error' (inglese,
-      // convenzione CLAUDE.md Sezione 5) — un login fallito per password
-      // errata mostrava sempre il fallback generico, mai il motivo reale.
-      setErrore(err?.response?.data?.error || 'Errore di connessione. Riprova.');
+      // Fix 09/08/2026: il fix del 31/07 aveva la direzione sbagliata —
+      // authController.js risponde sempre con { errore: '...' } (italiano),
+      // non 'error' (inglese). err.message è già calcolato correttamente da
+      // frontend/lib/api.js (json?.errore || json?.error || fallback),
+      // usarlo direttamente invece di duplicare la stessa logica qui.
+      setErrore(err?.message || 'Errore di connessione. Riprova.');
     } finally {
       setCaricamento(false);
     }

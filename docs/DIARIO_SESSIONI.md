@@ -2177,6 +2177,69 @@ API reale (non solo la home page) prima di considerare un deploy
 verificato — la home che risponde non garantisce che il reverse proxy
 instradi correttamente anche `/api`.
 
+### Login utente reale (carmine.muro) — altri 3 bug reali trovati e corretti
+
+Il titolare admin era riuscito a entrare subito dopo i due fix sopra, ma
+un secondo utente reale (`carmine.muro@hotel.it`, ruolo titolare) non
+riusciva ad accedere — indagine che ha scoperto una catena di bug
+indipendenti, ciascuno mascherato dal precedente finché non è stato
+corretto:
+
+1. **`backend/app.js` — `trust proxy` mancante**: Express non si fidava
+   di Nginx come reverse proxy, e `express-rate-limit` (con l'header
+   `X-Forwarded-For` sempre presente dietro Nginx) lanciava
+   `ERR_ERL_UNEXPECTED_X_FORWARDED_FOR` invece di identificare
+   correttamente l'IP del client — effetto collaterale reale: tutte le
+   richieste sembravano arrivare dallo stesso IP (quello locale di
+   Nginx), quindi il rate limit del login (5 tentativi/15min) veniva
+   condiviso da **tutti** gli utenti insieme invece che per singolo IP.
+   Fix: `app.set('trust proxy', 1)` subito dopo la creazione dell'app.
+2. **`frontend/app/login/page.jsx` — stessa famiglia del bug
+   `errore`/`error`** già noto nel progetto (vedi nota 06/08/2026 più
+   sopra su `lib/api.js`), ma in un punto mai toccato da quella
+   correzione: leggeva `err?.response?.data?.error` (inglese), mentre
+   `authController.js` risponde sempre con `{ errore: '...' }`
+   (italiano) — un commento nel codice diceva di averlo già sistemato il
+   31/07/2026, ma quella correzione aveva la direzione sbagliata.
+   Risultato pratico: qualunque errore di login (anche solo password
+   sbagliata) mostrava il fallback generico "Errore di connessione.
+   Riprova." — il messaggio che ha inizialmente fatto pensare a un
+   problema di rete. Fix: usa direttamente `err?.message` (già calcolato
+   correttamente da `lib/api.js`), invece di duplicare la stessa logica
+   di estrazione chiave lì.
+3. **`frontend/lib/api.js` — il bug vero dietro tutto**: la regola "su
+   401 cancella il token e reindirizza a `/login`" (pensata per la
+   sessione scaduta su una pagina protetta) scattava **anche sulla
+   chiamata di login stesso** quando la password è sbagliata (anche
+   quella risponde 401) — la funzione restituiva `undefined` invece di
+   lanciare un errore, e `AuthContext.login()` andava in crash provando a
+   leggere `res.data` da un `res` indefinito ("Cannot read properties of
+   undefined"). Era la causa reale fin dall'inizio: prima del fix #2
+   sopra il crash veniva mascherato dal fallback generico "Errore di
+   connessione", dopo il fix #2 si è visto l'errore tecnico grezzo. Fix:
+   esclusa la rotta `/auth/login` dalla regola di redirect automatico
+   (`path !== '/auth/login'`).
+4. **Password di Carmine non recuperabile**: il DB di produzione viene
+   dal dump del database di sviluppo (vedi sopra), la password reale non
+   era nota. Reimpostata una temporanea via script diretto invece che con
+   l'endpoint applicativo (nessuna funzione di reset password lato utente
+   — evolutiva futura da considerare). **Primo tentativo di reset fallito
+   per corruzione manuale dell'hash bcrypt** copiato a mano in un comando
+   `psql` (i caratteri `$` dell'hash si prestano a essere alterati nel
+   copia-incolla) — verificato con `bcrypt.compareSync` prima di
+   insistere oltre, invece di continuare a far ritentare l'utente alla
+   cieca. Rifatto con uno script Node autonomo (hash + UPDATE nello stesso
+   passaggio, nessun copia-incolla manuale del valore) — funzionante al
+   secondo tentativo. Nota tecnica: lo script iniziale usava `dotenv`,
+   non installato in produzione (`npm install --omit=dev` esclude le
+   devDependencies) — riscritto con un parser `.env` manuale, poche righe,
+   nessuna dipendenza nuova.
+
+**Verificato funzionante**: `carmine.muro@hotel.it` accede correttamente
+con la password temporanea impostata. Va comunicata a Carmine con
+indicazione di cambiarla appena possibile (nessuna UI di cambio password
+in autonomia ancora presente — altra evolutiva da considerare).
+
 ### Prossimo step
 
 Fase 1 chiusa, login verificato funzionante dopo i due fix sopra.

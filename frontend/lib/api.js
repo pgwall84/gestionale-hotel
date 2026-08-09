@@ -51,7 +51,13 @@ async function request(method, path, data = null, customHeaders = {}) {
 
   const res = await fetch(`${BASE_URL}${path}`, options);
 
-  if (res.status === 401 && typeof window !== 'undefined') {
+  // Il redirect automatico su 401 serve per la sessione scaduta su una
+  // pagina protetta — NON deve scattare sul login stesso: una password
+  // sbagliata risponde anch'essa 401, ma lì serve l'errore vero
+  // ("Credenziali non valide"), non un redirect che restituisce undefined
+  // e manda in crash chi legge res.data (bug reale trovato il 09/08/2026,
+  // causa vera dietro il falso "Errore di connessione" mostrato a login).
+  if (res.status === 401 && typeof window !== 'undefined' && path !== '/auth/login') {
     Cookies.remove('token');
     window.location.href = '/login';
     return;
