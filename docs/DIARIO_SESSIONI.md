@@ -2299,3 +2299,106 @@ package, che i test passino (in particolare login/auth per via del bump
 bcrypt) e che tutto sia stato committato e pushato/deployato. Poi:
 migrazione `xlsx`→`exceljs` quando c'è una sessione dedicata; resto della
 lista in `docs/DOMANDE_APERTE_07-08-2026.md`.
+
+---
+
+## 10/08/2026 — Modulo Addebiti extra (conto camera): scritto, non ancora testato in locale
+
+Decisione di business presa in questa sessione, non solo tecnica: gli
+extra oltre il trattamento incluso (soprattutto bar — acqua, birre,
+prosecco) ora si accumulano sul conto camera e si saldano al check-out,
+con evidenza in una ricevuta di cortesia NON fiscale (i pasti inclusi
+restano dentro il documento fiscale della camera, invariato). Questo
+supera — non contraddice più — la vecchia regola "ospiti hotel: nessun
+conto" documentata in CLAUDE.md Sezione 11 (Modulo 1.6), che resta valida
+solo per il trattamento base.
+
+**Scoperta chiave prima di scrivere codice**: `comande` non aveva alcun
+riferimento a `soggiorno_id` — `ospite_hotel` era solo un booleano "non
+addebitare", senza sapere quale camera. Impossibile addebitare un extra a
+un conto che non si sa identificare. Aggiunto il collegamento come
+prerequisito, non come dettaglio implementativo.
+
+**Due percorsi verso `addebiti_extra`**, per una ragione di UX reale:
+priorità del titolare è il bar ("il grosso extra sarà lato hotel per il
+bar"), il ristorante è secondario ("per il ristorante va bene aggiungere
+extra al tavolo se serve"):
+1. **Griglia rapida a quadratoni** (`/addebiti-extra`) — tocca un
+   prodotto dal catalogo bar, si compila un carrello, conferma → scrive
+   diretto in `addebiti_extra`, **nessuna comanda/tavolo/cucina
+   coinvolta**. Catalogo (`catalogo_addebiti_rapidi`) deliberatamente
+   separato da `menu_piatti`: quella tabella alimenta anche
+   `/menu-pubblico` e `/menu-stampa` ("NON toccare", CLAUDE.md Sezione
+   12) — un prodotto bar finito lì per un filtro sbagliato comparirebbe
+   nel menu stampato o nel QR pubblico.
+2. **Comanda reale** (percorso da tavolo, passa da cucina) — righe
+   marcabili `addebito_camera` (nuovo toggle), sommate in un unico
+   addebito alla chiusura. Incompatibile con chiusura omaggio/autoconsumo
+   — bloccata con 400 esplicito invece di ignorare la marcatura in
+   silenzio (un "regalo" e un "addebito alla camera" sono in
+   contraddizione logica).
+
+**File scritti** (migration `031_ristorante_addebiti.sql`):
+`comande.soggiorno_id`/`nome_cliente_esterno`, `comande_righe.
+addebito_camera`, tabelle `addebiti_extra` e `catalogo_addebiti_rapidi`.
+Backend: `addebitiExtraController.js` (nuovo) + route
+`/api/impostazioni/catalogo-addebiti` e `/api/soggiorni/:id/addebiti[/rapido]`;
+`comandeController.js` esteso (`apriComanda` accetta soggiorno_id/nome
+esterno forzando coerenza server-side con `ospite_hotel` a prescindere da
+cosa manda il frontend; nuovo endpoint `addebito-camera` su riga;
+`chiudiComanda` genera l'addebito); `camereController.js` `lista()`
+estesa con `soggiorno_id`/`ospite_nome`/`ospite_cognome` via `LEFT JOIN
+LATERAL` (additiva, nessun campo esistente toccato — serve al selettore
+camera della griglia rapida quando non si arriva già con un soggiorno
+risolto). Permessi in `shared/ruoli.js`: `addebiti_extra` (lettura
+A/T/R, scrittura +cameriere) e `catalogo_addebiti_rapidi` (lettura anche
+cameriere, scrittura solo A/T, decisione di prezzo).
+
+Frontend: `/addebiti-extra` (griglia + carrello + voce libera + storico
+addebiti già registrati), `/impostazioni/catalogo-addebiti` (CRUD
+catalogo, no DELETE reale — solo attivo/disattivo, stesso pattern di
+camere/tavoli/prodotti magazzino), pulsante "Addebiti extra" per riga
+soggiorno nel pannello dettaglio di `/planning-camere` (soggiorno_id già
+risolto, nessun passaggio intermedio), voci sidebar in OSPITALITÀ e
+IMPOSTAZIONI. Segnalato al titolare durante la sessione che la sidebar
+sta continuando a crescere — riordino già in backlog (EVOLUTIVE.md,
+"riordino menu/sidebar"), non affrontato qui.
+
+**Non fatto in questa sessione, deliberatamente**: nessuna UI nel flusso
+comanda ristorante normale per scegliere soggiorno/nome esterno
+all'apertura o per il toggle "addebita a camera" per riga — il backend lo
+supporta già, ma il titolare l'ha esplicitamente deprioritizzato rispetto
+al bar. Da riprendere quando serve davvero, non proattivamente.
+
+**Verifica fatta in questa sessione** (nessun accesso a Postgres/browser
+locale dal sandbox Cowork): `node --check` su tutti i file backend
+toccati, parser Babel (`@babel/parser`, plugin jsx/typescript) su tutti i
+file frontend nuovi/modificati — tutti puliti. Scritto anche
+`tests/api/addebiti-extra.test.js` (catalogo, addebito rapido, lista per
+soggiorno, permessi per ruolo, blocco omaggio/autoconsumo, generazione
+dell'addebito alla chiusura normale) — sintassi verificata, **mai
+eseguito** (richiede Postgres locale, `DB_HOST=localhost` non raggiungibile
+dal sandbox).
+
+**Domanda del titolare non ancora risolta, volutamente accantonata**:
+"serve un sistema che associa alla camera il prezzo" (tariffe per
+periodo/camera/canale di provenienza) — non è la stessa cosa del modulo
+Addebiti extra. Verificato cosa esiste già: modulo 2.2 (stagionalità +
+pacchetti per tipo camera/periodo) e modulo 2.3 Fase 1 (mappatura
+tipo_camera↔canale OTA, solo identificazione canale, non prezzo
+differenziato per canale). Quello che manca — tariffe differenziate per
+canale di prenotazione — non è stato scoperto essere un vero gap
+confermato dal titolare: la sua ultima risposta ha ribadito la
+differenziazione già esistente (capacità/trattamento) senza confermare
+quale delle interpretazioni proposte intendesse. Da chiarire prima di
+scrivere qualunque piano su questo secondo tema.
+
+### Prossimo step
+
+Eseguire in locale: migration `031_ristorante_addebiti.sql`, `npm test`
+(in particolare la nuova suite `addebiti-extra.test.js`, mai girata),
+verifica visiva in browser della griglia `/addebiti-extra` e di
+`/impostazioni/catalogo-addebiti` (mai viste renderizzate). Poi, se il
+titolare vuole procedere: UI ristorante per soggiorno/esterno + toggle
+addebito camera (deprioritizzata, task aperta); altrimenti chiarire la
+domanda sospesa sulle tariffe per canale prima di pianificarla.

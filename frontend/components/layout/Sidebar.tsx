@@ -12,7 +12,7 @@ import {
   CalendarDays, BookOpen, Car, Archive, Settings,
   Clock, LogOut, LogIn, ChefHat, ClipboardList, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench,
+  Wrench, Receipt,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -55,6 +55,13 @@ const SEZIONI_MENU = [
       // non di ristorante. Aggiunto receptionist (mancava), portiere_notte
       // e cameriere restano invariati (scrittura limitata lato pagina/API).
       { href: '/camere', icona: BedDouble, testo: 'Stato Camere', ruoli: [...AT,'receptionist','cameriere','portiere_notte'] },
+      // Addebiti extra (10/08/2026): conto camera per gli extra oltre il
+      // trattamento (soprattutto bar) — richiamabile anche da
+      // planning-camere con il soggiorno già risolto, ma presente qui come
+      // voce a sé stante su richiesta del titolare. Stessi ruoli di
+      // shared/ruoli.js sezione 'addebiti_extra'.scrittura (include
+      // cameriere, che gestisce operativamente il bar).
+      { href: '/addebiti-extra', icona: Receipt, testo: 'Addebiti extra', ruoli: [...AT,'receptionist','cameriere'] },
       // Tassa di soggiorno (modulo 2.4): calcolo/riscossione/report — stesso
       // set di ruoli di 'tariffe' (lettura anche a receptionist, che la
       // riscuote in reception). shared/ruoli.js sezione 'tassa_soggiorno'.
@@ -113,6 +120,11 @@ const SEZIONI_MENU = [
       // per verifica manuale, nessun invio reale — configurazione/strumento
       // occasionale, non operatività quotidiana, come le voci sopra.
       { href: '/impostazioni/ross1000', icona: FileCode, testo: 'Export ROSS1000', ruoli: AT },
+      // Catalogo addebiti rapidi (10/08/2026): voci bar per la griglia a
+      // quadratoni — decisione di prezzo, riservata ad admin/titolare come
+      // le altre voci di questa sezione (shared/ruoli.js sezione
+      // 'catalogo_addebiti_rapidi'.scrittura).
+      { href: '/impostazioni/catalogo-addebiti', icona: Receipt, testo: 'Catalogo addebiti', ruoli: AT },
     ],
   },
   {

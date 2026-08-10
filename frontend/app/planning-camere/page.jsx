@@ -11,11 +11,12 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
-  BrushCleaning, StickyNote, Circle, CheckCircle, Mail,
+  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
+import Link from 'next/link';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -526,6 +527,16 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                       {formatDataEstesa(s.data_arrivo)} → {formatDataEstesa(s.data_partenza)}
                     </p>
                     <p style={{ color: 'var(--muted-foreground)' }}>{s.num_ospiti} ospiti</p>
+                    {/* Addebiti extra (10/08/2026): apre la griglia rapida bar/camera
+                        già con il soggiorno risolto — nessun passaggio "seleziona
+                        camera" quando si arriva da qui. */}
+                    <Link
+                      href={`/addebiti-extra?soggiorno_id=${s.id}&camera=${encodeURIComponent(s.camera_numero ?? '')}&ospite=${encodeURIComponent(intestatario ? `${intestatario.nome} ${intestatario.cognome}` : '')}`}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 mt-1"
+                      style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}
+                    >
+                      <Receipt size={13} /> Addebiti extra
+                    </Link>
                   </div>
                 );
               })}

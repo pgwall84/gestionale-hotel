@@ -219,17 +219,25 @@ Persistenza al riavvio del server già configurata (`pm2 save` +
 
 ## 8. Come aggiornare l'app (deploy di una nuova versione)
 
-Non ancora testato in questa sessione (primo deploy, nessun aggiornamento
-successivo ancora fatto) — sequenza prevista, da verificare al primo
-utilizzo reale:
+**Testata per la prima volta con successo il 10/08/2026** (bump di
+sicurezza bcrypt 6.0.0 + Next.js 16.3.0) — sequenza confermata funzionante:
 
 ```
 cd /var/www/gestionale-hotel
 git pull
-cd backend && npm install --omit=dev
-cd ../frontend && npm install && npm run build
-pm2 restart all
+cd backend && npm install --omit=dev && npm approve-scripts --allow-scripts-pending
+cd ../frontend && npm install && npm approve-scripts --allow-scripts-pending && npm run build
+cd .. && pm2 restart all
 ```
+
+Nota dal primo utilizzo reale: se sul server sono presenti hotfix
+applicati a mano e mai puliti (vedi §4), `git pull` si ferma segnalando
+modifiche locali non committate — **non scartarle alla cieca** con
+`git checkout --`, prima confrontare il contenuto con quello in arrivo
+(`git diff <file>`) per essere sicuri che non contengano una correzione
+reale mai riportata nel repository. Il passo `npm approve-scripts` è
+risultato necessario di nuovo dopo l'aggiornamento di `bcrypt` (ricompila
+il binario nativo).
 
 Se la nuova versione include una migration nuova, applicarla a mano
 **prima** del `pm2 restart` (come utente `postgres`, vedi §3):
@@ -299,7 +307,8 @@ gunzip -c /root/backups/gestionale_TIMESTAMP.sql.gz | su - postgres -c "psql -d 
   — impattava sia CORS sia i link email del pre-checkin.
 
 **Non completato, non bloccante**:
-- Upgrade Next.js a 16.3.0 (vedi sopra)
+- ✅ Upgrade Next.js a 16.3.0 — fatto e verificato in produzione il
+  10/08/2026 (insieme a bcrypt 6.0.0), vedi §8 e `docs/DIARIO_SESSIONI.md`
 - Valutare migrazione da `xlsx` a `exceljs` per l'import ZTL
 - Test di ripristino reale di un backup (§9)
 - Account Backblaze B2 per backup offsite (§9)

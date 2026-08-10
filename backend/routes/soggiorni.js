@@ -9,6 +9,7 @@ const express = require('express');
 const router = express.Router();
 const { verificaToken, richiedeAzione } = require('../middleware/auth');
 const ctrl = require('../controllers/soggiorniController');
+const addebiti = require('../controllers/addebitiExtraController');
 
 router.use(verificaToken);
 
@@ -16,5 +17,11 @@ router.patch('/:id',                     richiedeAzione('soggiorni', 'scrittura'
 router.get('/:id/ospiti',                richiedeAzione('soggiorni', 'lettura'),   ctrl.listaOspiti);
 router.post('/:id/ospiti',               richiedeAzione('soggiorni', 'scrittura'), ctrl.aggiungiOspite);
 router.delete('/:id/ospiti/:ospiteId',   richiedeAzione('soggiorni', 'scrittura'), ctrl.rimuoviOspite);
+
+// Addebiti extra sul conto camera (modulo 10/08/2026) — vedi
+// addebitiExtraController.js. 'rapido' è il percorso dalla griglia a
+// quadratoni (bar/camera, nessuna comanda coinvolta).
+router.get('/:id/addebiti',        richiedeAzione('addebiti_extra', 'lettura'),   addebiti.listaPerSoggiorno);
+router.post('/:id/addebiti/rapido', richiedeAzione('addebiti_extra', 'scrittura'), addebiti.addebitoRapido);
 
 module.exports = router;

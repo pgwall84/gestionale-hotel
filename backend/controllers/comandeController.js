@@ -147,10 +147,18 @@ async function listaComande(req, res) {
 }
 
 // POST /api/ristorante/comande — apri comanda su un tavolo
+// Se ospite_hotel=true si può passare soggiorno_id (camera dell'ospite,
+// serve per gli eventuali addebiti extra); se ospite_hotel=false si può
+// passare nome_cliente_esterno (identificazione semplice, nessuna
+// registrazione ospiti). I due campi sono mutuamente esclusivi: qualunque
+// combinazione arrivi dal frontend, il server forza la coerenza in base a
+// ospite_hotel — un cliente esterno non deve mai finire con un
+// soggiorno_id valorizzato, e viceversa.
 // Accessibile a: cameriere, titolare, admin
 async function apriComanda(req, res) {
-  const { tavolo_id, ospite_hotel } = req.body;
+  const { tavolo_id, ospite_hotel, soggiorno_id, nome_cliente_esterno } = req.body;
   if (!tavolo_id) return res.status(400).json({ errore: 'tavolo_id obbligatorio.' });
+  const ospiteHotel = ospite_hotel ?? false;
   try {
     // Verifica che il tavolo non abbia già una comanda aperta
     const esistente = await pool.query(
@@ -163,10 +171,23 @@ async function apriComanda(req, res) {
         comanda_id: esistente.rows[0].id,
       });
     }
+
+    if (ospiteHotel && soggiorno_id) {
+      const sog = await pool.query(
+        "SELECT id FROM soggiorni WHERE id = $1 AND cancellato = false",
+        [soggiorno_id]
+      );
+      if (!sog.rows.length) return res.status(400).json({ errore: 'Soggiorno non trovato.' });
+    }
+
     const r = await pool.query(
-      `INSERT INTO comande (tavolo_id, cameriere_id, stato, ospite_hotel)
-       VALUES ($1, $2, 'aperta', $3) RETURNING *`,
-      [tavolo_id, req.utente.id, ospite_hotel ?? false]
+      `INSERT INTO comande (tavolo_id, cameriere_id, stato, ospite_hotel, soggiorno_id, nome_cliente_esterno)
+       VALUES ($1, $2, 'aperta', $3, $4, $5) RETURNING *`,
+      [
+        tavolo_id, req.utente.id, ospiteHotel,
+        ospiteHotel ? (soggiorno_id || null) : null,
+        ospiteHotel ? null : (nome_cliente_esterno || null),
+      ]
     );
     broadcastCucina('comanda_aperta',    { comanda: r.rows[0] });
     broadcastCameriere('comanda_aperta', { comanda: r.rows[0] });
@@ -382,6 +403,48 @@ async function tipoSpecialeRiga(req, res) {
   }
 }
 
+// PATCH /api/ristorante/comande/righe/:rigaId/addebito-camera — marca/smarca
+// una riga come extra da addebitare al conto camera (accumulato in
+// addebiti_extra alla chiusura della comanda). Richiede che la comanda
+// abbia un soggiorno_id risolto — senza, non c'è un conto camera a cui
+// appendere l'addebito. Incompatibile con una riga già omaggio/autoconsumo
+// (tipo_speciale): non ha senso addebitare alla camera qualcosa appena
+// dichiarato omaggio o consumo del personale.
+// Accessibile a: cameriere, titolare, admin (stessi ruoli di aggiungiRiga).
+async function addebitoCameraRiga(req, res) {
+  const { addebito_camera } = req.body;
+  if (typeof addebito_camera !== 'boolean') {
+    return res.status(400).json({ errore: 'addebito_camera deve essere true o false.' });
+  }
+  try {
+    const riga = await pool.query(`
+      SELECT cr.id, cr.tipo_speciale, c.soggiorno_id
+      FROM comande_righe cr
+      JOIN comande c ON c.id = cr.comanda_id
+      WHERE cr.id = $1
+    `, [req.params.rigaId]);
+    if (!riga.rows.length) return res.status(404).json({ errore: 'Riga non trovata.' });
+
+    if (addebito_camera) {
+      if (!riga.rows[0].soggiorno_id) {
+        return res.status(400).json({ errore: 'La comanda non ha un soggiorno collegato: impossibile addebitare alla camera.' });
+      }
+      if (['omaggio', 'autoconsumo'].includes(riga.rows[0].tipo_speciale)) {
+        return res.status(400).json({ errore: 'La riga è già segnata come omaggio/autoconsumo: non può essere anche un addebito camera.' });
+      }
+    }
+
+    const r = await pool.query(
+      'UPDATE comande_righe SET addebito_camera = $1 WHERE id = $2 RETURNING *',
+      [addebito_camera, req.params.rigaId]
+    );
+    res.json({ riga: r.rows[0] });
+  } catch (err) {
+    console.error('addebitoCameraRiga error:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
 // GET /api/ristorante/conto/:id — riepilogo conto della comanda
 // Accessibile a: cameriere, titolare, admin
 async function conto(req, res) {
@@ -545,7 +608,7 @@ async function chiudiComanda(req, res) {
 
   try {
     const comanda = await pool.query(
-      'SELECT id, stato, tavolo_id FROM comande WHERE id = $1',
+      'SELECT id, stato, tavolo_id, soggiorno_id FROM comande WHERE id = $1',
       [req.params.id]
     );
     if (!comanda.rows.length) {
@@ -568,7 +631,22 @@ async function chiudiComanda(req, res) {
       });
     }
 
-    const { tavolo_id } = comanda.rows[0];
+    // Righe marcate come addebito camera: incompatibili con omaggio/
+    // autoconsumo (l'intera comanda diventerebbe non pagata, in
+    // contraddizione con l'intento "addebita alla camera"). Blocca invece
+    // di ignorare in silenzio la marcatura.
+    const rigaAddebitoCamera = await pool.query(
+      `SELECT COUNT(*) AS n FROM comande_righe WHERE comanda_id = $1 AND addebito_camera = true`,
+      [req.params.id]
+    );
+    const numAddebiti = parseInt(rigaAddebitoCamera.rows[0].n);
+    if (numAddebiti > 0 && (tipo === 'omaggio' || tipo === 'autoconsumo')) {
+      return res.status(400).json({
+        errore: `Ci sono ${numAddebiti} righe marcate "addebita a camera": non possono coesistere con una chiusura ${tipo}. Smarcale prima di chiudere così, oppure chiudi normalmente.`,
+      });
+    }
+
+    const { tavolo_id, soggiorno_id } = comanda.rows[0];
 
     // Calcola totale comanda per storico
     const totaleRes = await pool.query(`
@@ -596,6 +674,26 @@ async function chiudiComanda(req, res) {
       );
     }
 
+    // Righe marcate addebito_camera (solo tipo 'normale' arriva qui con
+    // numAddebiti > 0, il blocco sopra esclude omaggio/autoconsumo): somma
+    // e genera un unico addebito su addebiti_extra, legato al soggiorno.
+    if (numAddebiti > 0) {
+      const sommaAddebiti = await pool.query(`
+        SELECT COALESCE(SUM(COALESCE(mp.prezzo, 0) * cr.quantita), 0) AS totale
+        FROM comande_righe cr
+        JOIN menu_piatti mp ON mp.id = cr.piatto_id
+        WHERE cr.comanda_id = $1 AND cr.addebito_camera = true
+      `, [req.params.id]);
+      const importoAddebito = parseFloat(sommaAddebiti.rows[0].totale);
+      if (importoAddebito > 0) {
+        await pool.query(
+          `INSERT INTO addebiti_extra (soggiorno_id, comanda_id, origine, descrizione, importo, user_id)
+           VALUES ($1, $2, 'ristorante', $3, $4, $5)`,
+          [soggiorno_id, req.params.id, `Extra tavolo ${tavolo_id} (comanda #${req.params.id})`, importoAddebito, req.utente.id]
+        );
+      }
+    }
+
     const r = await pool.query(
       `UPDATE comande SET stato = 'chiusa', timestamp_chiusura = NOW(), tipo_chiusura = $2
        WHERE id = $1 RETURNING *`,
@@ -616,6 +714,7 @@ module.exports = {
   listaComande, apriComanda, dettaglioComanda,
   eliminaComanda, chiudiComanda,
   aggiungiRiga, rimuoviRiga, aggiornaStatoRiga, tipoSpecialeRiga,
+  addebitoCameraRiga,
   tuttoProonto,
   conto,
 };

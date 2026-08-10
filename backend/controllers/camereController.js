@@ -72,10 +72,19 @@ async function lista(req, res) {
         ${CALCOLO_PARTENZA} AS partenza,
         COALESCE(s.pronta, false) AS pronta,
         s.note,
-        s.updated_at
+        s.updated_at,
+        sogg.soggiorno_id, sogg.ospite_nome, sogg.ospite_cognome
       FROM camere c
       LEFT JOIN stato_camere s ON s.camera_id = c.id AND s.data = $1
       LEFT JOIN tipi_camera tc ON tc.id = c.tipo_camera_id
+      LEFT JOIN LATERAL (
+        SELECT sg.id AS soggiorno_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
+        FROM soggiorni sg
+        JOIN ospiti o ON o.id = sg.ospite_id
+        WHERE sg.camera_id = c.id AND sg.cancellato = false
+          AND sg.data_arrivo <= $1 AND sg.data_partenza > $1
+        LIMIT 1
+      ) sogg ON true
       ${soloAttive ? 'WHERE c.attivo = true' : ''}
       ORDER BY
         CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END

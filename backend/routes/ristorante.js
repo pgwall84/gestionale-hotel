@@ -87,6 +87,11 @@ router.patch('/comande/righe/:rigaId/tipo-speciale',
   comande.tipoSpecialeRiga
 );
 
+router.patch('/comande/righe/:rigaId/addebito-camera',
+  verificaToken, ruoli(...CMD_W),
+  comande.addebitoCameraRiga
+);
+
 // ── Comande per ID — DOPO le route /righe ────────────────────────────────────
 router.get('/comande/:id',                verificaToken, ruoli(...TUTTI_OP), comande.dettaglioComanda);
 router.delete('/comande/:id',             verificaToken, ruoli(...CMD_W),    comande.eliminaComanda);

@@ -226,6 +226,27 @@ const PERMESSI_SEZIONI = {
     scrittura:  [A, T, R],
   },
 
+  // Addebiti extra su conto camera (10/08/2026) — accumulo extra oltre il
+  // trattamento incluso (soprattutto bar), saldati al check-out. Lettura
+  // (consultare il conto camera durante il check-out) come 'pagamenti':
+  // admin/titolare/receptionist, niente portiere_notte. Scrittura (creare
+  // un addebito, dalla griglia rapida o dalla chiusura comanda) estesa
+  // anche al cameriere, che gestisce operativamente bar/sala.
+  addebiti_extra: {
+    lettura:    [A, T, R],
+    scrittura:  [A, T, R, C],
+  },
+
+  // Catalogo prodotti per la griglia rapida addebiti (10/08/2026) —
+  // deliberatamente separato da 'menu'/'ristorante': non è un menu
+  // pubblico, è la lista prezzi bar usata solo per l'addebito veloce.
+  // Scrittura (creare/modificare voci) riservata ad admin/titolare, come
+  // 'tariffe' — è una decisione di prezzo, non operatività quotidiana.
+  catalogo_addebiti_rapidi: {
+    lettura:    [A, T, R, C],
+    scrittura:  [A, T],
+  },
+
   // Manutenzione/guasti (nuovo modulo, 06/08/2026) — tutto il personale può
   // segnalare (crea) e vedere le segnalazioni (lettura, trasparenza ed
   // evita doppie segnalazioni sullo stesso guasto); solo admin/titolare

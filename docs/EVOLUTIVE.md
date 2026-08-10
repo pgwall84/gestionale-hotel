@@ -509,4 +509,110 @@ esplicitamente "cosa manca" oltre agli aspetti funzionali di lancio.
     sviluppabile prima di quello.
   - API pubblica / webhook verso terzi: bassa urgenza finché l'unico
     partner esterno pianificato resta WuBook (già previsto ad hoc in 2.3).
+
+Test preesistenti falliti, scoperti il 10/08/2026 durante il bump di
+sicurezza bcrypt/Next.js (tab Code) — 590/613 test verdi, 3 suite rosse:
+`email-prenotazioni`, `email-template`, `pre-checkin`. Verificato via
+`git diff` che le uniche modifiche di quella sessione erano righe di
+versione in `package.json` (nessun codice applicativo toccato), quindi
+non è una regressione introdotta dal bump — erano già rotti prima. Almeno
+una causa nota: `email-template` non riconosce ancora il tipo
+`pre_checkin` introdotto dal modulo 5.2 Fase B. Da investigare e
+sistemare in una sessione dedicata — non bloccante per il deploy di
+sicurezza in corso, ma non ignorare: se un giorno questi tre tornano verdi
+senza che nessuno li abbia toccati esplicitamente, verificare comunque
+cosa è cambiato prima di fidarsi.
+
+Evolutive competitive — confronto con Slope (10/08/2026). A differenza del
+confronto con Mews/Cloudbeds/RoomRaccoon (sopra), Slope è un concorrente
+diretto italiano che copre già nativamente Alloggiati Web/ISTAT/tassa di
+soggiorno — confronto più mirato. Fonti: sito ufficiale slope.it e una
+recensione dettagliata di un receptionist utente da 3 anni
+(storiedireception.com). Stesso principio delle altre sezioni competitive:
+non da lavorare proattivamente, si consulta quando richiesto o quando si
+torna a discutere la direzione del prodotto.
+
+  PRIORITÀ ALTA (gap reale, nessuna dipendenza da WuBook/pagamenti,
+  sfrutta infrastruttura già esistente):
+  - Preventivi multiproposta con follow-up automatico: Slope invia un
+    preventivo con più opzioni di soggiorno (date/camere/tariffe) e manda
+    da solo email di follow-up dopo l'invio. Oggi gestito a mano in
+    reception via email/telefono. Si appoggerebbe a Resend, già in
+    produzione dal modulo 5.3 — nessun nuovo provider.
+  - Firma digitale raccolta insieme al modulo privacy nel pre check-in:
+    Slope raccoglie la firma del cliente insieme allo scan documento. Il
+    pre check-in oggi raccoglie consenso marketing ma non una firma legata
+    all'informativa GDPR/TULPS — il cui testo, ricordo, è già segnato
+    altrove in questo file come "mai verificato da un legale".
+
+  PRIORITÀ MEDIA:
+  - Rooming list online per gruppi: il capogruppo compila i dati di tutti
+    gli ospiti in una volta sola. Estenderebbe l'infrastruttura di
+    pre check-in già esistente (oggi pensata per singolo soggiorno) ai
+    gruppi (`gruppi_prenotazione`).
+  - ✅ **DECISO (10/08/2026)**: addebito extra su prenotazione/camera non è
+    più in contrasto con "nessun conto, prezzo incluso nella camera" — il
+    titolare ha confermato la nuova politica: gli extra oltre il
+    trattamento (specialmente bar) si accumulano sul conto camera e si
+    saldano al check-out, con evidenza in una ricevuta di cortesia (non
+    fiscale — i pasti inclusi restano dentro il documento fiscale della
+    camera). Piano scritto lo stesso giorno (vedi
+    `docs/DIARIO_SESSIONI.md`, voce 10/08/2026): migration
+    `031_ristorante_addebiti.sql` (comande.soggiorno_id/nome_cliente_esterno,
+    comande_righe.addebito_camera, tabelle addebiti_extra e
+    catalogo_addebiti_rapidi), due percorsi verso addebiti_extra (comanda
+    reale con addebito_camera per gli extra a tavola in ristorante; griglia
+    rapida a quadratoni per il bar/camera, senza passare da comanda/cucina).
+    In esecuzione.
+  - Stampa comande su stampante termica in cucina/bar (oggi solo monitor
+    SSE su tablet): richiede hardware, non solo software — da valutare
+    solo se il monitor a schermo si rivela insufficiente in pratica con
+    volumi reali.
+
+  Confermato dal confronto, non nuovo (già tracciato altrove in questo
+  file/in CLAUDE.md): fatturazione elettronica nativa (Slope ce l'ha già
+  in produzione, qui dipende da A-Cube/Fatture in Cloud, moduli 3.1/3.2),
+  channel manager/booking engine (stessa dipendenza WuBook già nota),
+  invio reale Alloggiati Web e ROSS1000 (Fase 2 di entrambi, bloccate su
+  credenziali).
+
+Modulo Addebiti extra — procedura di accesso da planning-camere da
+rivedere (segnalato dal titolare 10/08/2026, non ora). Il pulsante
+"Addebiti extra" nel pannello dettaglio soggiorno di /planning-camere
+funziona come concordato (apre /addebiti-extra col soggiorno già
+risolto), ma il titolare lo trova scomodo nell'uso reale — verificato
+dopo il primo giro di test, nessuna proposta ancora su come cambiarlo.
+Da riprendere con una domanda esplicita su cosa esattamente non
+convince (troppi passaggi per arrivarci? posizione del pulsante? manca
+un ingresso più diretto tipo "camera → addebita" senza passare dal
+dettaglio prenotazione?) prima di riprogettare qualcosa.
+
+Modulo 1.8/1.6 — incassi_giornalieri da automatizzare (segnalato dal
+titolare 10/08/2026, non ora — dopo il modulo Fondamenta addebiti extra).
+Oggi `incassi_giornalieri` è un inserimento manuale del titolare (una riga
+al giorno, contanti+pos), scollegato da `pagamenti`/`comande`/
+`addebiti_extra` — nessun incrocio automatico tra "cosa dice la cassa
+fisica" e "cosa dice il gestionale". Il titolare vuole automatizzarla.
+Punto da decidere quando si riprende: sostituire l'inserimento manuale con
+un calcolo automatico (rischioso — la cassa fisica include contanti che il
+sistema non vede, es. mance, o discrepanze reali da segnalare), oppure
+pre-compilare i campi da pagamenti+comande e lasciare al titolare solo la
+conferma/correzione (più sicuro, mantiene la riconciliazione come
+controllo). Non implementare senza chiarire quale delle due.
+
+Modulo 1.6 — rivisitazione flusso pagamento/chiusura conti ristorante
+(segnalato dal titolare 10/08/2026, non ora). Il titolare non è sicuro che
+il funzionamento attuale sia chiaro, e in particolare manca un punto
+centrale per vedere tutti i tavoli aperti e il loro conto (in euro)
+contemporaneamente durante un pasto. Verificato nel codice: `/sala`
+(`GET /api/ristorante/tavoli`, salaController.js `listaTavoli`) mostra
+stato tavolo/piatti in attesa/pronti per ciascun tavolo, ma MAI un totale
+in euro — per vedere il conto di un tavolo bisogna aprire la sua comanda
+singolarmente (`GET /api/ristorante/conto/:id`). Non esiste oggi una vista
+aggregata "tutti i tavoli con il loro conto in tempo reale". Da riprendere
+con una sessione dedicata a mappare l'intero flusso attuale (apertura →
+ordini → chiusura → incasso) prima di proporre modifiche — il titolare ha
+detto esplicitamente di non essere sicuro di come funzioni oggi, quindi
+prima chiarire lo stato attuale insieme a lui, poi progettare la vista
+aggregata.
 ```

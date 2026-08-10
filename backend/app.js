@@ -36,6 +36,7 @@ const preCheckinPubblicoRoutes = require('./routes/preCheckinPubblico');
 const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
 const ross1000Routes           = require('./routes/ross1000');
 const manutenzioneRoutes       = require('./routes/manutenzione');
+const catalogoAddebitiRoutes   = require('./routes/catalogoAddebiti');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -114,6 +115,7 @@ app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
 app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
 app.use('/api/manutenzione',         manutenzioneRoutes);
+app.use('/api/impostazioni/catalogo-addebiti', catalogoAddebitiRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));
