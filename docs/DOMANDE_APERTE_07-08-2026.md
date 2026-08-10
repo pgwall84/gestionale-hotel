@@ -37,17 +37,38 @@ tardi qui.
 
 ## 2. WuBook — da contattare appena il titolare conferma il punto 1
 
-- Attivazione abbonamento channel manager + booking engine — le cifre
-  ~21€/mese e ~27€/mese in `docs/EVOLUTIVE.md` sono un preventivo storico,
-  **non più il listino pubblico** (oggi il sito dice solo "contattaci") →
-  chiedere un preventivo aggiornato e scritto.
+**Aggiornamento 10/08/2026 — verificato sul sito WuBook**: la homepage
+prezzi (en.wubook.net/prices) oggi dice solo "contattaci", ma i prezzi
+pubblici esistono ancora sulla pagina specifica **WooDoo**
+(en.wubook.net/page/Partner-34.html): 7€/mese per canale fino a 3 canali
+(6€ per il 4°-5°, 5€ dal 6° in su), Booking Engine 27€/mese, Metasearch
+(Google) 8€/mese + 10% di commissione Google per prenotazione. Le vecchie
+cifre ~21€+27€ in `docs/EVOLUTIVE.md` erano quindi corrette (21€ = 3
+canali × 7€), solo non più sulla pagina principale.
+
+**Punto importante da non sbagliare in fase di contatto**: WuBook ha due
+prodotti distinti — **Zak** (il loro gestionale completo, sostituirebbe
+il nostro PMS proprietario — NON è quello che vogliamo) e **WooDoo**
+(livello di integrazione via API Channel Manager + Booking Engine, pensato
+apposta per chi ha già un PMS proprio, come noi). Un commerciale potrebbe
+proporre Zak perché più semplice da vendere — va specificato subito che
+vogliamo WooDoo, integrazione via API sul gestionale esistente.
+
+Bozza email pronta per il contatto: `docs/RICHIESTA_WUBOOK.md` (in questo
+repo) — da inviare tramite il form ufficiale
+en.wubook.net/page/WooDoo-Partner-Form-31.html.
+
+- Attivazione abbonamento channel manager + booking engine — chiedere
+  comunque un preventivo scritto e aggiornato (i prezzi pubblici sono un
+  punto di partenza, non detto siano quelli finali per noi).
 - Tempi di attivazione account e di setup tecnico (documentazione webhook,
   credenziali API) — serve per pianificare la Fase 3 del piano di
   migrazione.
 - Chiedere esplicitamente se il collegamento webhook richiede già in fase
   di sottoscrizione un dominio/endpoint pubblico attivo, o se si può
   configurare in un secondo momento (rilevante per la sequenza col deploy
-  VPS).
+  VPS — ora risolto, il gestionale è già in produzione su
+  `hdgolfo-gestionale.com`, quindi questo blocco è comunque superato).
 
 ---
 

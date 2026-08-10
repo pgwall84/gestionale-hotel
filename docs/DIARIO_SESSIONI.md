@@ -2252,3 +2252,50 @@ l'account Aruba sconosciuto sulla P.IVA dell'hotel (vedi
 `docs/DOMANDE_APERTE_07-08-2026.md`); valutare l'upgrade a Next.js 16.3.0
 e la migrazione da `xlsx` a `exceljs` quando ci sarà una sessione libera
 per testarli con calma.
+
+## 10/08/2026 — Audit di sicurezza post-deploy, primi fix
+
+Mentre il titolare aspetta risposta da WuBook e LivelloUno (email inviate
+in questa sessione, vedi `docs/RICHIESTA_WUBOOK.md` e
+`sito-hotel/docs/RICHIESTA_TRASFERIMENTO_DOMINIO.md`), eseguito un vero
+`npm audit` (non solo la lista a memoria dei todo lasciati il 9/8) su
+backend, frontend e `sito-hotel`. Trovato di più di quanto atteso:
+
+- **CRITICO, mai emerso prima**: `tar` (dipendenza indiretta di `bcrypt`
+  tramite `node-pre-gyp`) vulnerabile a path traversal via hardlink/
+  symlink. Verificato che si attiva solo in fase di `npm install`
+  (compilazione binario nativo), mai a runtime — rischio pratico basso,
+  ma da chiudere comunque. Fix: bcrypt 5→6.0.0, changelog verificato
+  (elimina `node-pre-gyp`, richiede solo Node >16 già in uso, hash
+  esistenti compatibili al 100% — nessun utente dovrà reimpostare la
+  password). **Fatto**: `backend/package.json` aggiornato a
+  `"bcrypt": "^6.0.0"`.
+- **ALTO, in produzione su entrambi i repo**: Next.js 16.2.9 (gestionale)
+  e 16.2.10 (sito-hotel) condividono 9 CVE, tra cui SSRF nei rewrites e
+  disclosure non autenticata degli endpoint Server Function interni —
+  rilevante ora che il gestionale è raggiungibile da internet, non solo
+  LAN. **Fatto**: entrambi i `package.json` aggiornati a `"next": "16.3.0"`
+  (e `eslint-config-next` allineato su sito-hotel).
+- **ALTO, senza fix disponibile**: `xlsx` (SheetJS) — prototype pollution
+  + ReDoS, nessuna patch dal maintainer. Mitigato dall'endpoint già
+  ristretto a `soloTitolare`, ma resta un problema strutturale. **Non
+  toccato in questa sessione** — richiede la migrazione a `exceljs` sul
+  controller import ZTL, non un bump di versione: da fare con calma,
+  testata, non a caldo insieme al resto.
+- Minori: dompurify/nanoid (frontend gestionale) e la toolchain CLI di
+  Sanity (js-yaml/adm-zip/uuid, solo build-time, non codice servito ai
+  visitatori) — si risolvono da soli con `npm audit fix` in fase di
+  install, nessun edit manuale necessario.
+
+Solo i `package.json` sono stati modificati da qui (Cowork) — `npm
+install`, l'esecuzione della suite di test e il commit/push restano al
+tab Code, come da convenzione (vedi voce 06/08/2026). Vedi il blocco di
+comandi lasciato al titolare per il tab Code.
+
+### Prossimo step
+
+Confermare che il tab Code abbia eseguito `npm install` su tutti e tre i
+package, che i test passino (in particolare login/auth per via del bump
+bcrypt) e che tutto sia stato committato e pushato/deployato. Poi:
+migrazione `xlsx`→`exceljs` quando c'è una sessione dedicata; resto della
+lista in `docs/DOMANDE_APERTE_07-08-2026.md`.
