@@ -21,7 +21,14 @@ let resendApiKeyOriginale;
 const prenotazioniCreate = [];
 const nucleiCreati = [];
 
-async function creaPrenotazione(ospiteId) {
+// overrides opzionale (11/08/2026): le chiamate successive a beforeAll
+// riusavano data_arrivo/data_partenza fissi sulla stessa camera, violando
+// il vincolo anti-overbooking (migration 017) dalla seconda in poi —
+// stesso bug, stessa causa, già trovato e corretto in
+// tests/api/email-prenotazioni.test.js. Pattern overrides allineato a
+// tests/api/prenotazioni.test.js.
+async function creaPrenotazione(ospiteId, overrides = {}) {
+  const { soggiorno: soggiornoOverride, ...restOverrides } = overrides;
   const res = await request(app)
     .post('/api/prenotazioni')
     .set(authHeader.receptionist())
@@ -33,7 +40,9 @@ async function creaPrenotazione(ospiteId) {
         data_arrivo: '2099-03-10',
         data_partenza: '2099-03-15',
         num_ospiti: 2,
+        ...soggiornoOverride,
       },
+      ...restOverrides,
     });
   if (res.status === 201) prenotazioniCreate.push(res.body.id);
   return res;
@@ -44,9 +53,14 @@ beforeAll(async () => {
   delete process.env.RESEND_API_KEY;
 
   const db = getPool();
+  // Prefisso accorciato (11.08.2026): "TEST-PRECHECKIN"+SUFFISSO (22 char)
+  // superava camere.numero VARCHAR(20) — root cause della intera suite rossa
+  // (INSERT falliva in beforeAll, cameraTestId restava undefined, ogni test
+  // a valle vedeva 400/500 a cascata). Stesso limite rispettato dagli altri
+  // file (es. TEST-ROSS1000+6 cifre = 20 char esatti).
   const camera = await db.query(
     `INSERT INTO camere (numero, nome, piano) VALUES ($1, 'Camera Test Pre-Checkin', 9) RETURNING id`,
-    [`TEST-PRECHECKIN${SUFFISSO}`]
+    [`TEST-PRECHK${SUFFISSO}`]
   );
   cameraTestId = camera.rows[0].id;
 
@@ -166,7 +180,10 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
       expect(res.status).toBe(200);
       const trovata = res.body.find(r => r.prenotazione_id === prenotazioneId);
       expect(trovata).toBeTruthy();
-      expect(trovata.numero_ospiti).toBe(2);
+      // COUNT(*) di Postgres torna bigint → node-pg lo restituisce come
+      // stringa (backend/config/db.js non ha un type parser per OID 20,
+      // solo per le date/1082) — cast esplicito, non un bug applicativo.
+      expect(Number(trovata.numero_ospiti)).toBe(2);
     });
 
     test('titolare, dettaglio → include capofamiglia_id esistente sulla prima riga', async () => {
@@ -215,7 +232,7 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
 
 describe('Scarta — POST /api/pre-checkin/:id/scarta', () => {
   test('titolare scarta una richiesta in attesa → 200, poi un nuovo invio pubblico è di nuovo possibile', async () => {
-    const creata = await creaPrenotazione(ospiteCapofamigliaId);
+    const creata = await creaPrenotazione(ospiteCapofamigliaId, { soggiorno: { data_arrivo: '2099-04-10', data_partenza: '2099-04-15' } });
     const link = await assicuraToken(creata.body.id);
     const token = link.split('/').pop();
     const dettaglio = await request(app).get(`/api/pre-checkin-pubblico/${token}`);
@@ -280,14 +297,14 @@ describe('POST /api/ospiti/:id/nucleo', () => {
 
 describe('POST /api/prenotazioni/:id/invia-pre-checkin (invio manuale reale)', () => {
   test('receptionist → 200, senza RESEND_API_KEY ok:false, non lancia', async () => {
-    const creata = await creaPrenotazione(ospiteCapofamigliaId);
+    const creata = await creaPrenotazione(ospiteCapofamigliaId, { soggiorno: { data_arrivo: '2099-05-10', data_partenza: '2099-05-15' } });
     const res = await request(app).post(`/api/prenotazioni/${creata.body.id}/invia-pre-checkin`).set(authHeader.receptionist());
     expect(res.status).toBe(200);
     expect(res.body.ok).toBe(false);
   });
 
   test('cuoco → 403', async () => {
-    const creata = await creaPrenotazione(ospiteCapofamigliaId);
+    const creata = await creaPrenotazione(ospiteCapofamigliaId, { soggiorno: { data_arrivo: '2099-06-10', data_partenza: '2099-06-15' } });
     const res = await request(app).post(`/api/prenotazioni/${creata.body.id}/invia-pre-checkin`).set(authHeader.cuoco());
     expect(res.status).toBe(403);
   });

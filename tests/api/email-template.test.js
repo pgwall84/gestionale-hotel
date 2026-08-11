@@ -46,11 +46,11 @@ describe('GET /api/email-template', () => {
     expect(res.status).toBe(403);
   });
 
-  test('titolare → 200, contiene i 3 tipi', async () => {
+  test('titolare → 200, contiene i 4 tipi (incluso pre_checkin, migration 027)', async () => {
     const res = await request(app).get('/api/email-template').set(authHeader.titolare());
     expect(res.status).toBe(200);
     const tipi = res.body.map(t => t.tipo).sort();
-    expect(tipi).toEqual(['conferma', 'promemoria', 'recensione']);
+    expect(tipi).toEqual(['conferma', 'pre_checkin', 'promemoria', 'recensione']);
   });
 });
 

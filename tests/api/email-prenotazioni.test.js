@@ -105,7 +105,12 @@ describe('PATCH /api/prenotazioni/:id/stato → confermata (email di conferma)',
   });
 
   test('ospite con email ma RESEND_API_KEY non configurata: transizione riesce (200), nessun invio registrato', async () => {
-    const creata = await creaPrenotazione(ospiteConEmailId);
+    // Data diversa dal test precedente sulla stessa camera: altrimenti il
+    // vincolo anti-overbooking (migration 017, EXCLUDE su camera+date) fa
+    // fallire questa seconda prenotazione con 409 — bug reale del fixture,
+    // trovato l'11/08/2026 confrontando con il pattern già corretto in
+    // tests/api/prenotazioni.test.js (ogni chiamata lì usa date diverse).
+    const creata = await creaPrenotazione(ospiteConEmailId, { soggiorno: { data_arrivo: '2099-02-20', data_partenza: '2099-02-25' } });
     expect(creata.status).toBe(201);
 
     const res = await request(app)
@@ -122,7 +127,7 @@ describe('PATCH /api/prenotazioni/:id/stato → confermata (email di conferma)',
   });
 
   test('transizione non ammessa (es. da confermata a confermata) → 400, nessuna email tentata', async () => {
-    const creata = await creaPrenotazione(ospiteConEmailId);
+    const creata = await creaPrenotazione(ospiteConEmailId, { soggiorno: { data_arrivo: '2099-03-01', data_partenza: '2099-03-05' } });
     await request(app)
       .patch(`/api/prenotazioni/${creata.body.id}/stato`)
       .set(authHeader.receptionist())
@@ -139,7 +144,7 @@ describe('PATCH /api/prenotazioni/:id/stato → confermata (email di conferma)',
 
 describe('POST /api/prenotazioni/:id/test-email (pulsante di test admin/titolare)', () => {
   test('receptionist → 403 (riservato ad admin/titolare)', async () => {
-    const creata = await creaPrenotazione(ospiteConEmailId);
+    const creata = await creaPrenotazione(ospiteConEmailId, { soggiorno: { data_arrivo: '2099-03-10', data_partenza: '2099-03-15' } });
     const res = await request(app)
       .post(`/api/prenotazioni/${creata.body.id}/test-email`)
       .set(authHeader.receptionist())
@@ -148,7 +153,7 @@ describe('POST /api/prenotazioni/:id/test-email (pulsante di test admin/titolare
   });
 
   test('titolare, tipo non valido → 400', async () => {
-    const creata = await creaPrenotazione(ospiteConEmailId);
+    const creata = await creaPrenotazione(ospiteConEmailId, { soggiorno: { data_arrivo: '2099-03-20', data_partenza: '2099-03-25' } });
     const res = await request(app)
       .post(`/api/prenotazioni/${creata.body.id}/test-email`)
       .set(authHeader.titolare())
@@ -157,7 +162,7 @@ describe('POST /api/prenotazioni/:id/test-email (pulsante di test admin/titolare
   });
 
   test('titolare, tipo valido, senza RESEND_API_KEY → 200 con { ok: false }, non lancia', async () => {
-    const creata = await creaPrenotazione(ospiteConEmailId);
+    const creata = await creaPrenotazione(ospiteConEmailId, { soggiorno: { data_arrivo: '2099-04-01', data_partenza: '2099-04-05' } });
     const res = await request(app)
       .post(`/api/prenotazioni/${creata.body.id}/test-email`)
       .set(authHeader.titolare())
