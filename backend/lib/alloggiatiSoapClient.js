@@ -1,9 +1,12 @@
-// Client SOAP grezzo per WS_ALLOGGIATI (Polizia di Stato) — Modulo 2.5, Fase 1b.
-// Copre solo GenerateToken e Tabella (lettura, nessun invio dati ospite).
-// Test/Send arriveranno in Fase 2 — lì l'esito è annidato per riga
-// (Dettaglio con più EsitoOperazioneServizio) e potrebbe convenire una
-// libreria XML dedicata invece delle regex usate qui, adeguate per le
-// risposte piatte di questi due soli metodi.
+// Client SOAP grezzo per WS_ALLOGGIATI (Polizia di Stato) — Modulo 2.5.
+// Fase 1b: GenerateToken e Tabella (lettura, nessun invio dati ospite).
+// Fase 2 (11/08/2026): aggiunti Authentication_Test (verifica credenziali,
+// zero rischio), Test (verifica formato schedina, NESSUNA acquisizione —
+// manuale pag. 9) e Send (invio reale, ACQUISISCE le schedine — manuale
+// pag. 10). Test/Send hanno risposta annidata (Dettaglio con più
+// EsitoOperazioneServizio, uno per riga) — gestita con regex sui blocchi
+// ripetuti (vedi estraiBlocchi sotto), ancora nessuna libreria XML nuova:
+// i blocchi sono regolari e non annidati tra loro.
 //
 // Nessuna dipendenza nuova: le richieste sono envelope XML fissi con pochi
 // valori interpolati (esempi letterali nel manuale WS_ALLOGGIATI), le
@@ -156,4 +159,96 @@ function parseCsv(testo) {
   });
 }
 
-module.exports = { generaToken, scaricaTabella, parseCsv };
+// Estrae tutti i blocchi ripetuti di un tag da una risposta XML (es. i vari
+// <EsitoOperazioneServizio> dentro <Dettaglio>) — a differenza di
+// estraiTag, che prende solo la prima occorrenza.
+function estraiBlocchi(xml, tag) {
+  const regex = new RegExp(`<${tag}\\b[^>]*>([\\s\\S]*?)<\\/${tag}>`, 'gi');
+  const blocchi = [];
+  let match;
+  while ((match = regex.exec(xml)) !== null) {
+    blocchi.push(match[1]);
+  }
+  return blocchi;
+}
+
+// Costruisce il blocco <all:string>...</all:string> ripetuto per
+// l'ElencoSchedine — ogni riga viene escapata (l'escape XML può allungare
+// la rappresentazione sul filo, es. un apostrofo in cognome → &apos;, ma
+// non tocca la stringa decodificata che il server ricontrolla a 168
+// caratteri: il tracciato riguarda il dato, non la sua codifica XML).
+function costruisciElencoSchedineXml(righe) {
+  return righe.map(r => `<all:string>${escapeXml(r)}</all:string>`).join('\n      ');
+}
+
+// Parsa la risposta comune a Test/Send (oggetto ElencoSchedineEsito,
+// manuale Sezione 3.2): esito generale + un EsitoOperazioneServizio per
+// ogni riga inviata, nello stesso ordine dell'elenco richiesto.
+function parseEsitoSchedine(xml, azione) {
+  const esitoGenerale = estraiTag(xml, 'esito');
+  if (esitoGenerale !== 'true') {
+    const errore = estraiTag(xml, 'ErroreDes') || 'esito negativo senza dettaglio nella risposta';
+    throw new Error(`${azione} fallito: ${errore}`);
+  }
+  const schedineValide = Number(estraiTag(xml, 'SchedineValide') || 0);
+  const dettaglio = estraiBlocchi(xml, 'EsitoOperazioneServizio').map(blocco => ({
+    esito: estraiTag(blocco, 'esito') === 'true',
+    erroreCod: estraiTag(blocco, 'ErroreCod'),
+    erroreDes: estraiTag(blocco, 'ErroreDes'),
+    erroreDettaglio: estraiTag(blocco, 'ErroreDettaglio'),
+  }));
+  return { schedineValide, dettaglio };
+}
+
+// Controllo di correttezza delle informazioni di autenticazione — non
+// invia mai dati ospite, verifica solo che utente+token siano validi.
+// Zero rischio, utilizzabile per un pulsante "Verifica credenziali" senza
+// bisogno di un soggiorno reale.
+async function autenticationTest({ utente, token }) {
+  const corpo = `
+    <all:Utente>${escapeXml(utente)}</all:Utente>
+    <all:token>${escapeXml(token)}</all:token>
+  `;
+  const xml = await chiamaSoap('Authentication_Test', corpo);
+  const esito = estraiTag(xml, 'esito');
+  if (esito !== 'true') {
+    const errore = estraiTag(xml, 'ErroreDes') || 'esito negativo senza dettaglio nella risposta';
+    throw new Error(`Authentication_Test fallito: ${errore}`);
+  }
+  return true;
+}
+
+// SICURO — controllo di correttezza del tracciato: "questo metodo consente
+// di effettuare il solo controllo di correttezza di un elenco di schedine"
+// (manuale, pag. 9). NESSUNA schedina viene mai acquisita dal sistema,
+// utilizzabile quante volte serve anche con dati di prova.
+async function testSchedine({ utente, token, righe }) {
+  const corpo = `
+    <all:Utente>${escapeXml(utente)}</all:Utente>
+    <all:token>${escapeXml(token)}</all:token>
+    <all:ElencoSchedine>
+      ${costruisciElencoSchedineXml(righe)}
+    </all:ElencoSchedine>
+  `;
+  const xml = await chiamaSoap('Test', corpo);
+  return parseEsitoSchedine(xml, 'Test');
+}
+
+// NON SICURO — "le sole schedine corrette saranno acquisite dal sistema"
+// (manuale, pag. 10): questo è l'unico metodo che registra davvero un
+// alloggiato presso la Polizia di Stato. Il chiamante (controller) deve
+// aver già ottenuto una conferma esplicita prima di arrivare qui — vedi
+// alloggiatiController.inviaSchedineSoggiorno.
+async function inviaSchedine({ utente, token, righe }) {
+  const corpo = `
+    <all:Utente>${escapeXml(utente)}</all:Utente>
+    <all:token>${escapeXml(token)}</all:token>
+    <all:ElencoSchedine>
+      ${costruisciElencoSchedineXml(righe)}
+    </all:ElencoSchedine>
+  `;
+  const xml = await chiamaSoap('Send', corpo);
+  return parseEsitoSchedine(xml, 'Send');
+}
+
+module.exports = { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine };

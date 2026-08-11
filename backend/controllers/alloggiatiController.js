@@ -1,11 +1,26 @@
-// Controller Alloggiati Web — Modulo 2.5, Fase 1b.
-// Sincronizzazione delle tabelle di codifica (sola lettura verso
-// WS_ALLOGGIATI, nessun dato ospite inviato) + lettura per le tendine della
-// scheda ospite. Generazione schedina e invio reale (Test/Send) arrivano
-// in Fase 2. Vedi backend/lib/alloggiatiSoapClient.js per il client SOAP.
+// Controller Alloggiati Web — Modulo 2.5.
+// Fase 1b: sincronizzazione tabelle di codifica (sola lettura) + lettura
+// per le tendine della scheda ospite.
+// Fase 2 (11/08/2026): verifica credenziali, generazione+verifica schedina
+// (Test, sempre sicuro) e invio reale (Send, ACQUISISCE presso la Polizia
+// di Stato — gated da conferma esplicita nel body, vedi
+// inviaSchedineSoggiorno). Vedi backend/lib/alloggiatiSoapClient.js per il
+// client SOAP e backend/lib/alloggiatiSchedina.js per il generatore.
 
 const pool = require('../config/db');
-const { generaToken, scaricaTabella, parseCsv } = require('../lib/alloggiatiSoapClient');
+const { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine } = require('../lib/alloggiatiSoapClient');
+const { generaSchedineSoggiorno } = require('../lib/alloggiatiSchedina');
+
+// Legge le 3 credenziali da .env e restituisce un errore chiaro se manca
+// anche solo una — riusata da tutti gli endpoint che parlano con
+// WS_ALLOGGIATI, per non ripetere lo stesso controllo 4 volte.
+function credenzialiAlloggiati() {
+  const utente = process.env.ALLOGGIATI_UTENTE;
+  const password = process.env.ALLOGGIATI_PASSWORD;
+  const wsKey = process.env.ALLOGGIATI_WSKEY;
+  if (!utente || !password || !wsKey) return null;
+  return { utente, password, wsKey };
+}
 
 // Le uniche tabelle utili alla scheda ospite (nazionalità/documento).
 // TipoErrore e ListaAppartamenti non servono in questa fase (niente invio
@@ -139,4 +154,96 @@ async function statoSincronizzazione(req, res) {
   }
 }
 
-module.exports = { sincronizzaTabelle, listaCodici, statoSincronizzazione };
+// POST /api/alloggiati/verifica-credenziali — GenerateToken +
+// Authentication_Test. Nessun dato ospite coinvolto, zero rischio — pensato
+// per un pulsante di verifica in Impostazioni, utilizzabile in qualunque
+// momento. Accessibile a: admin, titolare.
+async function verificaCredenziali(req, res) {
+  const cred = credenzialiAlloggiati();
+  if (!cred) {
+    return res.status(400).json({
+      error: 'Credenziali Alloggiati Web non configurate — impostare ALLOGGIATI_UTENTE, ALLOGGIATI_PASSWORD, ALLOGGIATI_WSKEY in backend/.env.',
+    });
+  }
+  try {
+    const token = await generaToken(cred);
+    await autenticationTest({ utente: cred.utente, token });
+    res.json({ ok: true, verificato_il: new Date().toISOString() });
+  } catch (err) {
+    console.error('verificaCredenziali error:', err.message);
+    res.status(502).json({ error: `Verifica credenziali fallita: ${err.message}` });
+  }
+}
+
+// POST /api/alloggiati/soggiorni/:id/test — SICURO, nessuna acquisizione:
+// genera le righe schedina per il soggiorno e le fa validare da
+// WS_ALLOGGIATI col metodo Test (solo controllo di formato). Utilizzabile
+// ripetutamente, anche con un soggiorno di prova. Accessibile a: admin,
+// titolare.
+async function testSchedineSoggiorno(req, res) {
+  const cred = credenzialiAlloggiati();
+  if (!cred) {
+    return res.status(400).json({
+      error: 'Credenziali Alloggiati Web non configurate — impostare ALLOGGIATI_UTENTE, ALLOGGIATI_PASSWORD, ALLOGGIATI_WSKEY in backend/.env.',
+    });
+  }
+  try {
+    const { righeSchedina, avvisi, totaleOspiti } = await generaSchedineSoggiorno(pool, req.params.id);
+    if (!righeSchedina.length) {
+      return res.json({
+        testato: false,
+        avvisi,
+        totaleOspiti,
+        motivo: 'Nessuna riga generabile: completare in scheda ospite i dati indicati negli avvisi.',
+      });
+    }
+    const token = await generaToken(cred);
+    const esito = await testSchedine({ utente: cred.utente, token, righe: righeSchedina });
+    res.json({ testato: true, avvisi, totaleOspiti, righeInviate: righeSchedina.length, esito });
+  } catch (err) {
+    console.error('testSchedineSoggiorno error:', err.message);
+    res.status(502).json({ error: `Test schedina fallito: ${err.message}` });
+  }
+}
+
+// POST /api/alloggiati/soggiorni/:id/invia — NON SICURO: il metodo Send
+// acquisisce davvero le schedine presso la Polizia di Stato. Richiede
+// esplicitamente { conferma_dati_reali: true } nel body — nessuna
+// scorciatoia, nessun default permissivo: senza quel flag la richiesta si
+// ferma con 400 prima ancora di generare le righe o contattare il
+// servizio. Esito salvato in alloggiati_invii (predisposta da migration
+// 016, mai popolata finora). Accessibile a: admin, titolare.
+async function inviaSchedineSoggiorno(req, res) {
+  if (req.body?.conferma_dati_reali !== true) {
+    return res.status(400).json({
+      error: 'Invio reale non confermato — impostare conferma_dati_reali: true solo per un soggiorno con ospiti reali effettivamente presenti in struttura.',
+    });
+  }
+  const cred = credenzialiAlloggiati();
+  if (!cred) {
+    return res.status(400).json({
+      error: 'Credenziali Alloggiati Web non configurate — impostare ALLOGGIATI_UTENTE, ALLOGGIATI_PASSWORD, ALLOGGIATI_WSKEY in backend/.env.',
+    });
+  }
+  try {
+    const { righeSchedina, avvisi, totaleOspiti } = await generaSchedineSoggiorno(pool, req.params.id);
+    if (!righeSchedina.length) {
+      return res.status(400).json({ error: 'Nessuna riga generabile per questo soggiorno.', avvisi });
+    }
+    const token = await generaToken(cred);
+    const esito = await inviaSchedine({ utente: cred.utente, token, righe: righeSchedina });
+    await pool.query(
+      `INSERT INTO alloggiati_invii (soggiorno_id, esito) VALUES ($1, $2)`,
+      [req.params.id, esito.schedineValide === righeSchedina.length ? 'ok' : 'parziale']
+    );
+    res.json({ inviato: true, avvisi, totaleOspiti, righeInviate: righeSchedina.length, esito });
+  } catch (err) {
+    console.error('inviaSchedineSoggiorno error:', err.message);
+    res.status(502).json({ error: `Invio schedina fallito: ${err.message}` });
+  }
+}
+
+module.exports = {
+  sincronizzaTabelle, listaCodici, statoSincronizzazione,
+  verificaCredenziali, testSchedineSoggiorno, inviaSchedineSoggiorno,
+};

@@ -160,6 +160,7 @@ const PERMESSI_SEZIONI = {
   alloggiati: {
     lettura:      [A, T, R, P],
     sincronizza:  [A, T],
+    invio:        [A, T], // Fase 2 (11/08/2026): verifica credenziali, Test, Send — mai receptionist/portiere_notte
   },
 
   // Pulizie (Fase 2) — dipendente + receptionist segnano "fatta/da fare".

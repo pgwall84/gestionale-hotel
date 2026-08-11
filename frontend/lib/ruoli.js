@@ -49,6 +49,7 @@ export const PERMESSI_SEZIONI = {
   alloggiati: {
     lettura:      [A, T, R, P],
     sincronizza:  [A, T],
+    invio:        [A, T], // Fase 2 (11/08/2026): verifica credenziali, Test, Send — mai receptionist/portiere_notte
   },
 
   // Manutenzione/guasti (06/08/2026) — tutti segnalano e vedono, solo

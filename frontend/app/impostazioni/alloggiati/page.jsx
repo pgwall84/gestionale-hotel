@@ -1,19 +1,24 @@
 'use client';
 
-// Pagina Impostazioni ▸ Alloggiati Web — Modulo 2.5, Fase 1b.
-// Sincronizza le tabelle di codifica (Luoghi, Tipi_Documento, Tipi_Alloggiato)
-// da WS_ALLOGGIATI — sola lettura verso il servizio esterno, nessun dato
-// ospite viene mai inviato qui. Il generatore di schedina e l'invio reale
-// (Test/Send) arrivano con la Fase 2. Richiede ALLOGGIATI_UTENTE/PASSWORD/
-// WSKEY in backend/.env — se mancanti, "Sincronizza ora" restituisce un
-// errore chiaro invece di un 500 generico.
-// Riservata ad admin/titolare (shared/ruoli.js sezione 'alloggiati', azione
-// 'sincronizza') — stesso criterio di 'tassa_soggiorno'.configurazione:
+// Pagina Impostazioni ▸ Alloggiati Web — Modulo 2.5.
+// Fase 1b: sincronizza le tabelle di codifica (Luoghi, Tipi_Documento,
+// Tipi_Alloggiato) da WS_ALLOGGIATI — sola lettura, nessun dato ospite
+// viene mai inviato qui.
+// Fase 2 (11/08/2026): pulsante "Verifica credenziali" (GenerateToken +
+// Authentication_Test) — zero rischio, nessun dato ospite coinvolto, serve
+// solo a confermare che utente/password/WSKEY funzionano contro il
+// servizio reale prima di generare/testare una schedina vera (da un
+// soggiorno, in una sessione successiva — non ancora collegato in UI qui).
+// Richiede ALLOGGIATI_UTENTE/PASSWORD/WSKEY in backend/.env — se mancanti,
+// entrambi i pulsanti restituiscono un errore chiaro invece di un 500
+// generico.
+// Riservata ad admin/titolare (shared/ruoli.js sezione 'alloggiati', azioni
+// 'sincronizza'/'invio') — stesso criterio di 'tassa_soggiorno'.configurazione:
 // tocca credenziali/configurazione, non è operatività quotidiana.
 
 import { useState, useEffect, useCallback } from 'react';
 import { useRouter } from 'next/navigation';
-import { RefreshCw } from 'lucide-react';
+import { RefreshCw, ShieldCheck } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -35,6 +40,11 @@ export default function PaginaImpostazioniAlloggiati() {
   const [sincronizzando, setSincronizzando] = useState(false);
   const [errore, setErrore] = useState('');
   const [successo, setSuccesso] = useState('');
+
+  // Fase 2 — verifica credenziali (Authentication_Test), indipendente dallo
+  // stato di sincronizzazione sopra: non tocca alloggiati_codici.
+  const [verificando, setVerificando] = useState(false);
+  const [esitoVerifica, setEsitoVerifica] = useState(null); // { ok, verificato_il } | { errore }
 
   useEffect(() => {
     if (!loading && (!utente || !RUOLI_SINCRONIZZA.includes(utente.ruolo))) router.replace('/home');
@@ -74,6 +84,19 @@ export default function PaginaImpostazioniAlloggiati() {
     }
   }
 
+  async function verificaCredenziali() {
+    setVerificando(true);
+    setEsitoVerifica(null);
+    try {
+      const res = await api.post('/alloggiati/verifica-credenziali');
+      setEsitoVerifica({ ok: true, verificato_il: res.data.verificato_il });
+    } catch (err) {
+      setEsitoVerifica({ ok: false, errore: err.message || 'Verifica fallita.' });
+    } finally {
+      setVerificando(false);
+    }
+  }
+
   if (loading || !utente) return null;
 
   const numeroCodiciTotale = (tabella) => stato.find(s => s.tabella === tabella)?.numero_codici ?? 0;
@@ -93,6 +116,33 @@ export default function PaginaImpostazioniAlloggiati() {
           {successo}
         </div>
       )}
+
+      <div className="rounded-xl p-4 mb-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Verifica credenziali</h3>
+            <p className="text-xs mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+              Controlla che utente/password/WSKEY funzionino contro WS_ALLOGGIATI. Nessun dato ospite coinvolto — solo autenticazione.
+            </p>
+          </div>
+          <button onClick={verificaCredenziali} disabled={verificando}
+                  className="flex items-center gap-1 text-xs font-medium px-3 py-2 rounded-lg text-white disabled:opacity-60 shrink-0"
+                  style={{ background: 'var(--hotel-navy)' }}>
+            <ShieldCheck size={13} />
+            {verificando ? 'Verifica...' : 'Verifica credenziali'}
+          </button>
+        </div>
+        {esitoVerifica && (
+          <div className="px-3 py-2.5 rounded-lg text-[13px]"
+               style={esitoVerifica.ok
+                 ? { background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }
+                 : { background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+            {esitoVerifica.ok
+              ? `Credenziali valide — verificato il ${new Date(esitoVerifica.verificato_il).toLocaleString('it-IT')}`
+              : esitoVerifica.errore}
+          </div>
+        )}
+      </div>
 
       <div className="rounded-xl p-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
         <div className="flex items-center justify-between mb-3">
