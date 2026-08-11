@@ -594,6 +594,101 @@ function ModalTurno({ utente, data, turnoEsistente, turnoStandard, onSalva, onEl
   );
 }
 
+// ── Modal Applica turno standard su un periodo ───────────────────────────────
+// Genera i turni del periodo scelto dal turno standard di ogni dipendente.
+// Non tocca mai un giorno che ha già un turno assegnato (manuale o generato
+// prima) — scelta esplicita del titolare, 11/08/2026: evita di cancellare in
+// silenzio scambi/modifiche già fatte a mano.
+function ModalApplicaStandard({ onChiudi, onFatto }) {
+  const oggi = new Date();
+  const defaultInizio = isoDate(new Date(oggi.getFullYear(), oggi.getMonth() + 1, 1));
+  const defaultFine   = isoDate(new Date(oggi.getFullYear(), oggi.getMonth() + 2, 0));
+  const [dataInizio, setDataInizio] = useState(defaultInizio);
+  const [dataFine, setDataFine] = useState(defaultFine);
+  const [invio, setInvio] = useState(false);
+  const [errore, setErrore] = useState('');
+  const [esito, setEsito] = useState(null); // { creati, saltati, dipendentiSenzaStandard }
+
+  async function applica(e) {
+    e.preventDefault();
+    setErrore('');
+    setInvio(true);
+    try {
+      const res = await api.post('/hr/turni/applica-standard', { data_inizio: dataInizio, data_fine: dataFine });
+      setEsito(res.data);
+    } catch (err) {
+      setErrore(err?.response?.data?.errore || 'Errore durante l\'applicazione.');
+    } finally { setInvio(false); }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
+         style={{ background: 'rgba(0,0,0,0.4)' }} onClick={esito ? onFatto : onChiudi}>
+      <div className="rounded-2xl p-5 w-full max-w-sm flex flex-col gap-4"
+           style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}
+           onClick={e => e.stopPropagation()}>
+        <div>
+          <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Applica turno standard</p>
+          <p className="text-[12px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
+            Genera i turni del periodo scelto usando il turno standard di ogni dipendente.
+            Non modifica i giorni che hanno già un turno assegnato.
+          </p>
+        </div>
+
+        {!esito ? (
+          <form onSubmit={applica} className="flex flex-col gap-3">
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Dal</label>
+                <CampoData required value={dataInizio} onChange={setDataInizio}
+                       className="px-2"
+                       style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
+              </div>
+              <div>
+                <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Al</label>
+                <CampoData required value={dataFine} onChange={setDataFine}
+                       className="px-2"
+                       style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--background)' }} />
+              </div>
+            </div>
+            {errore && <p className="text-[12px]" style={{ color: 'var(--status-red-text)' }}>{errore}</p>}
+            <div className="flex gap-2">
+              <button type="submit" disabled={invio}
+                      className="flex-1 py-2 rounded-lg text-sm font-medium text-white disabled:opacity-60"
+                      style={{ background: 'var(--hotel-navy)' }}>
+                {invio ? 'Applicazione...' : 'Applica'}
+              </button>
+              <button type="button" onClick={onChiudi}
+                      className="px-4 py-2 rounded-lg text-sm"
+                      style={{ border: '0.5px solid var(--border)', color: 'var(--muted-foreground)' }}>
+                Annulla
+              </button>
+            </div>
+          </form>
+        ) : (
+          <div className="flex flex-col gap-3">
+            <div className="rounded-xl px-3 py-2.5 text-[13px]"
+                 style={{ background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }}>
+              {esito.creati} turni creati · {esito.saltati} giorni già assegnati (non toccati)
+            </div>
+            {esito.dipendentiSenzaStandard?.length > 0 && (
+              <div className="rounded-xl px-3 py-2.5 text-[12px]"
+                   style={{ background: 'var(--status-amber-bg)', color: 'var(--status-amber-text)' }}>
+                Nessun turno standard configurato per: {esito.dipendentiSenzaStandard.join(', ')} — nessun turno generato per loro.
+              </div>
+            )}
+            <button onClick={onFatto}
+                    className="py-2 rounded-lg text-sm font-medium text-white"
+                    style={{ background: 'var(--hotel-navy)' }}>
+              Chiudi
+            </button>
+          </div>
+        )}
+      </div>
+    </div>
+  );
+}
+
 // ── Tab Turni ────────────────────────────────────────────────────────────────
 function TabTurni({ utenti, isTitolare, utenteCorrente }) {
   const [lunedi, setLunedi] = useState(() => lunediDi(new Date()));
@@ -602,6 +697,7 @@ function TabTurni({ utenti, isTitolare, utenteCorrente }) {
   const [loading, setLoading] = useState(true);
   const [modal, setModal] = useState(null); // { utente, data, turnoEsistente }
   const [pannelloStandard, setPannelloStandard] = useState(false);
+  const [modalApplicaStandard, setModalApplicaStandard] = useState(false);
 
   const giorni = Array.from({ length: 7 }, (_, i) => aggiungiGiorni(lunedi, i));
 
@@ -659,11 +755,18 @@ function TabTurni({ utenti, isTitolare, utenteCorrente }) {
           Clicca su una cella per assegnare o modificare il turno
         </span>
         {isTitolare && (
-          <button onClick={() => setPannelloStandard(true)}
-                  className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
-                  style={{ border: '0.5px solid var(--border)', color: 'var(--foreground)' }}>
-            <Settings size={13} /> Turni standard
-          </button>
+          <div className="flex items-center gap-2">
+            <button onClick={() => setModalApplicaStandard(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium text-white"
+                    style={{ background: 'var(--hotel-amber)' }}>
+              <Settings size={13} /> Applica turno standard
+            </button>
+            <button onClick={() => setPannelloStandard(true)}
+                    className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium"
+                    style={{ border: '0.5px solid var(--border)', color: 'var(--foreground)' }}>
+              <Settings size={13} /> Turni standard
+            </button>
+          </div>
         )}
       </div>
 
@@ -799,6 +902,13 @@ function TabTurni({ utenti, isTitolare, utenteCorrente }) {
         <TurniStandardPanel
           utenti={utenti}
           onChiudi={() => { setPannelloStandard(false); carica(); }}
+        />
+      )}
+
+      {modalApplicaStandard && (
+        <ModalApplicaStandard
+          onChiudi={() => setModalApplicaStandard(false)}
+          onFatto={() => { setModalApplicaStandard(false); carica(); }}
         />
       )}
     </div>

@@ -51,6 +51,7 @@ router.get('/timbrature/report-mensile', soloTitolare, timbratureCtrl.reportMens
 // ── Turni ─────────────────────────────────────────────────────────────────────
 router.get('/turni',                     turniCtrl.lista);
 router.post('/turni',                    soloTitolare, turniCtrl.crea);
+router.post('/turni/applica-standard',   soloTitolare, turniCtrl.applicaStandardMese);
 router.put('/turni/:id',                 soloTitolare, turniCtrl.modifica);
 router.delete('/turni/:id',              soloTitolare, turniCtrl.elimina);
 
