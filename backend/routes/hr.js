@@ -85,8 +85,12 @@ router.post('/comunicazioni',            soloTitolare, comunicazioniCtrl.crea);
 router.delete('/comunicazioni/:id',      soloTitolare, comunicazioniCtrl.elimina);
 
 // ── HACCP ─────────────────────────────────────────────────────────────────────
-router.get('/haccp',                     haccpCtrl.lista);
-router.post('/haccp',                    haccpCtrl.salva);
+// Riservato ad admin/titolare/cuoco (shared/ruoli.js sezione 'haccp') — prima
+// mancava questo controllo lato route, qualunque ruolo autenticato poteva
+// leggere/salvare la checklist. Fix su richiesta esplicita del titolare
+// (11/08/2026).
+router.get('/haccp',                     richiedeSezione('haccp'), haccpCtrl.lista);
+router.post('/haccp',                    richiedeSezione('haccp'), haccpCtrl.salva);
 router.get('/haccp/storico',             soloTitolare, haccpCtrl.storico);
 
 // ── Ospiti giornalieri (note cucina) ─────────────────────────────────────────

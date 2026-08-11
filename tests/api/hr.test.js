@@ -11,12 +11,10 @@
 //             ON DELETE RESTRICT: vanno ripulite in afterAll PRIMA di
 //             pulisciDatiTest(), altrimenti la DELETE su users fallisce.
 //
-// Nota permessi (11/08/2026): POST /api/hr/haccp non ha nessuna restrizione
-// di ruolo oltre al login (nessun soloTitolare/richiedeSezione sulla route,
-// vedi backend/routes/hr.js) — qualunque ruolo autenticato può salvare la
-// checklist, anche se shared/ruoli.js limita la PAGINA a admin/titolare/cuoco.
-// I test sotto verificano il comportamento reale (200 con qualunque ruolo),
-// non è una svista del test: è così che si comporta il backend oggi.
+// Nota permessi HACCP (fix 11/08/2026): GET/POST /api/hr/haccp sono ora
+// riservati ad admin/titolare/cuoco (richiedeSezione('haccp'), coerente con
+// shared/ruoli.js) — prima non c'era nessuna restrizione di ruolo lato route,
+// gap trovato scrivendo questi test e corretto su richiesta del titolare.
 
 const request = require('supertest');
 const path    = require('path');
@@ -39,6 +37,7 @@ const FILE_TEST_DOCUMENTI = path.join(__dirname, '_hr_test_documento.pdf');
 
 let utenteTest;
 let tokenUtente;
+let tokenUtenteCuoco; // stesso utente reale di tokenUtente, ma ruolo cuoco — serve per HACCP
 
 beforeAll(async () => {
   utenteTest = await creaUtenteDiTest({
@@ -46,6 +45,10 @@ beforeAll(async () => {
     ruolo: 'receptionist',
   });
   tokenUtente = creaToken({ id: utenteTest.id, ruolo: 'receptionist', email: utenteTest.email });
+  // Stesso id reale di utenteTest (necessario per l'INSERT su haccp_checklist,
+  // che referenzia users(id) con ON DELETE RESTRICT) ma ruolo cuoco, l'unico
+  // fra i ruoli "di reparto" ammesso a leggere/salvare HACCP.
+  tokenUtenteCuoco = creaToken({ id: utenteTest.id, ruolo: 'cuoco', email: utenteTest.email });
   fs.writeFileSync(FILE_TEST_DOCUMENTI, 'contenuto di test');
 });
 
@@ -824,8 +827,8 @@ describe('Documenti dipendente (/api/hr/documenti)', () => {
 });
 
 // ─── HACCP (/api/hr/haccp) ─────────────────────────────────────────────────────
-// Nessun 403 testato qui: la route non ha restrizioni di ruolo oltre al login
-// (vedi nota in testa al file) — qualunque ruolo autenticato può salvare.
+// Riservato ad admin/titolare/cuoco (richiedeSezione('haccp')) — receptionist
+// e altri ruoli di reparto sono esclusi anche dal backend, non solo dalla UI.
 
 describe('HACCP (/api/hr/haccp)', () => {
   test('GET senza token → 401', async () => {
@@ -833,10 +836,17 @@ describe('HACCP (/api/hr/haccp)', () => {
     expect(res.status).toBe(401);
   });
 
-  test('GET data senza checklist esistente → lista default non compilata', async () => {
+  test('GET receptionist → 403 (non è in admin/titolare/cuoco)', async () => {
     const res = await request(app)
       .get(`/api/hr/haccp?data=${DATA_HACCP_TEST}`)
       .set({ Authorization: `Bearer ${tokenUtente}` });
+    expect(res.status).toBe(403);
+  });
+
+  test('GET data senza checklist esistente (cuoco) → lista default non compilata', async () => {
+    const res = await request(app)
+      .get(`/api/hr/haccp?data=${DATA_HACCP_TEST}`)
+      .set({ Authorization: `Bearer ${tokenUtenteCuoco}` });
     expect(res.status).toBe(200);
     expect(res.body.esistente).toBe(false);
     expect(res.body.checklist.length).toBeGreaterThan(0);
@@ -848,18 +858,26 @@ describe('HACCP (/api/hr/haccp)', () => {
     expect(res.status).toBe(401);
   });
 
-  test('POST voci mancanti → 400', async () => {
+  test('POST receptionist → 403 (non è in admin/titolare/cuoco)', async () => {
     const res = await request(app)
       .post('/api/hr/haccp')
       .set({ Authorization: `Bearer ${tokenUtente}` })
+      .send({ data: DATA_HACCP_TEST, voci: [{ attrezzatura: 'Forno', completata: true }] });
+    expect(res.status).toBe(403);
+  });
+
+  test('POST voci mancanti (cuoco) → 400', async () => {
+    const res = await request(app)
+      .post('/api/hr/haccp')
+      .set({ Authorization: `Bearer ${tokenUtenteCuoco}` })
       .send({ data: DATA_HACCP_TEST });
     expect(res.status).toBe(400);
   });
 
-  test('POST checklist valida → 200, salvata con l\'utente che l\'ha compilata', async () => {
+  test('POST checklist valida (cuoco) → 200, salvata con l\'utente che l\'ha compilata', async () => {
     const res = await request(app)
       .post('/api/hr/haccp')
-      .set({ Authorization: `Bearer ${tokenUtente}` })
+      .set({ Authorization: `Bearer ${tokenUtenteCuoco}` })
       .send({
         data: DATA_HACCP_TEST,
         voci: [
@@ -871,7 +889,7 @@ describe('HACCP (/api/hr/haccp)', () => {
 
     const verifica = await request(app)
       .get(`/api/hr/haccp?data=${DATA_HACCP_TEST}`)
-      .set({ Authorization: `Bearer ${tokenUtente}` });
+      .set({ Authorization: `Bearer ${tokenUtenteCuoco}` });
     expect(verifica.body.esistente).toBe(true);
     expect(verifica.body.checklist.length).toBe(2);
   });
