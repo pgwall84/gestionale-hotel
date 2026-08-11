@@ -8,7 +8,7 @@
 import { useState, useEffect, useRef, useCallback } from 'react';
 import Cookies from 'js-cookie';
 import AppShell from '@/components/layout/AppShell';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 
 // Soglie timer in minuti
 const TIMER_GIALLO = 8;
@@ -246,10 +246,10 @@ export default function CucinaPage() {
     }
     if (esRef.current) esRef.current.close();
 
-    // URL calcolato a runtime per funzionare su IP locale e ngrok
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    const url = `${protocol}//${hostname}:7001/api/ristorante/cucina/stream?token=${encodeURIComponent(token)}`;
+    // URL calcolato a runtime con lo stesso helper delle chiamate REST — in
+    // produzione la porta 7001 non è raggiungibile (dietro Nginx, firewall
+    // chiuso su tutto tranne 22/80/443), getApiUrl() lo sa già gestire.
+    const url = `${getApiUrl()}/ristorante/cucina/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
 

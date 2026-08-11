@@ -88,4 +88,11 @@ const api = {
   delete: (path, headers = {})       => request('DELETE', path, null, headers),
 };
 
+// Esportata anche singolarmente: serve alle pagine SSE (cucina/sala/ristorante)
+// che costruiscono a mano l'URL di un EventSource — stessa logica dev/prod,
+// mai duplicarla (bug reale trovato l'11/08/2026: 3 pagine calcolavano l'URL
+// SSE con la porta 7001 esplicita, mai aggiornate quando questo helper fu
+// corretto il 09/08/2026 per le chiamate REST normali — in produzione la 7001
+// non è aperta nel firewall, quindi la connessione restava sempre "in corso").
+export { getApiUrl };
 export default api;

@@ -9,7 +9,7 @@ import { useSearchParams, useRouter } from 'next/navigation';
 import { ShoppingCart, X, CheckCircle } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 import Cookies from 'js-cookie';
 
 // ── Match allergeni ────────────────────────────────────────────────────────────
@@ -190,10 +190,10 @@ function RistoranteInner() {
     if (!token) return;
     if (esRef.current) esRef.current.close();
 
-    // URL calcolato a runtime per funzionare su IP locale e ngrok
-    const hostname = window.location.hostname;
-    const protocol = window.location.protocol;
-    const url = `${protocol}//${hostname}:7001/api/ristorante/sala/stream?token=${encodeURIComponent(token)}`;
+    // URL calcolato a runtime con lo stesso helper delle chiamate REST — in
+    // produzione la porta 7001 non è raggiungibile (dietro Nginx, firewall
+    // chiuso su tutto tranne 22/80/443), getApiUrl() lo sa già gestire.
+    const url = `${getApiUrl()}/ristorante/sala/stream?token=${encodeURIComponent(token)}`;
     const es = new EventSource(url);
     esRef.current = es;
 
