@@ -3,8 +3,11 @@
 //        turni (CRUD + applica-standard), turni standard (CRUD),
 //        assenze (lista/crea/aggiornaStato), scadenze (CRUD + alert),
 //        documenti dipendente (upload/lista/download/download-zip/elimina),
-//        haccp (lista/salva/storico), comunicazioni (lista/crea/elimina)
-// Skip: export Excel, report mensile (risposte binarie — verifica manuale)
+//        haccp (lista/salva/storico), comunicazioni (lista/crea/elimina),
+//        report mensile — foglio "Consulente" (13/08/2026: ordine colonne
+//        + calcolo straordinari, parsing del buffer xlsx di ritorno)
+// Skip: export Excel (/timbrature/export), foglio Dettaglio/Riepilogo del
+//       report mensile — risposte binarie preesistenti, verifica manuale
 // Dipendenze: users (seed), richieste_assenza, comunicazioni, timbrature,
 //             turni, turni_standard, scadenze, documenti_dipendente,
 //             haccp_checklist — tutte referenziano users(id) con
@@ -19,6 +22,7 @@
 const request = require('supertest');
 const path    = require('path');
 const fs      = require('fs');
+const XLSX    = require('xlsx');
 const app     = require('../../backend/app');
 const { authHeader, creaToken } = require('../helpers/auth');
 const { creaUtenteDiTest, pulisciDatiTest, chiudiPool, getPool } = require('../helpers/db');
@@ -632,15 +636,21 @@ describe('POST /api/hr/turni/applica-standard', () => {
     expect(verifica.body.turni.every(t => t.tipo_turno === 'sera')).toBe(true);
   });
 
-  test('richiamato di nuovo sullo stesso periodo → non duplica i turni del nostro utente', async () => {
+  test('richiamato di nuovo sullo stesso periodo → sostituisce, non duplica i turni del nostro utente', async () => {
+    // Comportamento cambiato il 13/08/2026 (decisione esplicita del
+    // titolare, inverte quella dell'11/08): non più skip, ma DELETE+INSERT
+    // in transazione — richiamarlo sullo stesso periodo ricrea sempre le
+    // stesse righe (creati torna un numero ≥3, non più 0), ma il conteggio
+    // finale dei turni resta invariato: la verifica che conta davvero è che
+    // non ci si ritrovi con turni duplicati (6 invece di 3), non che
+    // "creati" sia zero.
     const res = await request(app)
       .post('/api/hr/turni/applica-standard')
       .set(authHeader.titolare())
       .send(RANGE_APPLICA_STANDARD);
     expect(res.status).toBe(200);
-    // Il periodo è già coperto per tutti (compreso il nostro utente) dalla
-    // chiamata precedente: nessun nuovo turno per nessuno.
-    expect(res.body.creati).toBe(0);
+    expect(res.body.creati).toBeGreaterThanOrEqual(3);
+    expect(res.body.sovrascritti).toBeGreaterThanOrEqual(3);
 
     const verifica = await request(app)
       .get(`/api/hr/turni?settimana=${RANGE_APPLICA_STANDARD.data_inizio}&user_id=${utenteTest.id}`)
@@ -900,5 +910,190 @@ describe('HACCP (/api/hr/haccp)', () => {
       .set(authHeader.titolare());
     expect(res.status).toBe(200);
     expect(res.body.storico.length).toBe(2);
+  });
+});
+
+// ─── Report mensile — foglio "Consulente" (GET /api/hr/timbrature/report-mensile) ──
+// Mesi 2027 scelti apposta per non incrociare mai dati reali del gestionale
+// in uso. Verifica sia il bug di ordine colonne trovato dal titolare
+// (json_to_sheet riordinava le chiavi numeriche '1'..'31' prima di
+// 'Dipendente' — fix: aoa_to_sheet, vedi timbratureController.js) sia il
+// calcolo di ore/straordinari/N-D.
+describe('Report mensile — foglio Consulente', () => {
+  const MESE_INDETERMINATO = '2027-03';
+  const MESE_CHIAMATA = '2027-04';
+
+  test('senza token → 401', async () => {
+    const res = await request(app).get(`/api/hr/timbrature/report-mensile?mese=${MESE_INDETERMINATO}`);
+    expect(res.status).toBe(401);
+  });
+
+  test('con token receptionist → 403', async () => {
+    const res = await request(app)
+      .get(`/api/hr/timbrature/report-mensile?mese=${MESE_INDETERMINATO}`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(403);
+  });
+
+  test('tempo indeterminato (soglia 8h): intestazione in ordine e straordinario calcolato', async () => {
+    const db = getPool();
+    await db.query('UPDATE users SET contratto_tipo = $1, fascia_oraria = $2 WHERE id = $3',
+      ['tempo_indeterminato', 'diurna', utenteTest.id]);
+    // Un giorno solo, 9h lavorate (08:00-17:00) → 1h di straordinario sopra la soglia di 8h
+    await db.query(
+      `INSERT INTO timbrature (user_id, tipo, timestamp) VALUES
+       ($1, 'entrata', '2027-03-05 08:00:00'), ($1, 'uscita', '2027-03-05 17:00:00')`,
+      [utenteTest.id]
+    );
+
+    const res = await request(app)
+      .get(`/api/hr/timbrature/report-mensile?mese=${MESE_INDETERMINATO}`)
+      .set(authHeader.titolare())
+      .responseType('blob');
+    expect(res.status).toBe(200);
+
+    const wb = XLSX.read(res.body, { type: 'buffer' });
+    expect(wb.SheetNames).toContain('Consulente');
+    const righe = XLSX.utils.sheet_to_json(wb.Sheets['Consulente'], { header: 1 });
+
+    // Intestazione: Dipendente per prima, Totale per ultima — il bug segnalato
+    // dal titolare le metteva dopo tutte le colonne giorno.
+    expect(righe[0][0]).toBe('Dipendente');
+    expect(righe[0][1]).toBe('1');
+    expect(righe[0][righe[0].length - 1]).toBe('Totale');
+    expect(righe[0].length).toBe(1 + 31 + 1); // marzo ha 31 giorni
+
+    const rigaOre = righe.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+    expect(rigaOre).toBeDefined();
+    expect(rigaOre[5]).toBe(9); // colonna giorno 5 (indice 5 = 'Dipendente' + giorni 1-4)
+    expect(rigaOre[rigaOre.length - 1]).toBe(9); // Totale
+
+    const idxRigaOre = righe.indexOf(rigaOre);
+    const rigaStraord = righe[idxRigaOre + 1];
+    expect(rigaStraord[0]).toBe('  di cui straordinari');
+    expect(rigaStraord[5]).toBe(1);
+    expect(rigaStraord[rigaStraord.length - 1]).toBe(1);
+  });
+
+  test("contratto a chiamata: straordinari 'N/D', mai una soglia inventata", async () => {
+    const db = getPool();
+    await db.query('UPDATE users SET contratto_tipo = $1, fascia_oraria = $2 WHERE id = $3',
+      ['chiamata', null, utenteTest.id]);
+    await db.query(
+      `INSERT INTO timbrature (user_id, tipo, timestamp) VALUES
+       ($1, 'entrata', '2027-04-05 10:00:00'), ($1, 'uscita', '2027-04-05 14:00:00')`,
+      [utenteTest.id]
+    );
+
+    const res = await request(app)
+      .get(`/api/hr/timbrature/report-mensile?mese=${MESE_CHIAMATA}`)
+      .set(authHeader.titolare())
+      .responseType('blob');
+    expect(res.status).toBe(200);
+
+    const wb = XLSX.read(res.body, { type: 'buffer' });
+    const righe = XLSX.utils.sheet_to_json(wb.Sheets['Consulente'], { header: 1 });
+
+    const rigaOre = righe.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+    expect(rigaOre[5]).toBe(4); // 10:00-14:00
+
+    const rigaStraord = righe[righe.indexOf(rigaOre) + 1];
+    expect(rigaStraord[5]).toBe('N/D');
+    expect(rigaStraord[rigaStraord.length - 1]).toBe('N/D');
+  });
+
+  test('turno notturno a cavallo di mezzanotte: le ore vanno sul giorno di ENTRATA, non di uscita', async () => {
+    const MESE_NOTTURNO = '2027-05';
+    const db = getPool();
+    await db.query('UPDATE users SET contratto_tipo = $1, fascia_oraria = $2 WHERE id = $3',
+      ['tempo_indeterminato', 'notturna', utenteTest.id]);
+    // Entrata il 10 alle 23:00, uscita l'11 alle 07:00 — 8h, nessuno
+    // straordinario (esattamente la soglia). Fix 13/08/2026: prima queste
+    // ore finivano sotto il giorno 11 (quello della timbratura di uscita).
+    await db.query(
+      `INSERT INTO timbrature (user_id, tipo, timestamp) VALUES
+       ($1, 'entrata', '2027-05-10 23:00:00'), ($1, 'uscita', '2027-05-11 07:00:00')`,
+      [utenteTest.id]
+    );
+
+    const res = await request(app)
+      .get(`/api/hr/timbrature/report-mensile?mese=${MESE_NOTTURNO}`)
+      .set(authHeader.titolare())
+      .responseType('blob');
+    expect(res.status).toBe(200);
+
+    const wb = XLSX.read(res.body, { type: 'buffer' });
+    const righe = XLSX.utils.sheet_to_json(wb.Sheets['Consulente'], { header: 1 });
+    const rigaOre = righe.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+
+    expect(rigaOre[10]).toBe(8);  // giorno 10 (indice 10 = colonna giorno 10): le ore ci sono
+    expect(rigaOre[11]).toBe(''); // giorno 11: vuoto, non ci deve finire nulla
+  });
+
+  test("turno l'ultimo giorno del mese (senza scavalco): prima andava perso del tutto", async () => {
+    // Bug distinto da quello sopra, trovato verificando il fix sullo
+    // scavalco: `new Date(anno, meseNum, 0).toISOString()` per calcolare
+    // l'ultimo giorno del mese passa da UTC e sul server (Europe/Rome)
+    // slittava sempre indietro di un giorno — l'ultimo giorno di OGNI mese
+    // era invisibile al report, anche senza nessun turno notturno di mezzo.
+    const MESE = '2027-06'; // giugno ha 30 giorni
+    const db = getPool();
+    await db.query('UPDATE users SET contratto_tipo = $1, fascia_oraria = $2 WHERE id = $3',
+      ['tempo_indeterminato', 'diurna', utenteTest.id]);
+    await db.query(
+      `INSERT INTO timbrature (user_id, tipo, timestamp) VALUES
+       ($1, 'entrata', '2027-06-30 08:00:00'), ($1, 'uscita', '2027-06-30 16:00:00')`,
+      [utenteTest.id]
+    );
+
+    const res = await request(app)
+      .get(`/api/hr/timbrature/report-mensile?mese=${MESE}`)
+      .set(authHeader.titolare())
+      .responseType('blob');
+    expect(res.status).toBe(200);
+
+    const wb = XLSX.read(res.body, { type: 'buffer' });
+    const righe = XLSX.utils.sheet_to_json(wb.Sheets['Consulente'], { header: 1 });
+
+    // Intestazione: l'ultima colonna giorno deve essere '30' (giugno ha 30
+    // giorni) seguita da 'Totale' — se ultimoGiorno fosse ancora sballato
+    // a '29' l'intestazione avrebbe una colonna in meno.
+    expect(righe[0][righe[0].length - 2]).toBe('30');
+
+    const rigaOre = righe.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+    expect(rigaOre[30]).toBe(8); // colonna giorno 30
+    expect(rigaOre[rigaOre.length - 1]).toBe(8); // Totale
+  });
+
+  test('turno a cavallo di fine ANNO: le ore restano nel mese/anno di entrata', async () => {
+    const db = getPool();
+    await db.query('UPDATE users SET contratto_tipo = $1, fascia_oraria = $2 WHERE id = $3',
+      ['tempo_indeterminato', 'notturna', utenteTest.id]);
+    // 31 dicembre 2027 23:00 → 1 gennaio 2028 07:00
+    await db.query(
+      `INSERT INTO timbrature (user_id, tipo, timestamp) VALUES
+       ($1, 'entrata', '2027-12-31 23:00:00'), ($1, 'uscita', '2028-01-01 07:00:00')`,
+      [utenteTest.id]
+    );
+
+    const resDicembre = await request(app)
+      .get('/api/hr/timbrature/report-mensile?mese=2027-12')
+      .set(authHeader.titolare())
+      .responseType('blob');
+    const wbDic = XLSX.read(resDicembre.body, { type: 'buffer' });
+    const righeDic = XLSX.utils.sheet_to_json(wbDic.Sheets['Consulente'], { header: 1 });
+    const rigaDic = righeDic.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+    expect(rigaDic[31]).toBe(8); // 31 dicembre: le ore ci sono
+
+    const resGennaio = await request(app)
+      .get('/api/hr/timbrature/report-mensile?mese=2028-01')
+      .set(authHeader.titolare())
+      .responseType('blob');
+    const wbGen = XLSX.read(resGennaio.body, { type: 'buffer' });
+    const righeGen = XLSX.utils.sheet_to_json(wbGen.Sheets['Consulente'], { header: 1 });
+    const rigaGen = righeGen.find(r => r[0] === `${utenteTest.cognome} ${utenteTest.nome}`);
+    // Nessun doppio conteggio: a gennaio l'utente non ha ore (solo la coda
+    // dell'entrata di dicembre, già contata lì)
+    expect(rigaGen === undefined || rigaGen[1] === '').toBe(true);
   });
 });

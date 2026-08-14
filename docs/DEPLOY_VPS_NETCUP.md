@@ -58,6 +58,30 @@ tutte le tabelle, ma ha `GRANT ALL PRIVILEGES` su tabelle e sequenze dello
 schema `public`. Sufficiente per il funzionamento dell'app (CRUD); le
 migration future vanno applicate come utente `postgres` (vedi §7).
 
+⚠️ **Incidente e fix permanente (10/08/2026)**: il `GRANT ALL PRIVILEGES`
+sopra era stato eseguito una tantum il 09/08 sulle tabelle allora
+esistenti — non si applica da solo alle tabelle create da migration
+successive (in Postgres serve esplicitamente `ALTER DEFAULT PRIVILEGES`,
+non era stato impostato). La migration 031 (modulo Addebiti extra) è
+stata la prima ad aggiungere tabelle nuove dopo il deploy del 09/08:
+`addebiti_extra`/`catalogo_addebiti_rapidi` sono risultate illeggibili/
+inscrivibili da `gestionale_app` (`permission denied`, codice `42501`),
+nonostante la migration fosse andata a buon fine — l'app rispondeva 500
+generico su ogni endpoint che le toccava. **Risolto in modo permanente**,
+eseguito come `postgres`:
+```
+GRANT ALL PRIVILEGES ON ALL TABLES IN SCHEMA public TO gestionale_app;
+GRANT ALL PRIVILEGES ON ALL SEQUENCES IN SCHEMA public TO gestionale_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON TABLES TO gestionale_app;
+ALTER DEFAULT PRIVILEGES FOR ROLE postgres IN SCHEMA public GRANT ALL ON SEQUENCES TO gestionale_app;
+```
+Le ultime due righe (`ALTER DEFAULT PRIVILEGES`) coprono anche le
+tabelle/sequenze create da migration future eseguite come `postgres` —
+**da questo punto in poi §8 non richiede più un GRANT manuale dopo ogni
+migration con tabelle nuove**, ma se in futuro si ricrea il DB da zero
+(nuovo server, disaster recovery) questo `ALTER DEFAULT PRIVILEGES` va
+rieseguito, non è nel dump/nelle migration stesse.
+
 **Origine dello schema**: le 30 migration in `database/migrations/` **non
 ricostruiscono da sole un database vuoto** — mancano alcune CREATE TABLE
 iniziali (es. `ztl_prenotazioni`) e l'ordine alfabetico dei file (`005b`
@@ -246,6 +270,13 @@ su - postgres
 psql -d gestionale_hotel -f /var/www/gestionale-hotel/database/migrations/0XX_nome.sql
 exit
 ```
+Dal 10/08/2026 (vedi §3, incidente migration 031) non serve più un
+`GRANT` manuale dopo — `ALTER DEFAULT PRIVILEGES` copre automaticamente
+le tabelle/sequenze create da questa migration. Verificare comunque con
+un endpoint reale che tocca la tabella nuova, non fidarsi solo di
+"migration applicata senza errori": è esattamente quello che è successo
+il 10/08 e la migration era corretta, il problema era un permesso
+separato.
 
 ---
 

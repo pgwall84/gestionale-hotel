@@ -2402,3 +2402,1218 @@ verifica visiva in browser della griglia `/addebiti-extra` e di
 titolare vuole procedere: UI ristorante per soggiorno/esterno + toggle
 addebito camera (deprioritizzata, task aperta); altrimenti chiarire la
 domanda sospesa sulle tariffe per canale prima di pianificarla.
+
+### Seguito stesso giorno — verifica locale, deploy VPS, chiuso ✅
+
+Verifica locale (tab Code): migration applicata pulita, `21/21` verdi su
+`addebiti-extra.test.js`, `611/634` sull'intera suite — le uniche 23
+rosse sono le 3 note preesistenti (`email-template`, `pre-checkin`,
+`email-prenotazioni`), stesso numero della baseline, confermato nessuna
+regressione. Verifica visiva del titolare: catalogo creato da
+Impostazioni, griglia a quadratoni funzionante, addebito confermato
+persiste dopo reload. Unico intoppo, non un bug: il titolare non trovava
+la voce "Addebiti extra" in sidebar — cercava nella bottom-nav mobile
+(4 icone rapide curate, non mostra mai tutte le voci per scelta), non nel
+pannello "Menu" che raggruppa per sezione come il desktop. Nessuna
+modifica necessaria, solo chiarito dove guardare.
+
+Feedback del titolare sulla UX, non un bug: il pulsante "Addebiti extra"
+nel dettaglio soggiorno di planning-camere funziona come concordato ma
+"non è proprio comodo" nell'uso reale — segnato in `docs/EVOLUTIVE.md`
+per essere ripreso capendo prima cosa esattamente non va, non
+riprogettato a caso ora.
+
+Deploy VPS (tab Code, stessa giornata): backup pre-migration su `/tmp`
+invece di `/root` (permessi `700` su `/root`, il comando dato da Cowork
+avrebbe fallito — nota utile per la prossima volta), poi spostato come
+root. `git pull` fast-forward pulito (nessun hotfix locale in conflitto
+questa volta). Migration 031 applicata in produzione, verificata con
+`\d`. Nessuna dipendenza nuova quindi install/build rapidi. `pm2 restart
+all` → entrambi i processi online, health check backend + pagina
+`/addebiti-extra` entrambi 200.
+
+**Modulo Addebiti extra: completo, testato, in produzione.** Aperto solo
+quanto già segnato sopra come deliberatamente non fatto: UI ristorante
+per soggiorno/esterno + toggle riga (deprioritizzata), UX del pulsante da
+planning-camere (da rivedere), più la domanda sospesa sulle tariffe per
+camera/canale (mai chiarita dal titolare in questa sessione).
+
+### Seguito stesso giorno — incidente permessi DB post-deploy, risolto ✅
+
+Il titolare ha segnalato "Errore interno del server." su entrambe le
+pagine nuove poco dopo il deploy. Diagnosi da log reali (`pm2 logs`, non
+a tentativi): `permission denied for table catalogo_addebiti_rapidi`/
+`addebiti_extra`, codice Postgres `42501`. Causa: `gestionale_app` (utente
+applicativo, non proprietario del DB — vedi §3 di
+`docs/DEPLOY_VPS_NETCUP.md`) aveva ricevuto un `GRANT ALL PRIVILEGES` una
+tantum il 09/08, che **non si applica automaticamente** alle tabelle
+create da migration successive. La 031 è stata la prima migration con
+tabelle nuove eseguita dopo quel deploy — le due tabelle nuove sono
+risultate illeggibili/inscrivibili nonostante la migration fosse andata a
+buon fine senza errori. Nessun bug di codice: la query era corretta, il
+permesso mancava a un livello sotto.
+
+**Fix permanente** (non solo per oggi): oltre a ri-eseguire il `GRANT`
+sulle due tabelle, impostato `ALTER DEFAULT PRIVILEGES FOR ROLE postgres
+IN SCHEMA public GRANT ALL ON TABLES/SEQUENCES TO gestionale_app` — le
+migration future con tabelle nuove non avranno più bisogno di questo
+passaggio manuale. Documentato in `docs/DEPLOY_VPS_NETCUP.md` §3 e §8.
+
+**Verifica end-to-end reale** (tab Code, nessun accesso browser/
+credenziali staff disponibili in quel momento): JWT firmato a mano con lo
+stesso payload/segreto del login reale (utente titolare reale, id 4,
+Rosetta Doti) — stesso percorso di autorizzazione della UI, non un curl
+anonimo. Tre chiamate autenticate: lettura catalogo (500→200, lista
+vuota), lettura addebiti soggiorno (500→200, totale 0), scrittura
+catalogo (500→201, riga creata e poi cancellata subito, nessun residuo).
+Nessun riavvio pm2 necessario — era solo un permesso, non codice.
+
+**Lezione per il prossimo modulo con tabelle nuove in produzione**: non
+basta "migration applicata senza errori" — verificare sempre con una
+vera chiamata autenticata che tocca la tabella nuova, non solo `\d` o
+l'esito del comando di migration. Coerente con
+[[feedback_verificare_chiamata_api_reale_prima_deploy_ok]] in memoria, ma
+un caso nuovo: qui la migration stessa era perfetta, il fallimento era un
+livello sotto (permessi), non nella query o nello schema.
+
+## 13/08/2026 — Audit HR/timbrature, bug SSE/CORS, provisioning dipendenti, contratto e report consulente
+
+Sessione lunga, quattro pezzi distinti.
+
+**Audit completo modulo HR/timbrature** (su richiesta del titolare, prima
+di far partire l'uso reale con i dipendenti): letto ogni riga di codice
+del modulo, verificata la copertura test (mancava quasi del tutto su
+turni/turni-standard/scadenze/documenti/haccp), consegnata una checklist
+PDF di 20 scenari da eseguire fisicamente in hotel
+(`docs/CHECKLIST_USER_TEST_HR.pdf`). Trovato e chiuso un gap di sicurezza
+reale: le route HACCP non avevano **nessuna** restrizione di ruolo a
+livello di route, nonostante `shared/ruoli.js` la definisse già — mai
+applicata. Scritta la migration mancante `032_turni_standard.sql` (la
+tabella esisteva già nel DB ma non in nessuna migration versionata) e la
+nuova funzionalità "Applica turno standard" (bulk, un mese intero, non
+sovrascrive turni già assegnati a mano — scelta esplicita del titolare).
+93/93 test verdi, deployato e verificato in produzione dal titolare.
+
+**Bug reale trovato durante il retest post-deploy**: l'export Excel
+timbrature falliva con errore CORS contro un tunnel ngrok defunto da
+inizio luglio (OCR pre-checkin). Causa: `frontend/.env.local` aveva
+`NEXT_PUBLIC_API_URL` ancora puntato lì, e 7 file frontend leggevano
+quella variabile build-time direttamente invece del già esistente
+`getApiUrl()` runtime — violazione della regola di rete "non derogabile"
+di CLAUDE.md Sezione 12. Sistemato `.env.local` e tutti e 7 i file
+(`personale`, `tassa-soggiorno`, `ztl`, `magazzino-qr-stampa`,
+`menu-stampa`, `menu-pubblico`, `menu`). Trovato per strada un secondo bug
+di produzione mai notato prima, stessa causa radice ma indipendente:
+`tassa-soggiorno/page.jsx` aveva una propria copia locale del calcolo URL,
+senza il ramo `NODE_ENV === 'production'` — avrebbe sempre tentato la
+porta 7001 diretta, chiusa dal firewall in produzione. Corretto riusando
+`getApiUrl()`.
+
+**Bug `/utenti` "non raggiungibile in locale"**: la guardia di accesso
+della pagina controllava solo `ruolo === 'titolare'`, escludendo admin —
+mentre sidebar e backend ammettono entrambi. Corretto con un array
+`RUOLI_CONSENTITI`; sistemata anche `LABEL_RUOLI` (mancavano admin e
+portiere_notte) e chiuso un buco di privilege-escalation che quella
+correzione avrebbe altrimenti aperto (un titolare avrebbe potuto assegnare
+il ruolo admin da quella tendina — ora filtrato, come già faceva
+`/personale`).
+
+**Specifica nuova del titolare, eseguita in tre fasi dopo un giro di
+chiarimenti** (username vs email, ruolo dedicato vs riuso di
+'dipendente', orario standard per contratto, calcolo straordinari):
+
+- *Fase A*: provisioning di 10 dipendenti reali + 7 account di test (uno
+  per ruolo). Deciso di **non** costruire un vero campo username separato
+  — la colonna `email` non ha mai avuto validazione di formato lato
+  backend, quindi si usa direttamente come nome utente (`nome.cognome`,
+  niente `@dominio`), risparmiando una migration e un cambio di flusso di
+  login. Deciso di **non** creare un ottavo ruolo "lavapiatti" — riusato
+  `dipendente` (già impiegato come ruolo generico in `pulizie`/
+  `camere.pulizia`) mostrando solo l'etichetta "Lavapiatti" in UI, per non
+  intestare permanentemente quello slot a una mansione specifica. Aggiunto
+  self-service "Cambia password" (`POST /api/auth/cambia-password`, mai
+  esistito prima — il reset da admin/titolare invece esisteva già in
+  `/utenti`, solo irraggiungibile per il bug sopra). Script
+  `backend/scripts/provisionaDipendenti.js` (dry-run di default, non
+  sovrascrive mai un account esistente). Eseguito dal titolare via tab
+  Code: 17/17 a posto (11 creati, 6 già esistenti rinominati a mano senza
+  spostare dati storici). Login e cambio password verificati.
+- *Fase B*: nuove colonne `contratto_tipo`/`fascia_oraria` su `users`
+  (migration `033_contratto_dipendenti.sql`, entrambe nullable). Il
+  pannello "Turni standard" ora propone un default in base al contratto
+  quando un dipendente non ha ancora un turno impostato: indeterminato
+  diurna 07-15, indeterminato notturna 23-07, part-time 09-14 (confermato
+  dal titolare). Nessuna proposta per chiamata/non impostato — resta il
+  default generico preesistente. Chi ha già un turno standard salvato non
+  viene mai toccato.
+- *Fase C*: nuovo foglio "Consulente" nell'export
+  `report-mensile` esistente (nessuna modifica UI, stesso pulsante) — due
+  righe per dipendente (ore lavorate e straordinari), una colonna per
+  ogni giorno del mese più il totale. Straordinari = ore oltre la soglia
+  del contratto (8h/5h); per chiamata o contratto non impostato si scrive
+  "N/D" invece di inventare una soglia, su indicazione esplicita del
+  titolare ("non so come funzionino i contratti a chiamata") — da
+  chiarire con il consulente del lavoro, non da indovinare in codice.
+  Logica verificata con dati simulati (turni multipli nello stesso
+  giorno, contratto nullo, chiamata) prima di consegnarla.
+
+Tutte e tre le fasi verificate solo con `tsc --noEmit` e controlli di
+sintassi/logica dal sandbox (nessun accesso al Postgres del titolare da
+qui) — **test automatici e verifica end-to-end reale restano da fare dal
+titolare/tab Code**, non ancora confermati a fine sessione.
+
+### Seguito stesso giorno — feedback del titolare dopo il primo giro, 6 fix
+
+Il titolare ha provato le Fasi A/B/C e segnalato sei cose in un colpo solo.
+
+**Bug reale trovato e corretto — ordine colonne foglio Consulente**: la
+colonna "Dipendente" finiva dopo tutti i giorni invece che all'inizio.
+Causa non di XLSX ma del linguaggio: un oggetto JS con chiavi che
+sembrano indici ('1', '2', ..., '31') le enumera sempre per prime, in
+ordine numerico, prima di qualunque chiave testuale — indipendentemente
+dall'ordine di inserimento (`Object.keys({'Dipendente':x,'1':y})` →
+`['1','Dipendente']`). `json_to_sheet` eredita quell'ordine.
+Riprodotto e verificato con un mini script prima di correggere. Fix:
+`aoa_to_sheet` con intestazione esplicita — l'ordine delle colonne
+diventa quello dell'array, non più negoziabile dal motore JS.
+
+**Bug preesistente trovato per strada, poi corretto su via libera esplicita
+del titolare** ("i dati inseriti ora in locale non sono significativi"):
+in `reportMensile()` le ore di un turno venivano attribuite al giorno
+della timbratura di **uscita**, non di entrata. Per un turno diurno non
+cambiava nulla, ma un notturno (23:00→07:00 del giorno dopo, esattamente
+il caso di portiere_notte_test) finiva nella colonna del giorno
+*successivo* a quello in cui era iniziato — condiviso da tutti e tre i
+fogli, perché condividono `pairsPerUser`. Fix: `openEntry[uid]` ora
+memorizza anche il giorno dell'entrata insieme al timestamp, e quel
+giorno (non quello ricalcolato sulla riga di uscita) è la chiave con cui
+la coppia entrata/uscita viene archiviata. Aggiunto un test di
+regressione in `hr.test.js` (turno 23:00→07:00, verifica che le ore
+finiscano sul giorno di entrata e non su quello dopo).
+
+### Seguito stesso giorno — scavalco mese/anno, e un secondo bug più grosso trovato verificandolo
+
+Il titolare ha chiesto di sistemare anche lo scavalco di mese/anno (il
+limite lasciato aperto sopra). Implementato allargando di un giorno per
+lato la finestra di lettura timbrature (`primoGiornoQuery`/
+`ultimoGiornoQuery`, `setDate(±1)` — scavalca correttamente anche
+Dicembre→Gennaio, `Date` non ha bisogno di casi speciali per l'anno), poi
+scartando i giorni cuscinetto fuori dal mese richiesto subito dopo aver
+costruito `pairsPerUser` (una sola volta, condiviso dai tre fogli).
+
+**Verificandolo con dati simulati è saltato fuori un bug preesistente più
+serio, non legato allo scavalco**: `ultimoGiorno` veniva calcolato con
+`new Date(anno, meseNum, 0).toISOString().split('T')[0]` — costruisce
+l'ultimo giorno del mese come mezzanotte LOCALE, poi lo converte in UTC
+per trasformarlo in stringa. Sul server, fuso Europe/Rome (UTC+1/+2),
+questo fa **sempre** slittare la data indietro di un giorno: per luglio
+2026 `ultimoGiorno` risultava `'2026-07-30'` invece di `'2026-07-31'`.
+Conseguenza concreta, verificata con `TZ=Europe/Rome node -e "..."` prima
+di correggere: **l'ultimo giorno di ogni singolo mese è sempre stato
+invisibile al report mensile**, anche per un turno diurno normalissimo
+senza nessun scavalco di mezzo — non un problema introdotto oggi, c'era
+da quando `reportMensile()` è stata scritta. Corretto con lo stesso
+`fmtDataLocale()` già introdotto per la finestra allargata (legge i
+componenti della data locale invece di passare da UTC). Stessa classe di
+bug corretta anche nel calcolo del giorno di un'entrata dentro il loop di
+accoppiamento entrata/uscita: un turno iniziato appena dopo mezzanotte
+locale (es. 00:30) finiva attribuito al giorno PRIMA per lo stesso motivo
+— anche questo verificato con un caso concreto prima di correggere.
+
+Tre nuovi test di regressione in `hr.test.js`: turno l'ultimo giorno del
+mese senza scavalco (quello che prima spariva del tutto), scavalco di
+fine anno (verifica sia dicembre che gennaio, nessun doppio conteggio),
+intestazione con tutte le colonne giorno corrette. Nessuno eseguito
+contro un Postgres reale — solo simulazione della stessa identica logica
+con `node -e`, stesso fuso orario del server (`TZ=Europe/Rome`).
+
+**Verificato dal titolare in locale: il report ora è corretto.** Ultima
+richiesta della sessione: larghezza colonne del foglio Consulente, per
+stare su un solo A4 in stampa orizzontale. Aggiunto `ws['!cols']`
+(Dipendente 24 caratteri, ogni giorno 4, Totale 8) — verificato
+ispezionando l'XML del file generato, le colonne vengono scritte
+correttamente. **Limite scoperto per lo stesso motivo**: la libreria xlsx
+in uso (SheetJS Community, non quella a pagamento) non scrive
+l'orientamento/adatta-a-una-pagina nel file (`!pageSetup` viene ignorato
+in scrittura, verificato allo stesso modo) — quell'impostazione resta da
+fare a mano in Excel prima di stampare, non automatizzabile con questa
+libreria.
+
+**Bug nei test trovato per completezza, corretto prima di consegnare**:
+il test "richiamato di nuovo sullo stesso periodo → non duplica" per
+`applica-standard`, scritto quando il comportamento era ancora "skip",
+si aspettava `creati: 0` alla seconda chiamata sullo stesso periodo — con
+la sovrascrittura ora `creati` torna sempre un numero ≥3 (le righe
+vengono ricreate ad ogni chiamata, non più saltate). Corretto l'assert e
+aggiunta una verifica su `sovrascritti`; il controllo che conta davvero
+(nessun turno duplicato, sempre 3 non 6) resta invariato.
+
+**Verifica finale del titolare (tab Code), tutta la sessione confermata**:
+`hr.test.js` 100/100, `users.test.js` 10/10, suite completa 727/728 (30
+suite su 31 verdi). L'unico fallimento è preesistente e scollegato da
+questa sessione: `tests/api/alloggiati.test.js` ha un test-guardia che
+verifica che `ALLOGGIATI_UTENTE` non sia valorizzata nell'ambiente di
+test (evita chiamate SOAP reali verso WS_ALLOGGIATI durante `npm test`)
+— sul `.env` di questa macchina la variabile è ora impostata a
+`SP000463` (le credenziali reali, ottenute dal titolare dopo la sessione
+del modulo 2.5 Fase 2). Il guardiano sta segnalando esattamente questo:
+ambiente di test e di sviluppo condividono lo stesso `.env`. Non toccato
+— serve un `.env.test` separato per chiuderlo, scelta di configurazione
+rimandata al titolare, non un bug di oggi.
+
+**Sessione 13/08/2026 chiusa**: audit HR/timbrature, provisioning 10
+dipendenti + 7 account test, contratto_tipo/fascia_oraria, report
+"Consulente" con relativi fix (ordine colonne, attribuzione turni
+notturni, scavalco mese/anno, ultimoGiorno sballato dal fuso orario,
+larghezza colonne per la stampa), sovrascrittura di "Applica turno
+standard" — tutto verificato end-to-end dal titolare, verde.
+
+**"Applica turno standard" — sovrascrittura invece di skip**: decisione
+esplicita del titolare, inverte la scelta dell'11/08 ("mai sovrascrivere,
+evita di cancellare in silenzio scambi fatti a mano"). Nuova motivazione:
+il turno standard deve essere predominante. `turniController.js`
+riscritto: DELETE + INSERT in un'unica transazione (solo per i dipendenti
+che hanno uno standard configurato — chi non ce l'ha resta intoccato).
+Aggiunta una conferma esplicita in UI prima dell'azione (`window.confirm`),
+dato che ora è distruttiva; testo del riepilogo aggiornato di conseguenza
+("N turni sostituiti" invece di "N giorni già assegnati, non toccati").
+
+**Fix UX — form modifica dipendente invisibile in liste lunghe**: il form
+si apriva sempre in cima al contenitore scrollabile, sotto la lista — se
+si clicca "Modifica" su un dipendente in fondo, il form si apre fuori
+dalla vista corrente. Aggiunto `formRef` + `scrollIntoView` all'apertura.
+
+**Dati di test mancanti per verificare il report a mano**: nuovo script
+`backend/scripts/seedTimbratureTest.js` (idempotente, cancella e rigenera
+le timbrature nel range ad ogni esecuzione) — popola giugno-luglio 2026
+per portiere_notte_test (tempo indeterminato/notturna, turni 23-07 con
+straordinari periodici), cameriere_test (part-time, 09-14 con
+straordinari periodici), cuoco_test (chiamata, giorni/orari sparsi e
+irregolari) — imposta anche il loro `contratto_tipo`/`fascia_oraria`.
+
+**Test automatici per i due gap segnalati**: `tests/api/users.test.js`
+(nuovo file — creazione/modifica con `contratto_tipo`/`fascia_oraria`,
+validazione, permessi) — scrivendolo, trovato e corretto un bug vero:
+`validaContratto()` in `usersController.js` rifiutava una stringa vuota
+(400) invece di trattarla come "campo da svuotare", inconsistente con
+`contratto_tipo || null` poco sotto che la converte comunque in null.
+Esteso anche `tests/api/hr.test.js` con un nuovo describe per il foglio
+Consulente (permessi, ordine intestazione, calcolo ore/straordinari,
+'N/D' per chiamata) — parsing del buffer xlsx di ritorno via
+`res.responseType('blob')` + libreria `xlsx`, pattern nuovo per questa
+suite (verificato a parte con un mini server Express prima di fidarsene,
+perché supertest+Buffer binari non erano mai stati usati altrove nel
+progetto). Aggiunto `xlsx` anche al `package.json` di radice (era solo in
+`backend/`) — non strettamente necessario per Jest, che risolve già da
+`backend/node_modules` via `modulePaths` in `jest.config.js`, ma utile per
+gli script eseguiti con `node` puro dalla radice. Anche questi test non
+eseguibili dal sandbox (nessun Postgres raggiungibile) — solo sintassi e
+la meccanica di parsing xlsx verificate isolatamente.
+
+**"Sheet Dettaglio vuoto" e "non vedo N/D"**: non replicati né corretti
+come bug — ipotesi più probabile è semplicemente l'assenza di dati per
+gli utenti di test nel mese controllato (prima di questo seed script non
+esisteva nessuna timbratura per loro). Da riverificare dopo aver lanciato
+`seedTimbratureTest.js` e generato il report per giugno/luglio 2026.
+
+**Pulizia utenti con email finte (Rosetta Doti, Nency Donato)**: nessuna
+azione di codice — solo guidance data al titolare. Il progetto non
+cancella mai un utente dal DB (`usersController.cambiaStato`, commento
+esplicito: "per mantenere la storicità"), e `turni`/`timbrature`
+referenziano `users(id)` con `ON DELETE RESTRICT` — una DELETE diretta
+fallirebbe comunque se questi due hanno una qualunque riga storica
+collegata. Raccomandato disattivarli (`attivo=false`, già possibile da
+`/utenti` col pulsante esistente) invece di cancellarli.
+
+**Titolare (Carmine Muro) e admin rinominati in nome.cognome**: nessuna
+azione di codice necessaria — stesso form di modifica già usato per gli
+altri 6 in Fase A, il titolare lo fa da sé da `/utenti`.
+
+Tutti i fix di codice verificati solo con `tsc`/`node -c`/sintassi dal
+sandbox — nessuno eseguito contro il Postgres reale in questa sessione.
+
+### Seguito stesso giorno — separazione .env test/dev per Alloggiati Web
+
+Il titolare ha ottenuto la WSKEY e ha chiesto di sistemare, prima di
+procedere, l'unico punto aperto della verifica finale: il test-guardia di
+`tests/api/alloggiati.test.js` che fallisce quando `ALLOGGIATI_UTENTE` è
+valorizzata nel `.env` di sviluppo (condiviso con quello di test).
+
+Fix minimo, non invasivo: nuovo file `backend/.env.test` (committato,
+nessun segreto — solo `ALLOGGIATI_UTENTE=`, `ALLOGGIATI_PASSWORD=`,
+`ALLOGGIATI_WSKEY=` esplicitamente vuote) caricato da `tests/setup.js`
+**dopo** `backend/.env`, con `override: true` — sovrascrive a vuoto solo
+queste 3 variabili nel processo Jest, senza toccare `backend/.env` reale
+né richiedere due file di configurazione separati per tutto il resto
+(DB/JWT restano condivisi, invariato). Verificato isolatamente con
+`node -e` (variabile impostata a un valore finto, poi confermata vuota e
+falsy dopo l'override) — non eseguibile contro Jest vero dal sandbox
+(nessun Postgres raggiungibile), confermato dal titolare in locale:
+**suite completa 728/728 verdi, 31/31 suite, exit code 0** — il
+test-guardia su `ALLOGGIATI_UTENTE` ora passa, nessun fallimento residuo.
+Chiuso.
+
+WSKEY inserita in `backend/.env` insieme a Utente/Password già presenti;
+titolare ha testato "Verifica credenziali" da
+`Impostazioni ▸ Alloggiati Web` (GenerateToken + Authentication_Test,
+zero rischio, nessun dato ospite coinvolto). **Esito: "Credenziali
+valide", confermato il 13/08/2026 alle 19:14:25.** Primo contatto reale
+con WS_ALLOGGIATI riuscito al primo tentativo — l'assunzione sull'header
+SOAP action (`alloggiatiSoapClient.js`, commento in cima al file) era
+corretta, non serve più trattarla come rischio aperto.
+
+Sblocca il resto del modulo 2.5 Fase 2: prossimo passo naturale è
+`testSchedine` (metodo `Test`, sicuro — controllo formato, nessuna
+acquisizione, manuale pag. 9) su un soggiorno reale, prima di arrivare a
+`inviaSchedine` (`Send`, quello che registra davvero l'ospite alla
+Polizia di Stato — solo quando il titolare è pronto a farlo sul serio).
+
+### Seguito stesso giorno — pulsante "Verifica schedina" + soggiorno di test
+
+Il titolare ha chiesto di collegare `Test` all'UI (l'endpoint
+`POST /api/alloggiati/soggiorni/:id/test` esisteva già dall'11/08, mai
+raggiungibile senza chiamarlo a mano) e di poter provare senza usare un
+ospite reale. Chiarito anche un dubbio sulla WSKEY: **non si rigenera ogni
+giorno** — riletto `MANUALEALBERGHI.pdf` pag. 28 per essere certi prima di
+rispondere: "È possibile generare solo un nuovo codice al giorno" è un
+limite su quante volte *puoi rigenerarla* (se serve), non una scadenza
+automatica; resta valida finché non cambi la password del portale
+("Ad ogni cambio password si dovrà generare un nuovo codice WSKEY").
+Nessuna gestione ricorrente necessaria.
+
+**`frontend/app/impostazioni/alloggiati/page.jsx`**: nuova card "Verifica
+schedina (Test)" tra "Verifica credenziali" e "Tabelle di codifica" — campo
+ID soggiorno + pulsante, mostra avvisi (ospiti esclusi per dati mancanti,
+stesso formato di `docs/EVOLUTIVE.md`/ross1000), righe respinte dal
+servizio (se il formato non passa) e l'esito "N/M schedine valide". Nessuna
+lista soggiorni in questa pagina, deliberatamente — resta una pagina di
+sola configurazione, non un punto operativo.
+
+**`backend/scripts/creaPrenotazioneTestAlloggiati.js`** (nuovo): crea una
+prenotazione+soggiorno+ospite interamente fittizi (date 2099, stessa
+convenzione già in uso nei test automatici — mai sovrapposto a una
+prenotazione reale, mai visibile scorrendo il planning quotidiano) per
+poter premere "Verifica schedina" senza toccare un ospite vero. Cerca da
+solo i codici reali già sincronizzati (comune "Lerici", tipo documento
+"carta d'identità") invece di inventarli — se `alloggiati_codici` è vuota
+si ferma con l'istruzione di sincronizzare prima. Idempotente
+(`external_booking_id` fisso come chiave) + flag `--elimina` per ripulire
+tutto a fine test (ordine corretto: soggiorno_ospiti → soggiorni →
+prenotazioni → ospiti, unica tabella con FK NOT NULL su quell'ospite).
+Marcato ovunque, nei commenti e nel campo `note` salvato nel DB, come
+"mai da usare con Send" — è un ospite inventato, un invio reale
+registrerebbe dati falsi presso la Polizia di Stato.
+
+Verificato in questa sessione: `node -c` sullo script, parse Babel
+(`next/babel`) sulla pagina, `tsc --noEmit` sull'intero frontend — tutti
+puliti. Non eseguibile end-to-end dal sandbox (nessun Postgres
+raggiungibile): il titolare deve lanciare lo script e provare il pulsante
+in locale.
+
+### Seguito stesso giorno — date 2099 rifiutate da WS_ALLOGGIATI, script corretto
+
+Primo test reale del titolare: `Test` ha risposto `ErroreCod 12
+SCHEDINA_CAMPO_NON_CORRETTO — Data di Arrivo Errata` sul soggiorno con
+data_arrivo 2099. Verificato subito il tracciato (`MANUALEWS.pdf` pag.
+19-20): il formato gg/mm/aaaa generato da `formatDataSchedina` è quello
+richiesto, quindi non è un problema di formato. **Ipotesi non confermata
+esplicitamente dal manuale** (non documenta questo vincolo, l'errore è lo
+stesso testo usato come esempio generico nel manuale stesso): il servizio
+verifica anche la plausibilità operativa della data, non solo il formato
+— 73 anni nel futuro viene respinto.
+
+Riscritto `backend/scripts/creaPrenotazioneTestAlloggiati.js`: invece di
+una data lontanissima "sicura per costruzione", ora cerca in automatico
+(funzione `trovaCameraLibera`) la prima combinazione camera+data libera a
+partire da domani (stessa logica del vincolo EXCLUDE — daterange +
+cancellato=false — verificata PRIMA dell'INSERT, con gestione dell'errore
+23P01 come rete di sicurezza per una corsa critica). Supporta anche
+`--camera=`/`--arrivo=`/`--notti=` per forzare una combinazione a mano.
+Effetto collaterale accettato: il soggiorno ora compare per davvero nel
+planning reale per la sua finestra (prima, con 2099, non ci sarebbe mai
+comparso) — mitigato rendendo il nome ospite il più esplicito possibile
+("TEST ALLOGGIATI — NON REALE — ELIMINARE") e ricordando ad ogni run di
+eliminarlo con `--elimina` appena finito di testare.
+
+Non ancora rieseguito dal titolare con la versione corretta — da
+confermare se la nuova data (vicina) viene accettata da `Test`.
+
+### Seguito stesso giorno — anche "domani" respinta: la vera regola è "mai futura"
+
+Il titolare ha rilanciato con la versione "domani" e ha ricevuto
+ESATTAMENTE lo stesso errore (`SCHEDINA_CAMPO_NON_CORRETTO — Data di
+Arrivo Errata`). Questo smentisce l'ipotesi precedente ("data troppo
+lontana nel futuro") — se anche un solo giorno nel futuro viene respinto,
+il problema non è la distanza. Verificato di nuovo il tracciato
+(`MANUALEWS.pdf` pag. 19-20, offset byte esatti Campo/DA/A) per escludere
+un bug di posizionamento: Tipo Alloggiato occupa 0-1 (2 char), Data Arrivo
+2-11 (10 char) — esattamente quello che genera il nostro codice, nessun
+disallineamento.
+
+Cercato riscontro esterno prima di azzardare un secondo tentativo alla
+cieca (WebSearch): community Airbnb Italia e blog di settore sull'uso di
+questo stesso webservice concordano che Alloggiati Web è pensato per
+comunicare un arrivo **già avvenuto**, da trasmettere entro 24 ore — "si
+ha la possibilità di inserire la data di check-in del giorno prima entro
+le 24 ore". **Data Arrivo quindi non può mai essere futura**, andava bene
+al massimo oggi o ieri — non documentato esplicitamente nel manuale
+tecnico, ma coerente con lo scopo del servizio (comunicazione di
+un soggiorno in corso, non prenotazione).
+
+Riscritto `creaPrenotazioneTestAlloggiati.js`: `trovaCameraLibera` non
+scorre più in avanti nel tempo, cerca solo tra un piccolo insieme di date
+candidate — oggi, poi ieri come fallback — mai oltre. Se l'hotel risulta
+pieno su entrambe (possibile in alta stagione, 20 camere), lo script si
+ferma con l'istruzione di forzare a mano `--camera=`/`--arrivo=` (non
+successivo a oggi) invece di provare a indovinare.
+
+### Seguito stesso giorno — data confermata corretta, ora il Cognome
+
+Riverificato: con data oggi il rifiuto su Data Arrivo è sparito, l'ipotesi
+"mai futura" era quella giusta. Il rifiuto si è spostato su un altro
+campo: `SCHEDINA_CAMPO_NON_CORRETTO — Cognome con caratteri non validi`.
+Causa quasi certa (il manuale non documenta un set di caratteri ammessi
+per Cognome, nessuna conferma esplicita trovata): il cognome fittizio
+usato nello script, `'NON REALE — ELIMINARE'`, conteneva un trattino lungo
+(em dash, carattere Unicode U+2014) — non uno standard per un tracciato a
+lunghezza fissa pensato per l'alfabeto latino base. Cambiato in `'TEST'`/
+`'ALLOGGIATI NON REALE'` (solo lettere e spazi, nessuna punteggiatura).
+
+**Confermato dal titolare: "Formato verificato — 1/1 schedine valide su 1
+ospiti nel soggiorno."** Percorso completo validato end-to-end contro il
+servizio reale: generatore tracciato (`alloggiatiSchedina.js`) → client
+SOAP (`alloggiatiSoapClient.js`) → metodo `Test` di WS_ALLOGGIATI, esito
+positivo. Le due correzioni della sessione (data mai futura, niente
+punteggiatura Unicode nei campi testuali) restano valide anche per un
+futuro invio reale — stesso generatore, stesso client, usato anche da
+`Send`.
+
+**Da ricordare al titolare**: eliminare il soggiorno di test appena
+finito — a differenza della vecchia versione con data 2099 (mai visibile
+da nessuna parte), questo occupa per davvero una camera reale su una data
+reale (oggi o ieri):
+```
+node backend/scripts/creaPrenotazioneTestAlloggiati.js --elimina
+```
+
+**Resta il passo successivo, non ancora fatto, del modulo 2.5 Fase 2**:
+`Send` (invio reale) — per costruzione richiede `conferma_dati_reali:
+true` esplicito e un ospite vero effettivamente in struttura. `Test`
+valida solo il FORMATO: non garantisce che `Send` non trovi altri motivi
+di rifiuto (es. duplicati, dati già acquisiti in precedenza) — stesso
+tracciato non vuol dire "stesso risultato garantito".
+
+### Seguito stesso giorno — popolamento dati di test per valutare dove mettere il flusso
+
+Prima di decidere dove agganciare il pulsante di invio reale, il titolare
+ha chiesto di popolare il DB con prenotazioni realistiche su ±15 giorni da
+oggi (passate/in corso/che arrivano domani/future), nomi casuali, per
+valutare graficamente il planning — e ha anticipato l'idea di un
+indicatore Dashboard (pallino verde/giallo) per l'allineamento Alloggiati
+Web/ROSS1000, da costruire in un secondo momento. Il pulsante "Invia
+reale" dovrà comunque nascere disattivo di default.
+
+Nuovo script `backend/scripts/seedPrenotazioniTest.js` (crea/`--pulisci`):
+per ogni camera attiva, genera una sequenza di soggiorni non sovrapposti
+(gap 0-3 giorni + notti 1-5, verificato PRIMA dell'insert con la stessa
+query di sovrapposizione del vincolo EXCLUDE) dal 15° giorno prima ad oggi
+al 15° giorno dopo — lo stato prenotazione (`check_out`/`check_in`/
+`confermata`/`opzione`) deriva automaticamente dalle date rispetto a oggi,
+nessuna scelta manuale per singolo record. Simulazione isolata (senza DB,
+`/tmp/sim_seed.js`) prima di consegnare: nessun loop infinito, ~145
+prenotazioni su 20 camere, tutte e 4 le categorie rappresentate
+(check_out 68, check_in 15, confermata 53, opzione 9 in una singola run).
+
+A differenza di `creaPrenotazioneTestAlloggiati.js` (un solo soggiorno,
+nome vistosamente marcato "non reale"), qui i nomi sono presi da un pool
+italiano plausibile (15 nomi/15 nomi/20 cognomi) — identificabile e
+ripulibile comunque tramite `canale_origine='test_interno'` +
+`external_booking_id` con prefisso `SEED-TEST-` (mai usato da prenotazioni
+vere). Mix intenzionale ~80/20 completo/incompleto e ~85/15 Italia/estero
+sui dati anagrafici (nascita + residenza, quest'ultima richiesta solo da
+ROSS1000, non da Alloggiati Web) — serve a vedere anche i casi "dati
+mancanti" degli avvisi Test/ROSS1000 con dati reali, non solo lo scenario
+ideale. Codici presi dinamicamente da `alloggiati_codici` già sincronizzata
+(10 città italiane note, 5 paesi esteri, tipi documento) — se la tabella è
+vuota lo script avvisa e procede comunque con dati "incompleti" per tutti
+(esito comunque utile: mostra l'alert che segnala mancanze).
+
+Nessun rischio di email automatiche: l'inserimento è SQL diretto, bypassa
+i controller Express dove vive la logica di invio (5.3) — nessun trigger
+DB nel progetto (verificato, stessa convenzione già nota da altre
+migration). Non eseguibile dal sandbox (nessun Postgres): il titolare deve
+lanciarlo in locale e guardare `/planning-camere`.
+
+### Seguito stesso giorno — invio automatico Alloggiati Web (modulo 2.5 Fase 2, invio reale)
+
+Chiesto un riscontro su come lo fanno gli altri PMS prima di decidere
+l'architettura (WebSearch: Lodge Easy, HotelCube, Chekin) — pattern
+unanime: raccolta dati al check-in → validazione automatica → **invio
+automatico ogni notte** di tutte le schedine accumulate, non un pulsante
+manuale come flusso primario; coda con retry automatico se il portale è
+irraggiungibile; ricevute scaricate e archiviate (obbligo 5 anni);
+dashboard di stato per invio (inviata/in attesa/errore); scadenza 6 ore
+(non 24) per soggiorni sotto le 24 ore. Il titolare ha confermato di
+implementare questo pattern, col pulsante manuale relegato ai casi
+eccezionali in Impostazioni ▸ Alloggiati Web.
+
+**Migration `034_alloggiati_invii_dettaglio.sql`**: aggiunge
+`alloggiati_invii.dettaglio_errore TEXT` — serve alla coda per mostrare
+SUBITO perché un soggiorno non è ancora stato inviato, senza dover
+rilanciare il tentativo per scoprirlo.
+
+**Refactor `alloggiatiController.js`**: estratta `eseguiInvioReale(soggiornoId)`,
+riusata sia dall'endpoint HTTP (`inviaSchedineSoggiorno`, pulsante manuale,
+richiede sempre `conferma_dati_reali: true`) sia dal job notturno (nessuna
+richiesta HTTP di mezzo). Chiama sempre `Test` PRIMA di `Send` — se anche
+una sola riga non passa il controllo di formato, `Send` non viene mai
+invocato, evitando tentativi di acquisizione su dati che sappiamo già
+respinti. Scrive in `alloggiati_invii` **solo** quando riceve una risposta
+dal servizio (esito 'ok'/'parziale'/'errore') — **mai** per eccezioni di
+rete o credenziali mancanti: quei casi restano "in attesa" e rientrano da
+soli nel giro della notte successiva, senza bisogno di una logica di retry
+dedicata. Nuovo endpoint `GET /api/alloggiati/coda` (stessa azione
+`invio`, admin/titolare) — soggiorni con arrivo passato mai inviati con
+successo (esclude sempre `canale_origine = 'test_interno'`) + ultimi
+inviati con successo.
+
+**Punto di sicurezza non negoziabile, testato esplicitamente**: sia la
+coda sia `backend/jobs/invioAlloggiatiWeb.js` (nuovo, stesso pattern di
+`promemoriaEmail.js` — cron avviato solo da `server.js`, mai da `app.js`
+usato dai test) escludono sempre `canale_origine = 'test_interno'` — senza
+questo filtro, la prima esecuzione notturna avrebbe provato a registrare
+come reali, presso la Polizia di Stato, i ~145 soggiorni fittizi appena
+generati da `seedPrenotazioniTest.js`. Il job non scrive mai nulla per un
+errore di rete (stesso motivo: nessuno stato = retry automatico il giorno
+dopo), riprova invece ogni notte anche i casi "in errore" — se nel
+frattempo la reception corregge la scheda ospite, il tentativo successivo
+passa da solo. Orario scelto: 02:00, in linea con la fascia oraria usata
+dagli altri gestionali del settore.
+
+**UI**: `Impostazioni ▸ Alloggiati Web` estesa con la card "Coda invii"
+(tra "Verifica schedina" e "Tabelle di codifica") — tabella dei soggiorni
+da inviare con motivo dell'ultimo tentativo se presente, pulsante "Invia
+ora" per riga con conferma esplicita (stesso identico messaggio di rischio
+già presente per l'invio reale), sezione a scomparsa "Inviati di recente"
+per riscontro visivo.
+
+**Test** (`tests/api/alloggiati.test.js`, nuovo describe `GET
+/api/alloggiati/coda`): permessi (401/403/200), e soprattutto la garanzia
+di sicurezza sopra verificata a TRE livelli — endpoint coda, funzione del
+job (`trovaSoggiorniDaInviare`), e `eseguiInvioReale` con credenziali
+mancanti (verifica che non scriva nessuna riga in `alloggiati_invii`,
+il contratto su cui si basa tutto il retry automatico). Verificato con
+`node -c`/require isolato dei moduli (nessun DB nel sandbox) — non
+eseguibile end-to-end da qui, il titolare deve applicare la migration 034
+e rilanciare la suite in locale prima di attivare il job in produzione.
+
+**Non ancora fatto, deliberatamente rimandato**: il metodo SOAP `Ricevuta`
+(scarico della ricevuta ufficiale, obbligo di conservazione 5 anni) non è
+mai stato implementato — oggi si salva solo l'esito interno (ok/parziale/
+errore + dettaglio), non il documento ufficiale scaricato dal portale.
+Segnalato esplicitamente, non bloccante per attivare il resto.
+
+### Seguito stesso giorno — gap reale trovato: il filtro test_interno proteggeva solo le liste, non l'invio stesso
+
+Il titolare ha chiesto conferma esplicita ("sei sicuro al 100%?") che i
+soggiorni `canale_origine='test_interno'` non potessero mai essere
+inviati. Risposta onesta: **no, non lo ero** — a riverificare è emerso un
+buco reale, non solo teorico. Il filtro `canale_origine != 'test_interno'`
+era presente SOLO nelle due query di elenco (`codaInvii`,
+`trovaSoggiorniDaInviare` del job): proteggono chi passa da lì, ma
+`POST /api/alloggiati/soggiorni/:id/invia` accetta qualunque id gli venga
+passato — anche a mano, es. riusando per sbaglio un vecchio id di test
+incollato durante una sessione di "Verifica schedina" — bypassando sia la
+coda che il job senza alcun controllo.
+
+Corretto spostando il blocco DENTRO `eseguiInvioReale` stessa (in
+`alloggiatiController.js`) — l'unica funzione da cui passano davvero tutti
+gli invii, qualunque sia il percorso per arrivarci: legge il
+`canale_origine` della prenotazione del soggiorno PRIMA di fare qualunque
+altra cosa, e lancia un'eccezione esplicita se è `'test_interno'`, prima
+ancora di controllare le credenziali o generare la schedina. Due nuovi
+test di regressione mirati proprio su questo, non sulle liste: chiamata
+diretta a `eseguiInvioReale(sogTestId)` (deve rigettare) e chiamata HTTP
+piena con `conferma_dati_reali: true` su un id di test (deve rispondere
+502 col messaggio esplicito, non un invio silenzioso).
+
+**Lezione per il futuro**: quando un controllo di sicurezza serve a
+impedire un'azione, va messo nel punto in cui l'azione avviene DAVVERO
+(il "choke point"), non solo in ogni punto da cui quell'azione viene
+normalmente invocata — le query di elenco filtrano cosa si VEDE, non cosa
+è POSSIBILE fare passando l'id direttamente.
+
+### Seguito stesso giorno — piano operativo per i gap residui + scoperta RIMOVCLI
+
+Dopo la chiusura in sicurezza dei due gap sopra (test_interno, interruttore
+job), il titolare ha chiesto un audit onesto di cosa mancasse ancora al
+modulo 2.5 rispetto allo standard di settore che era stato descritto in
+sessione. Risposta: nessuno dei quattro punti era completo — retry vero
+solo parziale (nessuna scrittura sugli errori di rete, quindi nessun
+contatore/visibilità), ricevute mai implementate, dashboard di stato mai
+costruita sul vero Dashboard KPI (solo la coda in Impostazioni, e un alert
+che copre un bisogno diverso — dati completi, non invio avvenuto), regola
+24h/6h day-use non costruibile oggi perché `data_arrivo` è `DATE`, nessun
+orario salvato da nessuna parte.
+
+Concordato un piano in 4 fasi + una quinta bloccata, ordine
+D (cattura ora check-in, prerequisito quasi gratuito) → A (retry
+visibile, un giro al giorno confermato, non due) → B (ricevute — fase più
+rischiosa, richiede prima rileggere il manuale sul metodo SOAP `Ricevuta`,
+mai studiato finora) → C (dashboard, volutamente dopo A per non generare
+allarmi rumorosi su guasti di rete transitori). Dettaglio completo delle
+4 fasi (file coinvolti, migration, rischi) in `docs/EVOLUTIVE.md`, voce
+"Modulo 2.5 — Fase 2, stato al 13/08/2026".
+
+Nello stesso scambio, il titolare ha letto la documentazione ufficiale
+Liguria (`docs/ross1000/regione liguria/`, 4 PDF: FAQ, elenco software
+house, due moduli di adesione) e ha confermato: per la categoria Hotel il
+canale corretto è **RIMOVCLI**, non il webservice `checkinV2` già
+implementato nel modulo 2.6. RIMOVCLI è upload manuale di un file XML su
+un portale dedicato, con obbligo di certificazione preventiva del
+software — un sistema diverso, non solo un dettaglio tecnico in più.
+Verificato nell'elenco delle software house che esistono anche ditte
+individuali (non solo società) ma nessun caso analogo a "un hotel che usa
+il proprio gestionale interno" — da qui la mail preparata per Mario
+Schenone (Settore Politiche Turistiche, il referente corretto per le
+richieste tecniche, diverso dall'ufficio territoriale per l'adesione),
+salvata in `docs/mail_statistiche_liguria.md`, non ancora inviata (manca
+nome/telefono/email del titolare). Codice del modulo 2.6
+(`ross1000Xml.js`, `ross1000Controller.js`) volutamente non toccato: il
+titolare ha chiesto esplicitamente di aspettare la risposta di Regione
+prima di ripensarlo, per non lavorare due volte se il canale confermato
+fosse un altro. Dettaglio completo: `docs/EVOLUTIVE.md`, voce "Modulo
+2.6 — RIMOVCLI vs ROSS1000".
+
+Corretto anche, nello stesso scambio, un problema di infrastruttura test
+non legato al codice applicativo: `npm test` in modalità parallela
+(default Jest) falliva 10 test per race condition su un'email di test
+condivisa tra file (`%@test.hotel`, creata/cancellata da più worker in
+contemporanea) — confermato con `--runInBand` sequenziale: 738/738 verdi.
+Corretto rendendo `--runInBand` il default in `package.json` (`test` e
+`test:api`) invece di lasciarlo come fallimento intermittente da
+reinterpretare ogni volta — la causa di fondo (email di test non univoche
+per file) resta in backlog, non urgente ora che il default è sequenziale.
+
+### Seguito stesso giorno — Fasi D, A, B del piano eseguite ("parti pure")
+
+Su via libera esplicita del titolare, eseguite le prime tre fasi del piano
+concordato (ordine D→A→B→C):
+
+**Fase D — cattura ora check-in**: migration `035_soggiorni_ora_checkin.sql`
+(`soggiorni.check_in_effettuato_at TIMESTAMP`), valorizzata in
+`prenotazioniController.aggiornaStato` alla transizione verso `check_in`
+(per tutti i soggiorni della prenotazione insieme — lo stato è per
+prenotazione, non per singola camera). Solo cattura dato, nessun
+enforcement 24h/6h ancora costruito. Nuovo test di regressione in
+`prenotazioni.test.js`.
+
+**Fase A — retry visibile**: `eseguiInvioReale` ora scrive sempre una riga
+in `alloggiati_invii` anche sugli errori di rete/servizio (esito
+`'errore_rete'`, prima non scriveva nulla — invisibile). La query di retry
+esistente già considera "da reinviare" qualunque esito diverso da `'ok'`,
+quindi il comportamento non cambia, solo la visibilità. Nuovo campo
+`tentativi_falliti` in `GET /api/alloggiati/coda` (CTE che conta i
+tentativi falliti consecutivi dall'ultimo `'ok'`, se mai avvenuto),
+mostrato in UI quando > 1. Contatore del job rinominato da `errori_rete`
+(ambiguo) a `eccezioni_impreviste` (solo bug/DB irraggiungibile, non più i
+fallimenti SOAP noti — quelli ora sono un risultato normale, non
+un'eccezione). Confermato un giro al giorno, non due. Test con
+`jest.mock('../../backend/lib/alloggiatiSoapClient')` a livello di file
+(mai una chiamata di rete reale in questa suite, per design — nessun test
+esistente ci arrivava comunque, le credenziali sono sempre vuote in
+`.env.test`) — scartato deliberatamente un approccio con
+`jest.isolateModules`+`jest.doMock` perché avrebbe ri-richiesto anche
+`config/db.js`, aprendo un secondo Pool Postgres mai chiuso (rischio di
+lasciare Jest appeso a fine suite).
+
+**Fase B — ricevute (obbligo conservazione 5 anni)**: letto per la prima
+volta il metodo SOAP `Ricevuta` (`MANUALEWS.pdf` pag. 17) — scoperta
+chiave: la ricevuta è **UN PDF PER GIORNO**, non per singolo soggiorno,
+copre tutti gli invii della struttura in quella data; scaricabile solo
+"ultimi 30gg escluso il giorno corrente" (mai il giorno stesso dell'invio).
+Per questo nuova tabella `alloggiati_ricevute` (migration
+`036_alloggiati_ricevute.sql`) chiave per `data`, non per `soggiorno_id` —
+diverso da come inizialmente ipotizzato nel piano. Nuova funzione
+`alloggiatiSoapClient.scaricaRicevuta` (decodifica base64→Buffer del campo
+`PDF`). Nel controller: `scaricaRicevutaGiorno(dataStr)` (valida la finestra
+30gg PRIMA di contattare il servizio, idempotente — non richiama Ricevuta
+se già scaricata), `scaricaRicevutePendenti()` (trova le date con almeno un
+invio `ok`/`parziale` non ancora coperte, entro la finestra, e le scarica
+una per una senza che un fallimento blocchi le altre). File salvati in
+`backend/uploads/alloggiati_ricevute/<data>.pdf` (cartella creata al primo
+uso, stesso pattern di `uploads/archivio`). Job notturno esteso: dopo il
+giro di invio, prova a scaricare le ricevute pendenti (try/catch separato —
+un problema sulle ricevute non deve mai far sembrare fallito il giro di
+invio). Nuova azione `alloggiati.ricevute` in `shared/ruoli.js` +
+`frontend/lib/ruoli.js` (admin/titolare, come `invio`). Nuove route
+`GET /api/alloggiati/ricevute`, `POST .../ricevute/:data/scarica`,
+`GET .../ricevute/:data/file` (download autenticato via fetch+Bearer+blob,
+stesso pattern già in uso in `archivio/page.jsx` — un `<a href>` semplice
+non può allegare l'header Authorization). Nuova card "Ricevute" in
+Impostazioni▸Alloggiati Web: elenco scaricate + download manuale di
+scorta per una data a scelta.
+
+Migration da applicare (**non ancora fatto dal titolare a fine sessione**):
+`035_soggiorni_ora_checkin.sql`, `036_alloggiati_ricevute.sql`. Nessuna
+delle modifiche di questa voce è stata eseguita contro Postgres reale —
+solo verificata a livello di sintassi/JSX nel sandbox, come sempre.
+`npm test` da rilanciare per confermare i nuovi test (Fase D in
+`prenotazioni.test.js`, Fase A/B in `alloggiati.test.js`) verdi in locale.
+
+Fase C (dashboard pallino verde/giallo) non ancora iniziata — prossimo
+passo quando il titolare conferma che D/A/B funzionano davvero in locale.
+
+### Seguito stesso giorno — 6 test falliti dopo le migration, 3 bug reali (miei, non del tab Code)
+
+Il titolare ha applicato le migration 035/036 e lanciato `npm test`:
+742/748 verdi, 6 falliti in 2 suite. Diagnosticati tutti e tre — nessuno è
+del tab Code, tutti introdotti in questa sessione:
+
+**1) Igiene dei mock in `alloggiati.test.js` (causa dei 5 fallimenti
+lì)**: tre test impostano `ALLOGGIATI_UTENTE/PASSWORD/WSKEY` finte e le
+cancellano con `delete process.env...` alla fine del test — ma solo sul
+percorso felice. Se un'asserzione PRIMA di quella riga falliva, il delete
+non veniva mai raggiunto: le credenziali finte restavano attive per tutti
+i test successivi dello stesso processo (`--runInBand` esegue l'intera
+suite in un solo processo Node, `process.env` è globale). Stesso principio
+per i mock `mockRejectedValueOnce`/`mockResolvedValueOnce` di
+`alloggiatiSoapClient`: se non consumati dalla chiamata prevista (perché
+il test si era già fermato prima), restavano in coda e venivano consumati
+dalla chiamata `generaToken`/`testSchedine` di un test successivo e
+completamente estraneo — spiega il crash
+`Cannot read properties of undefined (reading 'schedineValide')`
+(`alloggiatiController.js:312`): quel test estraneo chiamava `testSchedine`
+senza alcun mock configurato, ottenendo `undefined` invece di un errore o
+di un esito valido. Corretto con un `afterEach` globale in testa al file:
+`jest.resetAllMocks()` (pulisce sia lo storico chiamate sia le
+implementazioni "Once" in coda) + cancellazione incondizionata delle 4
+variabili d'ambiente `ALLOGGIATI_*`/`ALLOGGIATI_JOB_ATTIVO` dopo OGNI test,
+non solo a fine test riuscito.
+
+**2) Guardie difensive aggiunte in `alloggiatiController.js` e
+`scaricaRicevutaGiorno`**: a prescindere dalla causa nei test, la funzione
+non doveva poter crashare su una risposta inattesa dal client SOAP — ora
+`esitoTest`/`esitoSend` senza una `schedineValide` numerica, o un PDF non
+valido da `scaricaRicevuta`, vengono trattati esplicitamente come
+`errore_rete`/eccezione invece di far esplodere la funzione. Indurimento
+utile a prescindere dal bug dei mock: anche un WSDL cambiato in futuro non
+deve mai crashare il job notturno.
+
+**3) Collisione di date in `prenotazioni.test.js` (il 6° fallimento)**: il
+nuovo test della Fase D (`check_in_effettuato_at`) usava per errore lo
+stesso intervallo (1-5 ottobre 2099) e la stessa camera di default già
+usato dal test preesistente `'interrotta': imposta cancellato=true...`.
+La seconda `POST /api/prenotazioni` falliva per il vincolo EXCLUDE
+camera+intervallo (migration 017), `creata.body.id` restava `undefined`,
+e la PATCH successiva colpiva letteralmente `/api/prenotazioni/undefined/stato`
+— da cui l'errore Postgres "sintassi di input non valida per il tipo
+integer: \"undefined\"" alla riga della SELECT in `aggiornaStato`, un
+sintomo che sembrava scollegato dalla vera causa. Corretto spostando il
+test della Fase D su un intervallo libero (15-19 ottobre).
+
+Nota per il futuro, non solo per questi tre bug: quando un test isolato
+sembra rompere un test completamente estraneo, il sospetto numero uno è
+stato pescare uno stato condiviso (camera di default, `process.env`, coda
+di mock "Once") senza isolarlo — controllare quello prima di ipotizzare un
+bug nel codice applicativo.
+
+### Seguito stesso giorno — causa vera dei 4 falliti residui: jest.resetModules() non isolato
+
+Dopo il fix precedente (742→744 verdi), restavano 4 falliti in
+`alloggiati.test.js`, tutti con lo stesso sintomo: una risposta mockata
+(`mockRejectedValueOnce`/`mockResolvedValueOnce`) non veniva applicata alla
+chiamata prevista. Il titolare ha ipotizzato un limite del parser regex del
+client SOAP su risposte XML annidate (`Test`/`Ricevuta`) — ipotesi
+ragionevole vista la nota già in CLAUDE.md del 01/08, ma verificata e
+scartata: questi test mockano `alloggiatiSoapClient` con `jest.mock`, il
+parser regex reale non viene mai eseguito lì, non può essere la causa.
+
+Causa vera: due test scritti in una sessione precedente
+(`avviaJobInvioAlloggiatiWeb — interruttore...`) chiamavano
+`jest.resetModules()` — che svuota il registro moduli dell'INTERO file di
+test, non solo del test che lo chiama. Il riferimento a
+`alloggiatiSoapClient` catturato UNA VOLA in testa al file (riga 45, subito
+dopo `jest.mock`) restava legato alla "generazione" precedente del
+registro; ogni `require('../../backend/controllers/alloggiatiController')`
+fatto DOPO quei due test (in tutti i miei test di Fase A/B, che lo
+richiedono dentro al corpo del test) otteneva una copia FRESCA — e diversa
+— del client SOAP mockato, su cui `mockRejectedValueOnce`/
+`mockResolvedValueOnce` non era mai stato impostato: le chiamate
+risultavano `undefined` invece di rifiutare o risolvere come previsto.
+Esattamente lo stesso meccanismo di "coda mock non consumata" già
+diagnosticato nel giro precedente, ma con una causa a monte diversa e più
+sottile (non igiene dei singoli test, un registro moduli condiviso
+resettato in modo non isolato).
+
+Corretto sostituendo `jest.resetModules()` con `jest.isolateModules(() =>
+{...})` nei due test del cron: isola il reset SOLO all'interno del
+callback (dove vengono ri-richiesti `node-cron` e
+`jobs/invioAlloggiatiWeb.js`), senza toccare il registro condiviso dal
+resto del file. Corretto anche un dettaglio minore segnalato dal titolare,
+innocuo ma da sistemare: `tentativi_falliti` tornava come stringa (tipico
+di `COUNT()` non castato in Postgres/node-pg) — cast `::int` nella query,
+senza toccare il type parser globale di `config/db.js` (già in backlog
+come task separato, non di questa sessione).
+
+Nota per il futuro, più specifica della precedente: `jest.resetModules()`
+va quasi sempre sostituito con `jest.isolateModules()` quando il file ha
+ALTRI test che dipendono da un `jest.mock()` catturato in una variabile di
+modulo — resetModules() è "a livello di file", isolateModules() è "a
+livello di blocco". Lezione appresa nel modo più costoso: due test scritti
+prima e mai toccati in questa sessione hanno rotto quattro test scritti
+dopo, con un sintomo che sembrava indicare tutt'altro (parsing XML).
+
+Confermato dal titolare: 748/748 verdi, 31/31 suite. Segnalato anche un
+processo Jest rimasto appeso in uscita, descritto come "comportamento
+innocuo di sempre" — verifica diretta del test in questione ha smentito
+l'aggettivo "di sempre": il secondo test del cron
+(`con ALLOGGIATI_JOB_ATTIVO=true pianifica il cron`, aggiunto oggi) usava
+`jest.spyOn(cron, 'schedule')` senza `mockImplementation` — di default lo
+spy chiama comunque l'implementazione reale, quindi il test schedulava un
+cron job vero su `node-cron` (interval attivo). `spy.mockRestore()`
+ripristina solo il riferimento alla funzione, non ferma il task già creato
+— quello era l'handle che teneva Jest appeso. Corretto in entrambi i test
+del cron con `mockImplementation(() => ({ stop: jest.fn() }))`: verifica
+ancora che `cron.schedule` sia chiamato con i parametri giusti, ma senza
+creare mai un task reale. Riverificato dal titolare: 748/748, 31/31 suite, exit code 0, processo
+Jest terminato pulito da solo. Fix chiuso.
+
+### Fase C — dashboard con pallino verde/giallo (14/08/2026)
+
+Ultimo punto del piano D→A→B→C concordato il 13/08. Nessun componente UI
+nuovo: `AlertItem` (frontend) mostra già un dot colorato per riga, stesso
+meccanismo di ZTL/Magazzino/HR/Manutenzione — riusato tal quale.
+
+Nuovo blocco in `dashboardController.alert()`, concettualmente diverso
+dall'alert "documento incompleto" già esistente dal 06/08 (quello è
+readiness PRIMA dell'arrivo — dati pronti per generare la schedina, non
+invio avvenuto). Questo copre l'invio vero e proprio DOPO il check-in:
+prima di oggi l'unico modo per sapere se qualcosa non era stato inviato
+era andare apposta in Impostazioni ▸ Alloggiati Web.
+
+Logica: termine legale = 24h da `check_in_effettuato_at` (colonna Fase D,
+13/08) se presente, altrimenti da `data_arrivo` 00:00 per i soggiorni più
+vecchi che non l'hanno mai valorizzato. Rosso se il termine è scaduto e
+l'invio non è 'ok', ambra se ancora in coda ma nei termini (aspetta il
+giro notturno). Esclude sempre `canale_origine='test_interno'`, stesso
+principio già applicato ovunque nel modulo.
+
+Scelta deliberata, non una dimenticanza: **non implementata la regola
+delle 6h per il day-use** (arrivo e partenza lo stesso giorno) — stessa
+decisione già presa per la Fase D, perché nessuna prenotazione così esiste
+oggi nel sistema. Implementarla ora avrebbe significato scrivere codice
+non verificabile contro un caso reale.
+
+Test aggiunti a `tests/api/dashboard.test.js` (file già esistente, non
+creato da questa sessione — probabile lavoro del tab Code in parallelo,
+non ancora notato prima): 4 casi nuovi (termine scaduto → rosso, termine
+non scaduto → ambra, esito 'ok' già registrato → nessun alert anche con
+check-in vecchio, canale test_interno → nessun alert anche con termine
+scaduto). Verificata solo la sintassi (`node -c`) e lo schema delle
+migration coinvolte (034 `dettaglio_errore`, 035 `check_in_effettuato_at`)
+— **non ancora eseguito contro Postgres reale**, da confermare con
+`npm test`.
+
+Con questo si chiude il piano concordato il 13/08 (D→A→B→C). Resta solo la
+Fase E (RIMOVCLI), bloccata sulla risposta di Regione Liguria — nessuna
+azione possibile finché il titolare non invia
+`docs/mail_statistiche_liguria.md`.
+
+### Seguito stesso giorno — bug di isolamento test, non applicativo
+
+Primo `npm test` dopo la Fase C: il titolare ha trovato che nel DB di
+sviluppo esistono 6 soggiorni REALI (non di test, canale `diretta`/
+`telefono`) mai inviati ad Alloggiati Web, con termine (scadenza 24h)
+risalente a fine luglio/inizio agosto — molto più vecchio dei fixture dei
+nuovi test. La query dell'alert ha `LIMIT 5` ordinato per urgenza: quei 6
+soggiorni reali riempivano da soli tutti gli slot, escludendo del tutto i
+2 fixture creati dal test (che quindi non comparivano mai nella risposta
+HTTP `GET /api/dashboard/alert`, causando `alert.toBeDefined()` falliti).
+Non un bug introdotto da questa sessione né dalla migration 035/036 — un
+test che presumeva di essere l'unico dato rilevante in un DB che invece
+accumula backlog reale mai inviato (il job resta spento di default anche
+in sviluppo).
+
+Segnalato anche un punto di prodotto più ampio, non deciso ora: se in
+produzione si accumulasse un backlog cronico di soggiorni MAI inviabili
+(dati insufficienti, bloccati per sempre in `errore`), quei 5 slot
+resterebbero occupati per sempre dagli stessi vecchi problemi, e l'alert
+smetterebbe di segnalare i nuovi. Nessuna decisione presa — richiede dati
+reali di produzione per essere valutata, non ipotesi. Annotato in
+`docs/EVOLUTIVE.md`, non un'azione da fare ora.
+
+Fix applicato: estratta la query in una funzione dedicata
+(`alertInviiAlloggiati`, `dashboardController.js`), con un filtro
+opzionale `soggiornoIds` — se passato, si somma alle condizioni WHERE già
+esistenti (canale_origine, esito), non le sostituisce. `alert()` in
+produzione la chiama sempre senza filtro, comportamento identico a prima
+dell'estrazione. I test ora chiamano `alertInviiAlloggiati()` direttamente
+con gli id dei propri fixture, invece di passare dall'endpoint HTTP e
+sperare di rientrare nei primi 5 risultati — deterministico
+indipendentemente da quanto backlog reale esiste nel DB di sviluppo in un
+dato momento. Nessun dato reale toccato o cancellato. Verificata solo la
+sintassi — da confermare con `npm test`.
+
+### Seguito stesso giorno — interruttore obbligatorio sul job, spento di default
+
+Il titolare ha fatto tre domande di seguito ("posso tenere le prenotazioni
+di test?", "il job parte col server spento?", "cosa succede stanotte alle
+prenotazioni reali?") che hanno fatto emergere un problema più serio del
+gap precedente: il job costruito in questa sessione si registrava da solo
+ad ogni riavvio del server, senza alcun interruttore — in contraddizione
+diretta con quanto il titolare stesso aveva chiesto qualche messaggio
+prima ("il pulsante deve cmq essere inattivo per evitare problemi").
+
+Il problema pratico: `trovaSoggiorniDaInviare()` non ha un limite di data
+inferiore, solo "arrivo già avvenuto, nessun invio con esito 'ok'". Se
+distribuito così com'era, il primo giro utile non avrebbe inviato solo i
+soggiorni di quella notte, ma TUTTO l'arretrato di prenotazioni reali
+inserite da fine luglio (modulo Prenotazioni) — in un colpo solo, senza
+che il titolare avesse mai visto un `Send` reale andare a buon fine
+(finora solo `Test`, che verifica il formato senza acquisire nulla).
+
+Corretto aggiungendo un interruttore esplicito in
+`avviaJobInvioAlloggiatiWeb()` (`backend/jobs/invioAlloggiatiWeb.js`): il
+job NON si registra (niente `cron.schedule`) a meno che
+`ALLOGGIATI_JOB_ATTIVO` non valga esattamente `'true'` in `.env` sul
+server — di default resta sempre spento, anche dopo un deploy che include
+questo file. Va acceso solo dopo aver verificato un invio reale singolo e
+mirato tramite "Invia ora" nella coda di Impostazioni▸Alloggiati Web.
+Due nuovi test (`tests/api/alloggiati.test.js`, in fondo al file) coprono
+entrambi i rami con uno spy su `cron.schedule`: spento di default, attivo
+solo con la variabile impostata.
+
+Confermato al titolare anche il comportamento delle prenotazioni di test:
+non serve cancellarle per essere al sicuro — il blocco vive ora dentro
+`eseguiInvioReale` stessa (vedi sopra), quindi qualunque canale lo
+attraversa. La coda "Invia ora" le esclude comunque dalla vista; per test
+manuali sulle prenotazioni fittizie resta corretto usare "Verifica
+schedina" (Test), mai "Invia ora".
+
+### Riorganizzazione menu — mock prima, codice dopo (14/08/2026)
+
+Il titolare ha segnalato che il menu (sidebar) era diventato troppo lungo
+da scorrere — OSPITALITÀ da sola aveva 9 voci. Discusso e mockato (widget
+`mcp__visualize`, non codice reale) prima di scrivere una riga: dashboard
+riorganizzata in gruppi tematici (Gestione cliente, Adempimenti, Gestione
+hotel, Costi, Ristorante) e tre alternative di navigazione per il menu
+(accordion con auto-chiusura, rail a sole icone, ricerca rapida) — il
+titolare ha scelto la rail a icone, con l'aggiunta di un'etichetta fissa
+sotto ogni icona su desktop (su richiesta sua, per non dover imparare a
+memoria le icone) e di un tab Cerca separato.
+
+**Sidebar.tsx riscritta**: rail verticale (`var(--sidebar-rail-width)`,
+72px) con icona+etichetta per gruppo + tab Cerca, pannello a comparsa
+(`var(--sidebar-flyout-width)`, 200px) con le voci del gruppo selezionato
+o i risultati di ricerca. Il gruppo aperto si sincronizza da solo con la
+route corrente (`useEffect` su `pathname`) — non va ricordato a mano.
+`SEZIONI_MENU` resta l'unica fonte di verità (stesso principio di prima):
+aggiungere/spostare una voce è una modifica di un array, nessun'altra
+parte del componente va toccata. Due nuove CSS variable in `globals.css`
+(`--sidebar-rail-width`, `--sidebar-flyout-width`) invece di una larghezza
+fissa — la proporzione rail/pannello si cambia in un punto solo, su
+richiesta esplicita del titolare di codice "modulare e scalabile".
+
+**Bottom nav mobile INVARIATA** — richiesta esplicita del titolare dopo
+aver ragionato sui numeri: 8 gruppi + tab Cerca fanno 9 icone, che su un
+telefono (~375-414px) non stanno affiancate a un tap target usabile
+(soglia 44px). Il pannello "Menu" mobile (bottom sheet) continua a
+leggere `SEZIONI_MENU`, quindi eredita comunque il nuovo raggruppamento.
+
+**8 gruppi** (da 6): PRINCIPALE invariato; OSPITALITÀ divisa in CLIENTI E
+PRENOTAZIONI (Prenotazioni, Arrivi/Partenze, Clienti, Pre check-in,
+Addebiti extra) e CAMERE E TARIFFE (Stato Camere, Tariffe, Pacchetti);
+nuovo gruppo ADEMPIMENTI (Tassa di soggiorno, ZTL Targhe, Alloggiati Web,
+Statistiche Liguria) — specchio del widget dashboard omonimo, discusso
+nella stessa conversazione; RISTORANTE invariato; ALTRO rinominata
+STRUTTURA (HACCP, Archivio, Manutenzione); MARKETING invariato; IMPOSTAZIONI
+spostata in fondo (era prima di MARKETING), su richiesta esplicita del
+titolare.
+
+**Split pagina Alloggiati Web** (risolve un buco segnalato durante la
+discussione dei mock: ADEMPIMENTI aveva bisogno di una pagina operativa
+per Alloggiati Web, ma prima esisteva solo Impostazioni▸Alloggiati Web,
+una pagina di configurazione). Nuova `/alloggiati-web` (gruppo ADEMPIMENTI):
+"Coda invii" + "Ricevute", stessi endpoint di prima, nessuna modifica
+backend. `Impostazioni▸Alloggiati Web` resta solo con Verifica credenziali,
+Verifica schedina (Test) e Tabelle di codifica — link incrociati tra le
+due pagine. "Statistiche Liguria" in ADEMPIMENTI punta ancora a
+`/impostazioni/ross1000` (nessuno split possibile finché la Fase E non è
+sbloccata) — rimossa la vecchia voce "Export ROSS1000" da IMPOSTAZIONI per
+non avere due link alla stessa pagina con due nomi diversi.
+
+Verificato con `tsc --noEmit` sull'intero progetto frontend: 0 errori.
+Non verificato in un browser reale (nessun accesso a dev server dal
+sandbox) — da controllare visivamente al prossimo giro.
+
+**Dashboard: NON ancora implementata**, fermata deliberatamente prima di
+scrivere il backend — un blocco reale emerso rileggendo la richiesta del
+titolare per il widget "Gestione cliente": una delle quattro voci chieste
+era "prenotazioni arrivate via OTA/booking da visualizzare/gestire", ma
+il modulo 2.3 (integrazione WuBook/channel manager) non è mai partito
+oltre la Fase 1 (mappatura camere↔canale, 31/07/2026) — non esiste ancora
+nessuna ricezione reale di prenotazioni da OTA nel gestionale (nessun
+webhook, nessuna tabella popolata). Costruire quel widget oggi
+significherebbe mostrare sempre zero o inventare un dato — segnalato al
+titolare, in attesa di come vuole gestire questo pezzo prima di
+proseguire con il resto della dashboard (tutto il resto è costruibile con
+dati reali già esistenti: arrivi/partenze, check-in e pre check-in da
+fare, camere da pulire, manutenzioni aperte, magazzino sotto scorta,
+incasso/food cost, coperti ristorante).
+
+**Seguito stesso giorno — Dashboard implementata**: il titolare ha sciolto
+il blocco con un'istruzione esplicita — procedere con tutti i widget, e
+per ciò che non ha ancora dati reali sotto scrivere un placeholder
+visibile ("modulo non sviluppato" o simile) invece di ometterlo o
+inventare uno zero. Nuovo endpoint `GET /api/dashboard/gruppi`
+(`dashboardController.js`, funzione `gruppiWidget`) che aggrega in un
+solo JSON i 5 gruppi discussi nei mock (Clienti, Adempimenti, Hotel,
+Costi, Ristorante); frontend: due componenti nuovi e riutilizzabili,
+`WidgetGruppo.tsx` (pannello) e `WidgetItem.tsx` (singola tessera,
+con una modalità placeholder dedicata quando `sviluppato: false`),
+`home/page.jsx` riscritta per comporli in griglia sopra la vecchia
+lista di alert (rinominata "Altri alert", tenuta per le voci non ancora
+coperte da un widget dedicato — scadenze HR, opzioni prenotazione in
+scadenza, pre check-in da rivedere, documenti Alloggiati incompleti,
+menu non configurato — il titolare non aveva deciso se toglierla, tenuta
+per non perdere segnalazioni reali).
+
+Due scostamenti onesti dalla richiesta letterale, entrambi perché il dato
+esatto chiesto non è tracciato da nessuna parte del sistema oggi (non
+un'omissione, una scelta esplicita):
+- "quanti clienti stanno mangiando ora" → nessuna tabella registra i
+  coperti effettivamente seduti (`comande` non lo traccia, solo la
+  capienza massima del tavolo in `tavoli.coperti`) — sostituito con
+  "Tavoli occupati ora" (comande con `stato='aperta'` aperte oggi), un
+  numero reale invece di una stima presentata come dato esatto.
+- "Statistiche Liguria" nel gruppo Adempimenti non è un placeholder come
+  OTA e fabbisogno pasti: la Fase 1 (generazione XML) è completata e
+  funzionante, manca solo l'automazione dell'invio (Fase 2, bloccata
+  sulle credenziali Regione Liguria) — la tessera lo dice esplicitamente
+  ("generazione manuale, nessun invio automatico") invece di essere
+  etichettata "non sviluppato" come le due voci davvero assenti, per non
+  confondere un modulo completo-ma-manuale con uno mai iniziato.
+
+Query nuove scritte riusando pattern/tabelle già validati altrove, non
+inventati: camere da fare rispecchia esattamente la logica arrivo/
+partenza di `camereController.js` (migrata da `stato_camere` a
+`soggiorni` nel modulo 5.1); tassa di soggiorno da riscuotere aggiunge
+una finestra di 30 giorni indietro (altrimenti conterebbe anche
+l'arretrato storico pre-modulo 2.4, mai riconciliato); pre check-in da
+inviare usa `prenotazioni.pre_checkin_inviato_at IS NULL` (stessa colonna
+già scritta dal job promemoria, modulo 5.3) con una finestra di 7 giorni
+in avanti per restare azionabile invece di mostrare l'intero futuro.
+
+Nuovi test `tests/api/dashboard.test.js` (forma della risposta, presenza
+dei placeholder, tipi numerici) — non una batteria di fixture per ogni
+singolo conteggio: le tabelle coinvolte sono già coperte da test altrove
+(HR, camere, tassa di soggiorno, Alloggiati Web). Verificato solo con
+`tsc --noEmit` (0 errori) e `node -c` sul backend — non eseguibile nel
+sandbox contro un database reale, né visto in un browser: il titolare
+deve ancora lanciare `npm test` e guardarla dal vivo.
+
+**Seguito stesso giorno — primo giro dal vivo, 3 correzioni** (759/759
+test verdi confermati dal titolare). La vecchia riga KPI (Camere
+movimenti/Coperti/Incasso/Food cost) e il bottone isolato "Registra
+incasso di oggi" erano rimasti sopra la nuova griglia, invariati dalla
+versione precedente — non tolti per errore, mai stati nel piano di
+rimozione perché servono ancora a cameriere/cuoco/portiere notte (unici
+ruoli che non vedono la griglia widget). Per admin/titolare erano però
+puro doppione dei nuovi widget: KPI ora `{!isGestione && ...}` (chi ha la
+griglia non la vede più due volte, chi non ce l'ha la mantiene
+identica). Il bottone "Registra incasso" non è un residuo — è l'unico
+modo con cui `incassi_giornalieri` riceve dati (nessuna fonte automatica,
+CLAUDE.md §11 modulo 1.8) — ma isolato senza contesto sopra la griglia
+non si capiva a cosa servisse: spostato dentro il widget Costi come
+azione del gruppo (nuova prop `azione` su `WidgetGruppo.tsx`, un
+ReactNode opzionale a destra del titolo — riutilizzabile per altri
+gruppi in futuro, non specifico a questo bottone). Riordinati i gruppi
+perché il titolare voleva Ristorante affiancato a Gestione hotel: prima
+Ristorante aveva `lg:col-span-2` e finiva da solo sulla terza riga
+(Hotel+Costi riempivano già la riga 2) — tolto lo span, riordinato
+Hotel→Ristorante→Costi così riempiono esattamente la riga 2 fianco a
+fianco su schermi `lg`.
+
+Rimasto apertamente in sospeso, non un'azione da fare ora: il titolare
+ha detto "rimane il dubbio del testo sul personale e lista alert" senza
+chiedere una modifica — Presenze oggi e "Altri alert" restano dove sono
+(sotto la griglia, ridotti in prominenza rispetto a prima), in attesa che
+li veda dal vivo prima di decidere se toglierli, ridurli o lasciarli.
+
+**Seguito — perché la riga KPI non va tolta ai ruoli non-gestione**: il
+titolare ha chiesto se, essendo ridondante per admin/titolare, andasse
+cancellata anche per gli altri ruoli invece di solo nascosta. Verificando
+il codice per rispondere, trovato un buco preesistente più grande di
+quanto pensassi: `receptionist`, `cuoco` e `dipendente` non rientrano né
+in `isGestione` né in `isCameriera`/`isPortiere` — per loro la pagina
+home aveva SOLO la riga KPI (Camere+Coperti, Incasso/Food cost già
+esclusi da prima) più un pannello "Altri alert" mostrato incondizionato
+ma mai popolato (`alerts` viene caricato solo `if (isGestione)` — per
+gli altri resta `[]` per sempre), quindi diceva sempre "Tutto ok, nessun
+alert" senza che l'endpoint fosse mai stato interrogato: una falsa
+rassicurazione, non un'informazione mancante onesta. Cancellare anche la
+riga KPI per questi ruoli avrebbe lasciato loro una dashboard vuota (solo
+saluto e data). Corretto il pezzo sistemabile subito senza allargare lo
+scope della sessione: pannello "Altri alert" ora `{isGestione && ...}`
+come "Presenze", stesso principio già applicato altrove — mai mostrare
+un dato come "ok" se non è mai stato controllato. La riga KPI resta,
+unico contenuto reale rimasto per questi tre ruoli. Annotato in
+`docs/EVOLUTIVE.md`: una dashboard home dedicata per receptionist/cuoco/
+dipendente (oggi coperti solo da 2 KPI generici, non tagliati sul loro
+lavoro) è un miglioramento vero ma è un pezzo di scope nuovo, non
+deciso in questa sessione.
+
+**Bug reale trovato dal titolare cliccando sul widget "Menu del giorno" —
+migration 009 mancante, colmata (14/08/2026)**. La categoria "Cat Test
+Addebiti" duplicata ~14 volte nel filtro del menu reale non era un
+residuo statico: `tests/api/addebiti-extra.test.js` la creava con
+`INSERT ... ON CONFLICT DO NOTHING` assumendo un vincolo UNIQUE su
+`menu_categorie.titolo` che non è mai esistito — nessun conflitto poteva
+scattare, quindi ogni run della suite ne inseriva una copia in più, mai
+ripulita da `afterAll`. Corretto con lo stesso pattern a suffisso
+univoco (`SUFFISSO`) già in uso nel resto del file: id tracciato, riga
+cancellata esplicitamente in `afterAll`, non serve più un vincolo DB per
+essere idempotente. Il titolare deve ancora lanciare in produzione
+`DELETE FROM menu_piatti WHERE nome = 'Extra Test'; DELETE FROM
+menu_categorie WHERE titolo = 'Cat Test Addebiti';` per ripulire
+l'arretrato — non eseguibile da qui.
+
+Cercando il vincolo per capire il bug, trovato un problema più grande e
+indipendente: **la migration `009` (CREATE TABLE `menu_categorie` /
+`menu_piatti`, modulo 1.5) non è mai esistita nel repo né nella
+cronologia git** — la sequenza numerata saltava da 008 a
+010_menu_categorie_emoji.sql (che fa solo un ALTER TABLE, presupponendo
+le tabelle già presenti). Le due tabelle sono sempre esistite solo nel
+database reale. Il titolare ha estratto lo schema vero con uno script
+diagnostico usa-e-getta (`backend/scripts/dumpSchemaMenu.js`, scritto e
+poi cancellato in questa sessione — non doveva restare nel repo) lanciato
+dalla cartella `backend/` (nella root falliva silenziosamente: `.env` non
+trovato, `dotenv.config()` senza path esplicito). Confermato dai default
+reali un rischio concreto, non solo ipotetico: sia `menu_categorie.attivo`
+sia `menu_piatti.disponibile` hanno default `true` — la categoria e il
+piatto di test creati dalla suite erano quindi potenzialmente visibili
+anche su `/menu-pubblico` ai clienti reali (un piatto "Extra Test" da
+10€), non solo nel pannello admin. Il titolare deve ancora verificare se
+comparisse davvero lì; la pulizia SQL sopra la risolve comunque. Scritta
+`database/migrations/009_menu_categorie_piatti.sql`, retroattiva,
+`CREATE TABLE IF NOT EXISTS` con lo schema esatto letto dal titolare
+(niente rischio su produzione/sviluppo, dove le tabelle già esistono —
+utile per un ambiente ricostruito da zero, che oggi si romperebbe qui).
+Titolare: migration eseguita, arretrato pulito, `/menu-pubblico`
+verificato — tutto ok, confermato.
+
+**Scorciatoia Dashboard nella rail** (14/08/2026, ultima richiesta della
+sessione): dopo aver approvato il menu a rail ("mi piace"), il titolare
+ha segnalato che tornare a `/home` da una pagina interna richiedeva
+comunque due click (icona gruppo PRINCIPALE → voce Dashboard nel
+pannello). Aggiunto un `Link` diretto a `/home` in cima alla rail,
+sopra "Cerca" — icona `Home` (non `LayoutDashboard`, già usata
+dall'icona del gruppo PRINCIPALE subito sotto, per non avere la stessa
+icona due volte sulla rail). Un click da qualunque pagina, per tutti i
+ruoli. Nessuna modifica a `SEZIONI_MENU` o al mobile. Verificato solo
+con `tsc --noEmit` (0 errori) — arrivata dopo l'ultimo giro di verifica
+visiva del titolare sul menu, quindi va guardata anche lei prima del
+deploy insieme al resto rimasto in sospeso (checklist data al titolare
+nel messaggio precedente: `npm test` aggiornato + controllo visivo
+completo della rail).

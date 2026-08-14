@@ -18,6 +18,7 @@ let ospiteTestId;
 let soggiornoTestId;
 let configId;
 let tavoloId;
+let categoriaTestId;
 let piattoId;
 let catalogoVoceId;
 
@@ -70,15 +71,24 @@ beforeAll(async () => {
   );
   tavoloId = tavRes.rows[0].id;
 
-  await pool.query(`
-    INSERT INTO menu_categorie (titolo, ordine) VALUES ('Cat Test Addebiti', 99)
-    ON CONFLICT DO NOTHING
-  `);
-  const catRow = await pool.query("SELECT id FROM menu_categorie WHERE titolo = 'Cat Test Addebiti' LIMIT 1");
+  // 14/08/2026 — prima creava una categoria a titolo fisso 'Cat Test Addebiti'
+  // con "ON CONFLICT DO NOTHING": la tabella menu_categorie non ha un vincolo
+  // UNIQUE su titolo (verificato: nessun conflitto poteva mai scattare), quindi
+  // ogni esecuzione della suite ne inseriva una copia in più, senza che
+  // afterAll la ripulisse mai. Il titolare l'ha trovata duplicata ~14 volte
+  // nel filtro categorie della pagina Menu reale. Corretto con lo stesso
+  // pattern SUFFISSO già in uso in questo file: titolo univoco per ogni run,
+  // id tracciato e cancellato esplicitamente in afterAll — niente più bisogno
+  // di un vincolo DB per essere idempotente.
+  const catIns = await pool.query(
+    `INSERT INTO menu_categorie (titolo, ordine) VALUES ($1, 99) RETURNING id`,
+    [`Cat Test Addebiti${SUFFISSO}`]
+  );
+  categoriaTestId = catIns.rows[0].id;
   const piattoRes = await pool.query(
     `INSERT INTO menu_piatti (nome, prezzo, disponibile, categoria_id)
      VALUES ('Extra Test', 10.00, true, $1) RETURNING id`,
-    [catRow.rows[0].id]
+    [categoriaTestId]
   );
   piattoId = piattoRes.rows[0].id;
 });
@@ -89,6 +99,7 @@ afterAll(async () => {
   await pulisci('DELETE FROM comande WHERE tavolo_id = $1', [tavoloId]);
   await pulisci('DELETE FROM tavoli WHERE id = $1', [tavoloId]);
   await pulisci('DELETE FROM menu_piatti WHERE id = $1', [piattoId]);
+  await pulisci('DELETE FROM menu_categorie WHERE id = $1', [categoriaTestId]);
   await pulisci('DELETE FROM configurazioni_sala WHERE id = $1', [configId]);
   await pulisci('DELETE FROM catalogo_addebiti_rapidi WHERE id = $1', [catalogoVoceId]);
   await pulisci('DELETE FROM soggiorno_ospiti WHERE soggiorno_id = $1', [soggiornoTestId]);

@@ -57,18 +57,24 @@ export default function PaginaLogin() {
           <div>
             {/* htmlFor/id aggiunti il 31/07/2026 (docs/EVOLUTIVE.md): senza
                 associazione programmatica label↔input, tests/e2e/login.spec.js
-                (page.getByLabel(/email/i)) andava in timeout. */}
+                andava in timeout — ora cerca "Nome utente", aggiornato insieme
+                a questa etichetta (13/08/2026).
+                Campo "email" nel DB per motivi storici (nome colonna), ma senza
+                validazione di formato lato backend — usato come nome utente
+                (es. nome.cognome) su richiesta del titolare. type="text" invece
+                di type="email": un valore senza "@" andrebbe altrimenti bloccato
+                dalla validazione nativa del browser prima ancora del submit. */}
             <label htmlFor="email" className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>
-              Email
+              Nome utente
             </label>
             <input
               id="email"
-              type="email"
+              type="text"
               value={email}
               onChange={e => setEmail(e.target.value)}
-              placeholder="nome@hotel.it"
+              placeholder="nome.cognome"
               required
-              autoComplete="email"
+              autoComplete="username"
               className="w-full px-3 rounded-lg text-sm outline-none"
               style={{ height: '44px', border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--foreground)' }}
             />

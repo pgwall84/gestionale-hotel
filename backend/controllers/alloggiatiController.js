@@ -6,10 +6,38 @@
 // di Stato — gated da conferma esplicita nel body, vedi
 // inviaSchedineSoggiorno). Vedi backend/lib/alloggiatiSoapClient.js per il
 // client SOAP e backend/lib/alloggiatiSchedina.js per il generatore.
+// Fase 2 (13/08/2026): estratta eseguiInvioReale — stessa logica di invio
+// riusata sia dal pulsante manuale (inviaSchedineSoggiorno, HTTP, richiede
+// conferma_dati_reali) sia dal job notturno (backend/jobs/invioAlloggiatiWeb.js,
+// nessuna richiesta HTTP, nessun flag di conferma perché non è mai un'azione
+// spontanea di un operatore). Chiama sempre Test PRIMA di Send: se anche una
+// sola riga non passa il controllo di formato, Send non viene mai invocato
+// — niente tentativi di acquisizione su dati che sappiamo già essere
+// respinti.
+// Fase A del piano concordato il 13/08/2026 (docs/EVOLUTIVE.md, "Modulo
+// 2.5 — Fase 2, stato al 13/08/2026"): un errore di rete/servizio non
+// raggiungibile ora SCRIVE comunque una riga in alloggiati_invii con
+// esito 'errore_rete' (prima non scriveva nulla — "retry-safety" invisibile,
+// nessun contatore, nessun ultimo errore mostrato in coda). Resta comunque
+// "da reinviare" per la query di trovaSoggiorniDaInviare/codaInvii (già
+// considerano qualunque esito diverso da 'ok'), quindi il comportamento di
+// retry automatico non cambia — cambia solo la visibilità. Non distingue
+// un guasto davvero transitorio (portale giù) da un problema persistente
+// (es. credenziali cambiate) — per questo la coda mostra anche il numero di
+// tentativi falliti consecutivi: un contatore che cresce notte dopo notte
+// è il segnale che NON si sta autorisolvendo.
 
 const pool = require('../config/db');
-const { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine } = require('../lib/alloggiatiSoapClient');
+const fs = require('fs');
+const path = require('path');
+const { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine, scaricaRicevuta } = require('../lib/alloggiatiSoapClient');
 const { generaSchedineSoggiorno } = require('../lib/alloggiatiSchedina');
+
+// Cartella dove vengono salvate le ricevute PDF (Fase B, 13/08/2026) —
+// stesso pattern di uploads/archivio (archivioController.js), ma creata al
+// primo utilizzo invece di richiedere che esista già nel repository: qui il
+// file non arriva da un upload multer, ma da una risposta SOAP.
+const CARTELLA_RICEVUTE = path.join(__dirname, '..', 'uploads', 'alloggiati_ricevute');
 
 // Legge le 3 credenziali da .env e restituisce un errore chiaro se manca
 // anche solo una — riusata da tutti gli endpoint che parlano con
@@ -206,44 +234,372 @@ async function testSchedineSoggiorno(req, res) {
   }
 }
 
+// Riduce l'array "dettaglio" di Test/Send (una riga per ogni
+// EsitoOperazioneServizio) alla sola parte utile — righe respinte, con
+// motivo — in una stringa unica pronta da salvare/mostrare. Restituisce
+// null se non c'è nulla da segnalare (tutte le righe valide).
+function riassumiRigheRespinte(dettaglio) {
+  const respinte = (dettaglio || []).filter(d => !d.esito);
+  if (respinte.length === 0) return null;
+  return respinte
+    .map(d => (d.erroreDes || d.erroreCod || 'errore non specificato') + (d.erroreDettaglio ? ` — ${d.erroreDettaglio}` : ''))
+    .join('; ');
+}
+
+// Esegue davvero l'invio verso WS_ALLOGGIATI per un soggiorno — Test PRIMA
+// di Send, Send invocato solo se Test conferma che tutte le righe sono
+// valide. Riusata sia dall'endpoint HTTP (pulsante manuale) sia dal job
+// notturno (nessuna richiesta HTTP di mezzo). Non genera MAI eccezioni per
+// "condizioni note" (credenziali mancanti, dati insufficienti) — le
+// restituisce come esito 'in_attesa', così il chiamante decide se
+// rispondere con un 400 (HTTP) o lasciarla in coda per la notte dopo (job).
+// Le eccezioni che escono da qui sono solo errori di rete/servizio non
+// raggiungibile — il chiamante decide se scriverle o no in alloggiati_invii
+// (la HTTP le traduce in 502, il job non scrive nulla, vedi jobs/invioAlloggiatiWeb.js).
+async function eseguiInvioReale(soggiornoId) {
+  // Blocco di sicurezza — QUI, non solo nelle query di elenco (codaInvii,
+  // trovaSoggiorniDaInviare del job): quelle proteggono solo chi passa da
+  // lì, ma l'endpoint HTTP POST /soggiorni/:id/invia accetta qualunque id
+  // gli venga passato, anche a mano (es. un vecchio id incollato per errore
+  // durante un test con "Verifica schedina"). Mettendo il controllo qui,
+  // dentro l'UNICA funzione da cui passano davvero tutti gli invii (job,
+  // endpoint manuale, futuri chiamanti), un soggiorno di test non può mai
+  // essere inviato per davvero, indipendentemente da come ci si arriva.
+  const canaleRes = await pool.query(
+    `SELECT p.canale_origine FROM soggiorni s JOIN prenotazioni p ON p.id = s.prenotazione_id WHERE s.id = $1`,
+    [soggiornoId]
+  );
+  if (canaleRes.rows.length === 0) {
+    return { soggiornoId, esito: 'in_attesa', scritto: false, dettaglio: 'Soggiorno non trovato.', righeInviate: 0, totaleOspiti: 0, avvisi: [] };
+  }
+  if (canaleRes.rows[0].canale_origine === 'test_interno') {
+    throw new Error(
+      `Soggiorno #${soggiornoId} è un dato di test (canale_origine='test_interno', generato da uno script di seed) — invio reale bloccato per sicurezza, non è mai stato un ospite vero. Se serve testare il formato, usa "Verifica schedina" (Test), mai questo endpoint.`
+    );
+  }
+
+  const cred = credenzialiAlloggiati();
+  if (!cred) {
+    return { soggiornoId, esito: 'in_attesa', scritto: false, dettaglio: 'Credenziali Alloggiati Web non configurate.', righeInviate: 0, totaleOspiti: 0, avvisi: [] };
+  }
+
+  const { righeSchedina, avvisi, totaleOspiti } = await generaSchedineSoggiorno(pool, soggiornoId);
+  if (!righeSchedina.length) {
+    return {
+      soggiornoId, esito: 'in_attesa', scritto: false,
+      dettaglio: avvisi.join('; ') || 'Dati ospite insufficienti per generare la schedina.',
+      righeInviate: 0, totaleOspiti, avvisi,
+    };
+  }
+
+  // Chiamate verso WS_ALLOGGIATI — da qui in poi un errore è di rete/
+  // servizio (timeout, portale in manutenzione, credenziali rifiutate...),
+  // non un problema nei dati. Scritto come 'errore_rete' invece di essere
+  // rilanciato: resta comunque "da reinviare" alla prossima esecuzione
+  // (stessa query di prima), ma ora è visibile in coda invece che silenzioso.
+  // La validazione di forma qui dentro (non solo il try/catch attorno alle
+  // chiamate) è deliberata: una risposta inattesa dal client SOAP — es. un
+  // WSDL cambiato, o un mock di test mal configurato — deve finire nello
+  // stesso ramo "errore_rete", mai in un crash con proprietà lette da
+  // undefined (bug reale trovato dal titolare 13/08/2026, causato da un
+  // problema di igiene dei mock nei test, non da questa funzione — ma la
+  // funzione va comunque resa robusta a prescindere da cosa gliela passa).
+  let token, esitoTest, esitoSend;
+  try {
+    token = await generaToken(cred);
+    esitoTest = await testSchedine({ utente: cred.utente, token, righe: righeSchedina });
+    if (!esitoTest || typeof esitoTest.schedineValide !== 'number') {
+      throw new Error('Risposta di Test malformata (schedineValide mancante) — verificare il client SOAP/WSDL.');
+    }
+  } catch (err) {
+    await pool.query(
+      `INSERT INTO alloggiati_invii (soggiorno_id, esito, dettaglio_errore) VALUES ($1, 'errore_rete', $2)`,
+      [soggiornoId, err.message]
+    );
+    return { soggiornoId, esito: 'errore_rete', scritto: true, dettaglio: err.message, righeInviate: 0, totaleOspiti, avvisi };
+  }
+
+  if (esitoTest.schedineValide !== righeSchedina.length) {
+    const dettaglio = riassumiRigheRespinte(esitoTest.dettaglio) || 'Formato non valido secondo WS_ALLOGGIATI.';
+    await pool.query(
+      `INSERT INTO alloggiati_invii (soggiorno_id, esito, dettaglio_errore) VALUES ($1, 'errore', $2)`,
+      [soggiornoId, dettaglio]
+    );
+    return { soggiornoId, esito: 'errore', scritto: true, dettaglio, righeInviate: righeSchedina.length, totaleOspiti, avvisi };
+  }
+
+  try {
+    esitoSend = await inviaSchedine({ utente: cred.utente, token, righe: righeSchedina });
+    if (!esitoSend || typeof esitoSend.schedineValide !== 'number') {
+      throw new Error('Risposta di Send malformata (schedineValide mancante) — verificare il client SOAP/WSDL.');
+    }
+  } catch (err) {
+    await pool.query(
+      `INSERT INTO alloggiati_invii (soggiorno_id, esito, dettaglio_errore) VALUES ($1, 'errore_rete', $2)`,
+      [soggiornoId, err.message]
+    );
+    return { soggiornoId, esito: 'errore_rete', scritto: true, dettaglio: err.message, righeInviate: 0, totaleOspiti, avvisi };
+  }
+
+  const esitoFinale = esitoSend.schedineValide === righeSchedina.length ? 'ok' : 'parziale';
+  const dettaglio = riassumiRigheRespinte(esitoSend.dettaglio);
+  await pool.query(
+    `INSERT INTO alloggiati_invii (soggiorno_id, esito, dettaglio_errore) VALUES ($1, $2, $3)`,
+    [soggiornoId, esitoFinale, dettaglio]
+  );
+  return { soggiornoId, esito: esitoFinale, scritto: true, dettaglio, righeInviate: esitoSend.schedineValide, totaleOspiti, avvisi };
+}
+
 // POST /api/alloggiati/soggiorni/:id/invia — NON SICURO: il metodo Send
 // acquisisce davvero le schedine presso la Polizia di Stato. Richiede
 // esplicitamente { conferma_dati_reali: true } nel body — nessuna
 // scorciatoia, nessun default permissivo: senza quel flag la richiesta si
 // ferma con 400 prima ancora di generare le righe o contattare il
-// servizio. Esito salvato in alloggiati_invii (predisposta da migration
-// 016, mai popolata finora). Accessibile a: admin, titolare.
+// servizio. Usato sia per il pulsante manuale "Invia ora" nella coda
+// (Impostazioni ▸ Alloggiati Web) sia, senza HTTP di mezzo, dal job
+// notturno tramite eseguiInvioReale. Accessibile a: admin, titolare.
 async function inviaSchedineSoggiorno(req, res) {
   if (req.body?.conferma_dati_reali !== true) {
     return res.status(400).json({
       error: 'Invio reale non confermato — impostare conferma_dati_reali: true solo per un soggiorno con ospiti reali effettivamente presenti in struttura.',
     });
   }
-  const cred = credenzialiAlloggiati();
-  if (!cred) {
-    return res.status(400).json({
-      error: 'Credenziali Alloggiati Web non configurate — impostare ALLOGGIATI_UTENTE, ALLOGGIATI_PASSWORD, ALLOGGIATI_WSKEY in backend/.env.',
-    });
-  }
   try {
-    const { righeSchedina, avvisi, totaleOspiti } = await generaSchedineSoggiorno(pool, req.params.id);
-    if (!righeSchedina.length) {
-      return res.status(400).json({ error: 'Nessuna riga generabile per questo soggiorno.', avvisi });
+    const risultato = await eseguiInvioReale(req.params.id);
+    if (risultato.esito === 'in_attesa') {
+      return res.status(400).json({ error: risultato.dettaglio, avvisi: risultato.avvisi });
     }
-    const token = await generaToken(cred);
-    const esito = await inviaSchedine({ utente: cred.utente, token, righe: righeSchedina });
-    await pool.query(
-      `INSERT INTO alloggiati_invii (soggiorno_id, esito) VALUES ($1, $2)`,
-      [req.params.id, esito.schedineValide === righeSchedina.length ? 'ok' : 'parziale']
-    );
-    res.json({ inviato: true, avvisi, totaleOspiti, righeInviate: righeSchedina.length, esito });
+    if (risultato.esito === 'errore_rete') {
+      return res.status(502).json({ error: `Invio schedina fallito: ${risultato.dettaglio}`, avvisi: risultato.avvisi });
+    }
+    res.json({
+      inviato: risultato.esito === 'ok' || risultato.esito === 'parziale',
+      esito: risultato.esito,
+      dettaglio: risultato.dettaglio,
+      avvisi: risultato.avvisi,
+      totaleOspiti: risultato.totaleOspiti,
+      righeInviate: risultato.righeInviate,
+    });
   } catch (err) {
     console.error('inviaSchedineSoggiorno error:', err.message);
     res.status(502).json({ error: `Invio schedina fallito: ${err.message}` });
   }
 }
 
+// GET /api/alloggiati/coda — soggiorni con arrivo già avvenuto che non
+// risultano ancora inviati con successo (mai tentati, o ultimo tentativo
+// con esito diverso da 'ok') + gli ultimi inviati con successo, per la
+// pagina Impostazioni ▸ Alloggiati Web. Esclude sempre canale_origine =
+// 'test_interno' — i soggiorni generati dagli script di test (
+// creaPrenotazioneTestAlloggiati.js, seedPrenotazioniTest.js) non devono
+// mai comparire qui, altrimenti finirebbero nel giro di invio reale del
+// job notturno. Accessibile a: admin, titolare (stessa azione 'invio').
+async function codaInvii(req, res) {
+  try {
+    const daInviareRes = await pool.query(
+      `WITH ultimo_tentativo AS (
+         SELECT DISTINCT ON (soggiorno_id) soggiorno_id, esito, dettaglio_errore, data_invio
+         FROM alloggiati_invii
+         ORDER BY soggiorno_id, data_invio DESC
+       ),
+       ultimo_ok AS (
+         SELECT soggiorno_id, MAX(data_invio) AS ultimo_ok_at
+         FROM alloggiati_invii WHERE esito = 'ok' GROUP BY soggiorno_id
+       ),
+       tentativi_falliti AS (
+         -- Fase A (13/08/2026): quanti tentativi consecutivi hanno fallito
+         -- da quando (se mai) è andato a buon fine l'ultimo — un numero che
+         -- cresce notte dopo notte segnala un problema che non si sta
+         -- autorisolvendo, non solo rumore di rete transitorio.
+         SELECT ai.soggiorno_id, COUNT(*)::int AS tentativi_falliti
+         FROM alloggiati_invii ai
+         LEFT JOIN ultimo_ok uo ON uo.soggiorno_id = ai.soggiorno_id
+         WHERE ai.esito != 'ok'
+           AND (uo.ultimo_ok_at IS NULL OR ai.data_invio > uo.ultimo_ok_at)
+         GROUP BY ai.soggiorno_id
+       )
+       SELECT s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, c.numero AS camera_numero,
+              o.nome, o.cognome,
+              ut.esito AS ultimo_esito, ut.dettaglio_errore, ut.data_invio AS ultimo_tentativo_at,
+              COALESCE(tf.tentativi_falliti, 0) AS tentativi_falliti
+       FROM soggiorni s
+       JOIN prenotazioni p ON p.id = s.prenotazione_id
+       JOIN camere c ON c.id = s.camera_id
+       JOIN ospiti o ON o.id = s.ospite_id
+       LEFT JOIN ultimo_tentativo ut ON ut.soggiorno_id = s.id
+       LEFT JOIN tentativi_falliti tf ON tf.soggiorno_id = s.id
+       WHERE s.cancellato = false
+         AND s.data_arrivo <= CURRENT_DATE
+         AND p.canale_origine != 'test_interno'
+         AND (ut.esito IS NULL OR ut.esito != 'ok')
+       ORDER BY s.data_arrivo DESC
+       LIMIT 100`
+    );
+
+    const inviatiRecentiRes = await pool.query(
+      `WITH ultimo_tentativo AS (
+         SELECT DISTINCT ON (soggiorno_id) soggiorno_id, esito, data_invio
+         FROM alloggiati_invii
+         ORDER BY soggiorno_id, data_invio DESC
+       )
+       SELECT s.id AS soggiorno_id, s.data_arrivo, c.numero AS camera_numero,
+              o.nome, o.cognome, ut.data_invio AS ultimo_tentativo_at
+       FROM soggiorni s
+       JOIN prenotazioni p ON p.id = s.prenotazione_id
+       JOIN camere c ON c.id = s.camera_id
+       JOIN ospiti o ON o.id = s.ospite_id
+       JOIN ultimo_tentativo ut ON ut.soggiorno_id = s.id
+       WHERE s.cancellato = false AND p.canale_origine != 'test_interno' AND ut.esito = 'ok'
+       ORDER BY ut.data_invio DESC
+       LIMIT 30`
+    );
+
+    res.json({ daInviare: daInviareRes.rows, inviatiRecenti: inviatiRecentiRes.rows });
+  } catch (err) {
+    console.error('codaInvii error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// Scarica e salva su disco la ricevuta ufficiale (PDF) di UNA data —
+// Fase B (13/08/2026). Non genera mai eccezioni per condizioni note
+// (credenziali mancanti, data fuori dalla finestra ammessa dal servizio) —
+// le restituisce come { scaricata: false, motivo }, stesso stile di
+// eseguiInvioReale, così il chiamante decide come reagire (400 HTTP o
+// semplicemente "riprova la notte dopo" per il job). Idempotente: se la
+// ricevuta di quella data è già stata scaricata, non richiama il servizio.
+async function scaricaRicevutaGiorno(dataStr) {
+  const esistente = await pool.query('SELECT id FROM alloggiati_ricevute WHERE data = $1', [dataStr]);
+  if (esistente.rows.length > 0) {
+    return { data: dataStr, scaricata: false, motivo: 'Ricevuta già scaricata in precedenza.' };
+  }
+
+  // Finestra ammessa dal servizio (manuale, pag. 17): "Ultimi 30gg escluso
+  // il giorno corrente" — validato qui PRIMA di contattare WS_ALLOGGIATI,
+  // per dare un errore chiaro invece di un ErroreDes generico dal servizio.
+  const oggi = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00');
+  const data = new Date(`${dataStr}T00:00:00`);
+  const giorniFa = Math.round((oggi - data) / 86400000);
+  if (giorniFa <= 0) {
+    return { data: dataStr, scaricata: false, motivo: 'La ricevuta di oggi non è ancora scaricabile — disponibile solo dal giorno successivo.' };
+  }
+  if (giorniFa > 30) {
+    return { data: dataStr, scaricata: false, motivo: 'Data troppo vecchia — WS_ALLOGGIATI conserva le ricevute solo per 30 giorni.' };
+  }
+
+  const cred = credenzialiAlloggiati();
+  if (!cred) {
+    return { data: dataStr, scaricata: false, motivo: 'Credenziali Alloggiati Web non configurate.' };
+  }
+
+  const token = await generaToken(cred);
+  const pdfBuffer = await scaricaRicevuta({ utente: cred.utente, token, data: dataStr });
+  if (!Buffer.isBuffer(pdfBuffer) || pdfBuffer.length === 0) {
+    // Stesso principio della guardia in eseguiInvioReale: una risposta
+    // inattesa dal client SOAP non deve mai finire silenziosamente scritta
+    // su disco come file vuoto/corrotto — meglio un errore esplicito.
+    throw new Error('Risposta di Ricevuta senza contenuto PDF valido — verificare il client SOAP/WSDL.');
+  }
+
+  fs.mkdirSync(CARTELLA_RICEVUTE, { recursive: true });
+  const nomeFile = `${dataStr}.pdf`;
+  fs.writeFileSync(path.join(CARTELLA_RICEVUTE, nomeFile), pdfBuffer);
+
+  await pool.query(
+    `INSERT INTO alloggiati_ricevute (data, percorso_file) VALUES ($1, $2)
+     ON CONFLICT (data) DO NOTHING`,
+    [dataStr, nomeFile]
+  );
+  return { data: dataStr, scaricata: true, percorso_file: nomeFile };
+}
+
+// Trova le date con almeno un invio riuscito (ok/parziale) non ancora
+// coperte da una ricevuta scaricata, entro la finestra dei 30 giorni, e
+// prova a scaricarle una per una — chiamata dal job notturno dopo il giro
+// di invio (invioAlloggiatiWeb.js). Un fallimento su una data non blocca le
+// altre: l'array dei risultati mostra ogni esito separatamente, e le date
+// non riuscite restano candidate anche la notte successiva (nessuna riga
+// scritta in alloggiati_ricevute finché il download non va a buon fine).
+async function scaricaRicevutePendenti() {
+  const dateRes = await pool.query(
+    `SELECT DISTINCT ai.data_invio::date AS data
+     FROM alloggiati_invii ai
+     LEFT JOIN alloggiati_ricevute ar ON ar.data = ai.data_invio::date
+     WHERE ai.esito IN ('ok', 'parziale')
+       AND ar.id IS NULL
+       AND ai.data_invio::date >= CURRENT_DATE - INTERVAL '30 days'
+       AND ai.data_invio::date < CURRENT_DATE
+     ORDER BY data`
+  );
+  const risultati = [];
+  for (const riga of dateRes.rows) {
+    const dataStr = riga.data.toISOString ? riga.data.toISOString().slice(0, 10) : String(riga.data).slice(0, 10);
+    try {
+      risultati.push(await scaricaRicevutaGiorno(dataStr));
+    } catch (err) {
+      console.error(`[scaricaRicevutePendenti] data ${dataStr} — errore: ${err.message}`);
+      risultati.push({ data: dataStr, scaricata: false, motivo: err.message });
+    }
+  }
+  return risultati;
+}
+
+// GET /api/alloggiati/ricevute — elenco ricevute scaricate, per la pagina
+// Impostazioni ▸ Alloggiati Web. Accessibile a: admin, titolare.
+async function listaRicevute(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT data, scaricata_at FROM alloggiati_ricevute ORDER BY data DESC LIMIT 60`
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('listaRicevute error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// POST /api/alloggiati/ricevute/:data/scarica — download manuale per una
+// data specifica (es. se il giro automatico ha fallito). Accessibile a:
+// admin, titolare.
+async function scaricaRicevutaManuale(req, res) {
+  try {
+    const risultato = await scaricaRicevutaGiorno(req.params.data);
+    if (!risultato.scaricata) {
+      return res.status(400).json({ error: risultato.motivo });
+    }
+    res.json(risultato);
+  } catch (err) {
+    console.error('scaricaRicevutaManuale error:', err.message);
+    res.status(502).json({ error: `Download ricevuta fallito: ${err.message}` });
+  }
+}
+
+// GET /api/alloggiati/ricevute/:data/file — scarica il PDF già salvato.
+// Accessibile a: admin, titolare.
+async function downloadRicevutaFile(req, res) {
+  try {
+    const result = await pool.query(
+      'SELECT percorso_file FROM alloggiati_ricevute WHERE data = $1',
+      [req.params.data]
+    );
+    if (result.rows.length === 0) {
+      return res.status(404).json({ error: 'Ricevuta non trovata per questa data.' });
+    }
+    const filePath = path.join(CARTELLA_RICEVUTE, result.rows[0].percorso_file);
+    if (!fs.existsSync(filePath)) {
+      return res.status(404).json({ error: 'File non trovato sul server.' });
+    }
+    res.download(filePath, `ricevuta-alloggiati-${req.params.data}.pdf`);
+  } catch (err) {
+    console.error('downloadRicevutaFile error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
 module.exports = {
   sincronizzaTabelle, listaCodici, statoSincronizzazione,
   verificaCredenziali, testSchedineSoggiorno, inviaSchedineSoggiorno,
+  eseguiInvioReale, codaInvii,
+  scaricaRicevutaGiorno, scaricaRicevutePendenti, listaRicevute,
+  scaricaRicevutaManuale, downloadRicevutaFile,
 };

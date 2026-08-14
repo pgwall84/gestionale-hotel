@@ -7,8 +7,7 @@
 
 import { useState, useEffect } from 'react';
 import { QRCodeSVG } from 'qrcode.react';
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
+import { getApiUrl } from '@/lib/api';
 
 export default function MagazzinoQrStampa() {
   const [prodotti, setProdotti] = useState([]);
@@ -16,7 +15,7 @@ export default function MagazzinoQrStampa() {
 
   useEffect(() => {
     const token = document.cookie.split('; ').find(c => c.startsWith('token='))?.split('=')[1];
-    fetch(`${BASE_URL}/magazzino/prodotti`, { headers: { Authorization: `Bearer ${token}` } })
+    fetch(`${getApiUrl()}/magazzino/prodotti`, { headers: { Authorization: `Bearer ${token}` } })
       .then(r => r.json())
       .then(d => setProdotti(d.prodotti || []))
       .finally(() => setLoading(false));

@@ -144,17 +144,8 @@ async function applicaStandardMese(req, res) {
     const dipendentiSenzaStandard = senzaStandardRes.rows.map(u => `${u.nome} ${u.cognome}`);
 
     if (standards.length === 0) {
-      return res.json({ creati: 0, saltati: 0, dipendentiSenzaStandard });
+      return res.json({ creati: 0, sovrascritti: 0, dipendentiSenzaStandard });
     }
-
-    // Turni già esistenti nel periodo — per non sovrascriverli.
-    // types.setTypeParser(1082, ...) in config/db.js fa sì che t.data arrivi
-    // già come stringa 'YYYY-MM-DD', nessuna conversione necessaria.
-    const esistentiRes = await pool.query(
-      'SELECT user_id, data FROM turni WHERE data BETWEEN $1 AND $2',
-      [data_inizio, data_fine]
-    );
-    const esistentiSet = new Set(esistentiRes.rows.map(r => `${r.user_id}_${r.data}`));
 
     // Elenco dei giorni del periodo (date locali, evita shift di fuso)
     const giorni = [];
@@ -168,13 +159,11 @@ async function applicaStandardMese(req, res) {
       cursore.setDate(cursore.getDate() + 1);
     }
 
-    // Righe da inserire — salta ogni combinazione utente+giorno già presente
+    // Righe da inserire — una per ogni combinazione dipendente-con-standard × giorno.
     const righe = [];
-    let saltati = 0;
     for (const s of standards) {
       const isRiposo = s.tipo_turno === 'riposo';
       for (const giorno of giorni) {
-        if (esistentiSet.has(`${s.user_id}_${giorno}`)) { saltati++; continue; }
         righe.push([
           s.user_id, giorno,
           isRiposo ? null : s.ora_inizio,
@@ -185,18 +174,44 @@ async function applicaStandardMese(req, res) {
       }
     }
 
-    if (righe.length > 0) {
-      const placeholders = righe.map((_, i) => {
-        const b = i * 6;
-        return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6})`;
-      }).join(', ');
-      await pool.query(
-        `INSERT INTO turni (user_id, data, ora_inizio, ora_fine, tipo_turno, note) VALUES ${placeholders}`,
-        righe.flat()
+    // Sovrascrittura, non skip: decisione esplicita del titolare (13/08/2026)
+    // — il turno standard è predominante, un turno assegnato a mano nello
+    // stesso range va rimpiazzato, non conservato. DELETE + INSERT in
+    // un'unica transazione (solo per i dipendenti con uno standard
+    // configurato — chi non ce l'ha, in dipendentiSenzaStandard, resta
+    // intoccato: nessun turno nuovo lo sostituirebbe).
+    const userIdsConStandard = standards.map(s => s.user_id);
+    const client = await pool.connect();
+    let sovrascritti = 0;
+    try {
+      await client.query('BEGIN');
+
+      const cancellati = await client.query(
+        'DELETE FROM turni WHERE data BETWEEN $1 AND $2 AND user_id = ANY($3)',
+        [data_inizio, data_fine, userIdsConStandard]
       );
+      sovrascritti = cancellati.rowCount;
+
+      if (righe.length > 0) {
+        const placeholders = righe.map((_, i) => {
+          const b = i * 6;
+          return `($${b + 1}, $${b + 2}, $${b + 3}, $${b + 4}, $${b + 5}, $${b + 6})`;
+        }).join(', ');
+        await client.query(
+          `INSERT INTO turni (user_id, data, ora_inizio, ora_fine, tipo_turno, note) VALUES ${placeholders}`,
+          righe.flat()
+        );
+      }
+
+      await client.query('COMMIT');
+    } catch (err) {
+      await client.query('ROLLBACK');
+      throw err;
+    } finally {
+      client.release();
     }
 
-    res.json({ creati: righe.length, saltati, dipendentiSenzaStandard });
+    res.json({ creati: righe.length, sovrascritti, dipendentiSenzaStandard });
   } catch (err) {
     console.error('Errore applica standard mese:', err);
     res.status(500).json({ errore: 'Errore interno del server.' });

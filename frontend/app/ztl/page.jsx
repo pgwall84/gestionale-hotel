@@ -7,7 +7,7 @@ import {
 } from 'lucide-react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 import CampoData from '@/components/ui/CampoData';
 
 // ─── OCR ──────────────────────────────────────────────────────────────────────
@@ -401,7 +401,7 @@ export default function PaginaZTL() {
       const fd = new FormData();
       fd.append('file', file);
       const token = (await import('js-cookie')).default.get('token');
-      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ztl/import`, {
+      const r = await fetch(`${getApiUrl()}/ztl/import`, {
         method: 'POST', headers: { Authorization: `Bearer ${token}` }, body: fd,
       });
       const data = await r.json();
@@ -420,7 +420,7 @@ export default function PaginaZTL() {
   async function esportaVigiPass() {
     try {
       const token = (await import('js-cookie')).default.get('token');
-      const r = await fetch(`${process.env.NEXT_PUBLIC_API_URL}/ztl/export`, {
+      const r = await fetch(`${getApiUrl()}/ztl/export`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!r.ok) { alert('Nessuna targa da inviare.'); return; }

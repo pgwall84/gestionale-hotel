@@ -162,4 +162,42 @@ async function logoutAll(req, res) {
   }
 }
 
-module.exports = { login, profilo, refresh, logout, logoutAll };
+// POST /api/auth/cambia-password — self-service, qualunque utente autenticato
+// cambia la propria password. Distinto dal reset fatto da admin/titolare in
+// usersController.modifica() (che non richiede di conoscere la password
+// attuale) — qui invece va verificata, altrimenti chiunque rubi un token
+// valido per 8h potrebbe scavalcare l'utente cambiandogli la password.
+// Aggiunto 13/08/2026 (Fase A provisioning dipendenti, CLAUDE.md Sezione 16).
+async function cambiaPassword(req, res) {
+  const { passwordAttuale, nuovaPassword } = req.body;
+
+  if (!passwordAttuale || !nuovaPassword) {
+    return res.status(400).json({ errore: 'Password attuale e nuova password sono obbligatorie.' });
+  }
+  if (nuovaPassword.length < 8) {
+    return res.status(400).json({ errore: 'La nuova password deve avere almeno 8 caratteri.' });
+  }
+
+  try {
+    const result = await pool.query('SELECT password_hash FROM users WHERE id = $1', [req.utente.id]);
+    if (result.rows.length === 0) {
+      return res.status(404).json({ errore: 'Utente non trovato.' });
+    }
+
+    const passwordCorretta = await bcrypt.compare(passwordAttuale, result.rows[0].password_hash);
+    if (!passwordCorretta) {
+      return res.status(401).json({ errore: 'Password attuale non corretta.' });
+    }
+
+    const nuovoHash = await bcrypt.hash(nuovaPassword, 12);
+    await pool.query('UPDATE users SET password_hash = $1 WHERE id = $2', [nuovoHash, req.utente.id]);
+
+    await logAudit(req.utente.id, 'cambio_password', 'users', req.utente.id, req, null);
+    res.json({ messaggio: 'Password aggiornata.' });
+  } catch (err) {
+    console.error('Errore cambia password:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+module.exports = { login, profilo, refresh, logout, logoutAll, cambiaPassword };

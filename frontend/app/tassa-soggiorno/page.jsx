@@ -16,7 +16,7 @@ import { Download } from 'lucide-react';
 import Cookies from 'js-cookie';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 import DataTable from '@/components/ui/DataTable';
 import CampoData from '@/components/ui/CampoData';
 
@@ -29,17 +29,13 @@ const inputStyle = {
   color: 'var(--foreground)',
 };
 
-// Stesso calcolo di frontend/lib/api.js (getApiUrl), non esportato da lì —
-// duplicato qui per il download blob, che richiede fetch diretto e non può
-// passare da api.js (serve leggere la risposta come blob, non JSON).
-// Regola di rete non derogabile (CLAUDE.md Sezione 12): mai un URL fisso da
-// env — va calcolato a runtime dall'hostname del browser, altrimenti si
-// rompe da telefono/tablet in LAN con IP diverso da quello di build.
-function getApiBaseUrl() {
-  if (typeof window === 'undefined') return process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-  const { protocol, hostname } = window.location;
-  return `${protocol}//${hostname}:7001/api`;
-}
+// Fix 12/08/2026: questa pagina duplicava getApiUrl() con una copia locale
+// (getApiBaseUrl) che mancava del ramo produzione — puntava sempre alla
+// porta 7001 diretta, non aperta nel firewall di produzione (stesso bug
+// della SSE cucina/sala/ristorante dell'11/08, mai notato qui perché
+// nessuno aveva ancora provato l'export da hdgolfo-gestionale.com). Ora
+// usa la funzione condivisa, esportata da lib/api.js dall'11/08/2026 —
+// la nota "non esportata da lì" che c'era qui prima è superata.
 
 // Primo e ultimo giorno del mese corrente, in locale — niente toISOString()
 // (shifterebbe il giorno per fuso orario), stesso motivo per cui
@@ -139,7 +135,7 @@ export default function PaginaTassaSoggiorno() {
     setErrore('');
     try {
       const token = Cookies.get('token');
-      const res = await fetch(`${getApiBaseUrl()}/tassa-soggiorno/report/export?dal=${dal}&al=${al}`, {
+      const res = await fetch(`${getApiUrl()}/tassa-soggiorno/report/export?dal=${dal}&al=${al}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {

@@ -1,6 +1,65 @@
 const pool = require('../config/db');
 const { LABEL_LUOGO } = require('./manutenzioneController');
 
+// Alloggiati Web: invii scaduti o ancora in coda (Fase C, 14/08/2026).
+// Diverso dall'alert "documento incompleto" (quello è readiness PRIMA
+// dell'arrivo — dati pronti per generare la schedina). Questo copre
+// l'invio vero e proprio DOPO il check-in: prima di questa fase l'unico
+// modo per sapere se qualcosa non era stato inviato era andare apposta in
+// Impostazioni ▸ Alloggiati Web. Termine legale: 24h dall'arrivo
+// (check_in_effettuato_at se presente — migration 035, Fase D — altrimenti
+// data_arrivo 00:00 per i soggiorni più vecchi che non l'hanno mai
+// valorizzato). La regola delle 6h per il day-use (arrivo e partenza lo
+// stesso giorno) resta deliberatamente non implementata: nessuna
+// prenotazione così esiste oggi nel sistema, stessa scelta già fatta per
+// la Fase D — vedi docs/EVOLUTIVE.md.
+//
+// Estratta come funzione a sé (non inline in alert()) per essere testabile
+// in isolamento: il titolare ha trovato il 14/08/2026 che nel DB di
+// sviluppo esistono soggiorni REALI mai inviati (non dati di test) che
+// riempiono da soli tutti e 5 gli slot del LIMIT, ordinato per urgenza —
+// un test che si aspetta di trovare i propri fixture tra i risultati
+// dell'endpoint HTTP fallisce non per un bug, ma perché il backlog reale è
+// più vecchio/urgente dei dati appena creati dal test. soggiornoIds, se
+// passato, filtra SOLO su quegli id — usato esclusivamente dai test per
+// isolarsi dal backlog reale; alert() in produzione la chiama sempre senza
+// filtro, comportamento identico a prima dell'estrazione.
+async function alertInviiAlloggiati({ soggiornoIds } = {}) {
+  const filtroIds = soggiornoIds ? 'AND s.id = ANY($1::int[])' : '';
+  const params = soggiornoIds ? [soggiornoIds] : [];
+  const invii = await pool.query(`
+    WITH ultimo_tentativo AS (
+      SELECT DISTINCT ON (soggiorno_id) soggiorno_id, esito
+      FROM alloggiati_invii
+      ORDER BY soggiorno_id, data_invio DESC
+    )
+    SELECT s.id, c.numero AS camera_numero, o.nome, o.cognome,
+           COALESCE(s.check_in_effettuato_at, s.data_arrivo::timestamp) + INTERVAL '24 hours' AS termine
+    FROM soggiorni s
+    JOIN prenotazioni p ON p.id = s.prenotazione_id
+    JOIN camere c ON c.id = s.camera_id
+    JOIN ospiti o ON o.id = s.ospite_id
+    LEFT JOIN ultimo_tentativo ut ON ut.soggiorno_id = s.id
+    WHERE s.cancellato = false
+      AND s.data_arrivo <= CURRENT_DATE
+      AND p.canale_origine != 'test_interno'
+      AND (ut.esito IS NULL OR ut.esito != 'ok')
+      ${filtroIds}
+    ORDER BY termine ASC
+    LIMIT 5
+  `, params);
+
+  return invii.rows.map(r => {
+    const scaduto = new Date(r.termine) <= new Date();
+    return {
+      type: scaduto ? 'red' : 'amber',
+      text: `Camera ${r.camera_numero} — schedina Alloggiati Web ${scaduto ? 'in ritardo' : 'da inviare'} (${r.cognome} ${r.nome})`,
+      category: 'Alloggiati Web · Invio',
+      link: '/impostazioni/alloggiati',
+    };
+  });
+}
+
 // GET /api/dashboard/alert
 // Aggrega alert reali da più moduli
 async function alert(req, res) {
@@ -149,6 +208,12 @@ async function alert(req, res) {
       });
     }
 
+    // ── Alloggiati Web: invii scaduti o ancora in coda (Fase C, 14/08/2026) ───
+    // Estratta in alertInviiAlloggiati() — vedi quella funzione più sotto
+    // per la logica completa e per il motivo (bug di isolamento test
+    // trovato dal titolare 14/08/2026, nessun bug applicativo).
+    alerts.push(...(await alertInviiAlloggiati()));
+
     // ── Pre check-in: richieste compilate in attesa di revisione reception ────
     const preCheckin = await pool.query(`
       SELECT r.id, r.creato_at,
@@ -202,6 +267,184 @@ async function alert(req, res) {
 function variazione(attuale, precedente) {
   if (precedente === null || precedente === undefined || precedente === 0) return null;
   return Math.round(((attuale - precedente) / precedente) * 1000) / 10;
+}
+
+// GET /api/dashboard/gruppi?data=YYYY-MM-DD — dashboard a gruppi di widget (14/08/2026)
+// Sostituisce concettualmente l'elenco piatto di alert(): raggruppa i dati per tema
+// operativo (Clienti, Adempimenti, Hotel, Costi, Ristorante), un numero/stato per
+// riga cliccabile invece di una lista di frasi. Dove il dato reale non esiste ancora
+// (integrazione OTA/WuBook modulo 2.3, stima fabbisogno cucina), il campo
+// `sviluppato: false` lo dichiara esplicitamente — il frontend mostra un placeholder
+// visibile ("Modulo non sviluppato"), non uno zero finto né una riga nascosta.
+// Accessibile a: tutti i ruoli autenticati (stessa policy di kpi()/alert() — dati
+// aggregati, non sensibili); il frontend oggi la mostra solo per admin/titolare.
+async function gruppiWidget(req, res) {
+  const data = req.query.data || new Date().toISOString().slice(0, 10);
+
+  try {
+    // ── Gestione cliente ───────────────────────────────────────────────────
+    const arrivi = await pool.query(
+      `SELECT COUNT(*) AS tot FROM soggiorni WHERE cancellato = false AND data_arrivo = $1`,
+      [data]
+    );
+    const partenze = await pool.query(
+      `SELECT COUNT(*) AS tot FROM soggiorni WHERE cancellato = false AND data_partenza = $1`,
+      [data]
+    );
+    const checkInDaFare = await pool.query(
+      `SELECT COUNT(DISTINCT s.id) AS tot
+       FROM soggiorni s
+       JOIN prenotazioni p ON p.id = s.prenotazione_id
+       WHERE s.cancellato = false AND s.data_arrivo = $1 AND p.stato NOT IN ('check_in', 'check_out')`,
+      [data]
+    );
+    // "Da inviare" = prenotazioni confermate con arrivo nei prossimi 7 giorni mai
+    // invitate (prenotazioni.pre_checkin_inviato_at IS NULL — colonna migration 027).
+    // Finestra di 7 giorni per restare "azionabile ora", non un arretrato storico.
+    const preCheckinDaInviare = await pool.query(
+      `SELECT COUNT(DISTINCT p.id) AS tot
+       FROM prenotazioni p
+       JOIN soggiorni s ON s.prenotazione_id = p.id AND s.cancellato = false
+       WHERE p.stato = 'confermata' AND p.pre_checkin_inviato_at IS NULL
+         AND s.data_arrivo BETWEEN $1::date AND ($1::date + INTERVAL '7 days')`,
+      [data]
+    );
+
+    // ── Adempimenti ─────────────────────────────────────────────────────────
+    const invii = await pool.query(`
+      WITH ultimo_tentativo AS (
+        SELECT DISTINCT ON (soggiorno_id) soggiorno_id, esito
+        FROM alloggiati_invii ORDER BY soggiorno_id, data_invio DESC
+      )
+      SELECT
+        COUNT(*) AS totale,
+        COUNT(*) FILTER (WHERE COALESCE(s.check_in_effettuato_at, s.data_arrivo::timestamp) + INTERVAL '24 hours' <= NOW()) AS scaduti
+      FROM soggiorni s
+      JOIN prenotazioni p ON p.id = s.prenotazione_id
+      LEFT JOIN ultimo_tentativo ut ON ut.soggiorno_id = s.id
+      WHERE s.cancellato = false AND s.data_arrivo <= CURRENT_DATE
+        AND p.canale_origine != 'test_interno' AND (ut.esito IS NULL OR ut.esito != 'ok')
+    `);
+    const ultimoInvioOk = await pool.query(
+      `SELECT MAX(data_invio) AS ultimo FROM alloggiati_invii WHERE esito = 'ok'`
+    );
+    const ztlMancanti = await pool.query(
+      `SELECT COUNT(*) AS tot FROM ztl_prenotazioni
+       WHERE (targa IS NULL OR targa = '' OR stato = 'mancante')
+         AND (data_arrivo AT TIME ZONE 'Europe/Rome')::date <= $1::date
+         AND (data_partenza AT TIME ZONE 'Europe/Rome')::date >= $1::date`,
+      [data]
+    );
+    // Finestra di 30 giorni indietro: senza limite conterebbe anche soggiorni
+    // molto vecchi mai riconciliati da prima che il modulo 2.4 esistesse.
+    const tassaDaRiscuotere = await pool.query(
+      `SELECT COUNT(*) AS tot
+       FROM soggiorni s
+       LEFT JOIN tasse_soggiorno ts ON ts.soggiorno_id = s.id
+       WHERE s.cancellato = false
+         AND s.data_partenza BETWEEN ($1::date - INTERVAL '30 days') AND $1::date
+         AND ts.importo_riscosso IS NULL`,
+      [data]
+    );
+
+    // ── Gestione hotel ──────────────────────────────────────────────────────
+    // Stesso calcolo di camereController.js (arrivo/partenza da `soggiorni`, non
+    // più da stato_camere) — solo camere con movimento oggi E non ancora pronte.
+    const camereDaFare = await pool.query(
+      `SELECT COUNT(*) AS tot
+       FROM camere c
+       LEFT JOIN stato_camere st ON st.camera_id = c.id AND st.data = $1
+       WHERE c.attivo = true AND COALESCE(st.pronta, false) = false
+         AND (
+           EXISTS (SELECT 1 FROM soggiorni sg WHERE sg.camera_id = c.id AND sg.cancellato = false AND sg.data_arrivo <= $1 AND sg.data_partenza > $1)
+           OR EXISTS (SELECT 1 FROM soggiorni sg WHERE sg.camera_id = c.id AND sg.cancellato = false AND sg.data_partenza = $1)
+         )`,
+      [data]
+    );
+    const manutenzioni = await pool.query(
+      `SELECT COUNT(*) AS tot, COUNT(*) FILTER (WHERE priorita = 'alta') AS urgenti
+       FROM segnalazioni_manutenzione WHERE stato IN ('aperta', 'in_lavorazione')`
+    );
+    const sottoScorta = await pool.query(`
+      SELECT COUNT(*) AS tot FROM (
+        SELECT p.id,
+               COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) AS giacenza
+        FROM prodotti p
+        LEFT JOIN movimenti_magazzino m ON m.prodotto_id = p.id
+        WHERE p.attivo = true
+        GROUP BY p.id
+        HAVING COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) < p.soglia_minima
+      ) sub
+    `);
+
+    // ── Ristorante ──────────────────────────────────────────────────────────
+    const copertiTipo = await pool.query(
+      `SELECT COALESCE(coperti_colazione, 0) AS colazione, COALESCE(coperti_pranzo, 0) AS pranzo, COALESCE(coperti_cena, 0) AS cena
+       FROM ospiti_giornalieri WHERE data = $1`,
+      [data]
+    );
+    // "Coperti in sala ora" non è un dato tracciato (comande non registra il numero
+    // di persone sedute, solo la capienza del tavolo) — usiamo il numero di tavoli
+    // con comanda aperta oggi come proxy reale onesto, non una stima di coperti.
+    const tavoliOccupati = await pool.query(
+      `SELECT COUNT(*) AS tot FROM comande WHERE stato = 'aperta' AND timestamp_apertura::date = CURRENT_DATE`
+    );
+    const menuCategorie = await pool.query(`SELECT COUNT(*) AS tot FROM menu_categorie WHERE attivo = true`);
+    const menuPiatti = await pool.query(`SELECT COUNT(*) AS tot FROM menu_piatti WHERE disponibile = true`);
+
+    const invioTotale = Number(invii.rows[0].totale);
+    const invioScaduti = Number(invii.rows[0].scaduti);
+
+    res.json({
+      clienti: {
+        arriviOggi: Number(arrivi.rows[0].tot),
+        partenzeOggi: Number(partenze.rows[0].tot),
+        checkInDaFare: Number(checkInDaFare.rows[0].tot),
+        preCheckinDaInviare: Number(preCheckinDaInviare.rows[0].tot),
+        prenotazioniOta: {
+          sviluppato: false,
+          messaggio: 'Modulo non sviluppato — integrazione WuBook/channel manager (2.3) non ancora avviata',
+        },
+      },
+      adempimenti: {
+        alloggiatiWeb: {
+          daInviare: invioTotale,
+          scaduti: invioScaduti,
+          ultimoInvio: ultimoInvioOk.rows[0].ultimo,
+          stato: invioTotale === 0 ? 'verde' : invioScaduti > 0 ? 'rosso' : 'ambra',
+        },
+        statisticheLiguria: {
+          // Fase 1 (generazione XML manuale) fatta — Fase 2 (invio automatico e
+          // relativo tracciamento) no: non è "non sviluppato", è "manuale per ora".
+          sviluppato: true,
+          automatico: false,
+          messaggio: 'Generazione XML manuale — nessun invio automatico (in attesa credenziali Regione Liguria)',
+        },
+        ztlMancanti: Number(ztlMancanti.rows[0].tot),
+        tassaDaRiscuotere: Number(tassaDaRiscuotere.rows[0].tot),
+      },
+      hotel: {
+        camereDaFare: Number(camereDaFare.rows[0].tot),
+        manutenzioniAperte: Number(manutenzioni.rows[0].tot),
+        manutenzioniUrgenti: Number(manutenzioni.rows[0].urgenti),
+        magazzinoSottoScorta: Number(sottoScorta.rows[0].tot),
+        fabbisognoPasti: {
+          sviluppato: false,
+          messaggio: 'Modulo non sviluppato — nessuna stima automatica di cosa comprare/cucinare in base al menù del giorno',
+        },
+      },
+      ristorante: {
+        copertiColazione: Number(copertiTipo.rows[0]?.colazione || 0),
+        copertiPranzo: Number(copertiTipo.rows[0]?.pranzo || 0),
+        copertiCena: Number(copertiTipo.rows[0]?.cena || 0),
+        tavoliOccupatiOra: Number(tavoliOccupati.rows[0].tot),
+        menuPronto: Number(menuCategorie.rows[0].tot) > 0 && Number(menuPiatti.rows[0].tot) > 0,
+      },
+    });
+  } catch (err) {
+    console.error('Errore dashboard gruppiWidget:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
 }
 
 // GET /api/dashboard/kpi?data=YYYY-MM-DD — KPI reali con confronto anno precedente
@@ -329,4 +572,4 @@ async function registraIncasso(req, res) {
   }
 }
 
-module.exports = { alert, kpi, registraIncasso };
+module.exports = { alert, kpi, registraIncasso, alertInviiAlloggiati, gruppiWidget };

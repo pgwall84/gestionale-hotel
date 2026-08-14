@@ -4,6 +4,7 @@
 
 const app  = require('./app');
 const { avviaJobPromemoriaEmail } = require('./jobs/promemoriaEmail');
+const { avviaJobInvioAlloggiatiWeb } = require('./jobs/invioAlloggiatiWeb');
 const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
@@ -15,4 +16,9 @@ app.listen(PORT, () => {
   // importato anche dai test Jest (Supertest), un cron avviato lì girerebbe
   // anche durante la suite di test.
   avviaJobPromemoriaEmail();
+
+  // Job invio automatico Alloggiati Web (modulo 2.5 Fase 2, 13/08/2026) —
+  // stesso motivo, mai in app.js. Esclude sempre canale_origine=test_interno,
+  // vedi commento in testa a jobs/invioAlloggiatiWeb.js.
+  avviaJobInvioAlloggiatiWeb();
 });

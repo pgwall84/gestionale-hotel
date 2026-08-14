@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, useEffect } from 'react';
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-const IMG_BASE = BASE_URL.replace('/api', '');
+import { getApiUrl } from '@/lib/api';
 
 const ALLERGENI_ICONE = {
   'vegano': '🌱', 'vegetariano': '🥗', 'glutine': '🌾', 'latte': '🥛',
@@ -16,6 +14,11 @@ export default function MenuStampa() {
   const [piatti, setPiatti] = useState([]);
   const [logoUrl, setLogoUrl] = useState(null);
   const [loading, setLoading] = useState(true);
+  // Calcolati ad ogni render (non più costanti di modulo fissate al build):
+  // getApiUrl() legge l'hostname del browser a runtime, l'unico modo per
+  // funzionare sia in LAN da dispositivi diversi sia in produzione dietro Nginx.
+  const BASE_URL = getApiUrl();
+  const IMG_BASE = BASE_URL.replace('/api', '');
 
   useEffect(() => {
     Promise.all([
@@ -26,6 +29,7 @@ export default function MenuStampa() {
       setPiatti(menu.piatti || []);
       if (logo) setLogoUrl(`${BASE_URL}/menu/logo?t=${Date.now()}`);
     }).finally(() => setLoading(false));
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   if (loading) return <div style={{ textAlign: 'center', padding: 40, fontFamily: 'Georgia, serif' }}>Caricamento...</div>;

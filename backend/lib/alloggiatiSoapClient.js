@@ -251,4 +251,31 @@ async function inviaSchedine({ utente, token, righe }) {
   return parseEsitoSchedine(xml, 'Send');
 }
 
-module.exports = { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine };
+// Scarica la ricevuta ufficiale (PDF) degli invii di UNA data specifica —
+// Fase B (13/08/2026), obbligo di conservazione 5 anni. Manuale, pag. 17:
+// "Ultimi 30gg escluso il giorno corrente" — non si può scaricare la
+// ricevuta del giorno stesso in cui è avvenuto l'invio, solo a partire dal
+// giorno dopo, ed entro 30 giorni. Il PDF è un solo file per l'intera
+// struttura in quella data (copre tutte le schedine inviate quel giorno),
+// non uno per singolo soggiorno — vedi migration 036.
+// data: stringa 'YYYY-MM-DD'.
+async function scaricaRicevuta({ utente, token, data }) {
+  const corpo = `
+    <all:Utente>${escapeXml(utente)}</all:Utente>
+    <all:token>${escapeXml(token)}</all:token>
+    <all:Data>${escapeXml(data)}T00:00:00</all:Data>
+  `;
+  const xml = await chiamaSoap('Ricevuta', corpo);
+  const esito = estraiTag(xml, 'esito');
+  if (esito !== 'true') {
+    const errore = estraiTag(xml, 'ErroreDes') || 'esito negativo senza dettaglio nella risposta';
+    throw new Error(`Ricevuta fallita: ${errore}`);
+  }
+  const pdfBase64 = estraiTag(xml, 'PDF');
+  if (!pdfBase64) {
+    throw new Error('Ricevuta: risposta senza PDF — formato inatteso, verificare il WSDL');
+  }
+  return Buffer.from(pdfBase64, 'base64');
+}
+
+module.exports = { generaToken, scaricaTabella, parseCsv, autenticationTest, testSchedine, inviaSchedine, scaricaRicevuta };

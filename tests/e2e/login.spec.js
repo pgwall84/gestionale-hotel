@@ -17,7 +17,7 @@ test.describe('Login', () => {
   test('login con credenziali corrette → redirect alla dashboard', async ({ page }) => {
     await page.goto('/login');
 
-    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
+    await page.getByLabel(/nome utente/i).fill(ADMIN_EMAIL);
     await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: /accedi/i }).click();
 
@@ -30,7 +30,7 @@ test.describe('Login', () => {
   test('credenziali errate → messaggio di errore visibile', async ({ page }) => {
     await page.goto('/login');
 
-    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
+    await page.getByLabel(/nome utente/i).fill(ADMIN_EMAIL);
     await page.getByLabel(/password/i).fill('passwordsbagliata');
     await page.getByRole('button', { name: /accedi/i }).click();
 
@@ -42,7 +42,7 @@ test.describe('Login', () => {
   test('logout → ritorna alla pagina login', async ({ page }) => {
     // Prima esegui il login
     await page.goto('/login');
-    await page.getByLabel(/email/i).fill(ADMIN_EMAIL);
+    await page.getByLabel(/nome utente/i).fill(ADMIN_EMAIL);
     await page.getByLabel(/password/i).fill(ADMIN_PASSWORD);
     await page.getByRole('button', { name: /accedi/i }).click();
     await expect(page).not.toHaveURL(/\/login/);

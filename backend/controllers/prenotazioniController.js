@@ -310,6 +310,21 @@ async function aggiornaStato(req, res) {
       );
     }
 
+    // Ora reale del check-in (migration 035, 13/08/2026) — prerequisito
+    // per la futura regola WS_ALLOGGIATI 24h/6h (day-use), vedi
+    // docs/EVOLUTIVE.md "Modulo 2.5 — Fase 2". La transizione è per
+    // prenotazione (non esiste uno stato per singolo soggiorno), quindi
+    // valorizza tutti i soggiorni della prenotazione insieme. Guardia
+    // IS NULL puramente difensiva: TRANSIZIONI_VALIDE non permette
+    // comunque check_in → check_in, non dovrebbe mai sovrascrivere.
+    if (statoRichiesto === 'check_in') {
+      await client.query(
+        `UPDATE soggiorni SET check_in_effettuato_at = NOW()
+         WHERE prenotazione_id = $1 AND check_in_effettuato_at IS NULL`,
+        [req.params.id]
+      );
+    }
+
     await client.query('COMMIT');
     res.json(result.rows[0]);
 

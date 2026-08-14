@@ -3,7 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 import { Plus, Trash2, X, ChevronUp, ChevronDown, Pencil, Upload, ToggleLeft, ToggleRight, QrCode, Download } from 'lucide-react';
 import { QRCodeSVG, QRCodeCanvas } from 'qrcode.react';
 
@@ -12,9 +12,6 @@ const ALLERGENI_LISTA = [
   'latte','frutta a guscio','sedano','senape','sesamo',
   'anidride solforosa','lupini','molluschi','vegano','vegetariano',
 ];
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-const IMG_BASE = BASE_URL.replace('/api', '');
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -201,7 +198,7 @@ function PannelloQr({ urlPubblico, isTitolare, imgBase }) {
   const [uploading, setUploading] = useState(false);
   const logoRef = useRef(null);
   const canvasRef = useRef(null);
-  const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
+  const BASE_URL = getApiUrl();
 
   useEffect(() => {
     fetch(`${BASE_URL}/menu/logo`).then(r => {
@@ -371,6 +368,10 @@ export default function PaginaMenu() {
   const [mostraQr, setMostraQr] = useState(false);
 
   const isTitolare = utente?.ruolo === 'titolare' || utente?.ruolo === 'admin';
+  // Ad ogni render, non costanti di modulo: getApiUrl() legge l'hostname del
+  // browser a runtime — mai un URL fisso da env (CLAUDE.md Sezione 12).
+  const BASE_URL = getApiUrl();
+  const IMG_BASE = BASE_URL.replace('/api', '');
 
   const carica = useCallback(async () => {
     setLoading(true);

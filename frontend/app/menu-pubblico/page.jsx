@@ -1,9 +1,7 @@
 'use client';
 
 import { useState, useEffect, useRef } from 'react';
-
-const BASE_URL = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-const IMG_BASE = BASE_URL.replace('/api', '');
+import { getApiUrl } from '@/lib/api';
 
 const ALLERGENI_ICONE = {
   'vegano': '🌱',
@@ -40,6 +38,10 @@ export default function MenuPubblico() {
   const [filtriAttivi, setFiltriAttivi] = useState([]);
   const [catAttiva, setCatAttiva] = useState(null);
   const sectionRefs = useRef({});
+  // Ad ogni render, non costanti di modulo: getApiUrl() legge l'hostname
+  // del browser a runtime (regola di rete, CLAUDE.md Sezione 12).
+  const BASE_URL = getApiUrl();
+  const IMG_BASE = BASE_URL.replace('/api', '');
 
   useEffect(() => {
     fetch(`${BASE_URL}/menu/pubblico`)

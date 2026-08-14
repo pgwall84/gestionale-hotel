@@ -1163,6 +1163,80 @@ sempre "Errore {status}" generico invece del messaggio specifico. Dettaglio
 completo, incluso il lavoro sul sito (`sito-hotel`, pulsante WhatsApp) e
 l'approfondimento su Iubenda: `docs/DIARIO_SESSIONI.md`, voce 06/08/2026.
 
+**Sessione 13/08/2026**: audit completo del modulo HR/timbrature prima
+dell'uso reale con i dipendenti — checklist PDF di 20 scenari
+(`docs/CHECKLIST_USER_TEST_HR.pdf`), migration mancante
+`032_turni_standard.sql` scritta, gap di sicurezza chiuso (route HACCP
+senza restrizione di ruolo a livello di route), nuova funzionalità
+"Applica turno standard" (bulk su un mese, non sovrascrive turni già
+assegnati), 93/93 test verdi. Trovato e corretto un bug reale in
+produzione: 7 file frontend leggevano `NEXT_PUBLIC_API_URL` (build-time)
+invece di `getApiUrl()` (runtime) — violazione della regola di rete di
+Sezione 12; incluso un secondo bug indipendente mai notato prima
+(`tassa-soggiorno/page.jsx` senza il ramo produzione nel proprio calcolo
+URL locale). Corretto anche `/utenti`, non raggiungibile da un account
+admin per una guardia di accesso che controllava solo `ruolo ===
+'titolare'`.
+
+Eseguita poi, in tre fasi via chiarimenti col titolare, una richiesta più
+ampia di gestione dipendenti: **Fase A** — provisioning di 10 dipendenti
+reali + 7 account di test (uno per ruolo), login con nome utente al posto
+di una vera email (stessa colonna `email`, mai stata validata come tale
+lato backend — nessuna migration), self-service "Cambia password" (nuovo,
+`POST /api/auth/cambia-password`), ruolo `dipendente` riusato e mostrato
+in UI come "Lavapiatti" invece di un ottavo ruolo nuovo. **Fase B** —
+colonne `contratto_tipo`/`fascia_oraria` su `users` (migration
+`033_contratto_dipendenti.sql`), "Turni standard" propone un orario di
+default in base al contratto (indeterminato 07-15 o 23-07, part-time
+09-14) solo per chi non ha già un turno impostato. **Fase C** — nuovo
+foglio "Consulente" nell'export mensile esistente, griglia giorni 1-31 +
+straordinari per dipendente (soglia 8h/5h da contratto; "N/D" per
+chiamata/non impostato, mai una soglia inventata). Tutte e tre le fasi
+verificate solo con `tsc`/sintassi dal sandbox — **test automatici e
+verifica end-to-end reale (migration 033, export Excel, suite di test)
+restano da fare dal titolare/tab Code**, non confermati a fine sessione.
+
+**Seguito stesso giorno**, dopo il primo giro di prova del titolare: bug
+reale corretto nell'ordine delle colonne del foglio Consulente (chiavi
+oggetto JS numeriche riordinate prima delle testuali — ora `aoa_to_sheet`
+con intestazione esplicita); trovato e corretto (via libera esplicita del titolare) un bug preesistente
+più ampio: le ore di un turno notturno finivano nella colonna del giorno
+*dopo* quello di inizio, condiviso da tutti e tre i fogli — ora attribuite
+al giorno di entrata, con test di regressione dedicato. Sistemato anche lo
+scavalco di mese/anno (finestra di lettura allargata di un giorno per
+lato) — verificandolo, trovato un secondo bug preesistente più serio:
+`ultimoGiorno` passava da `toISOString()`, che sul server (fuso
+Europe/Rome) fa sempre slittare indietro di un giorno la data — **l'ultimo
+giorno di ogni mese è sempre stato invisibile al report**, anche senza
+nessun turno notturno di mezzo. Corretto con un helper che legge la data
+locale senza passare da UTC, applicato ovunque nel file c'era lo stesso
+pattern rischioso. Tre nuovi test di regressione. "Applica turno standard" passato da
+skip a sovrascrittura (decisione esplicita, inverte quella dell'11/08,
+con conferma UI aggiunta); fix UX sul form modifica dipendente invisibile
+in liste lunghe; nuovo script `seedTimbratureTest.js` per dati di test
+giugno-luglio 2026; nuovi test `tests/api/users.test.js` +
+estensione `hr.test.js` per contratto/fascia e foglio Consulente (trovato
+e corretto un bug di validazione vero scrivendoli). Sistemato anche lo
+scavalco di mese/anno (finestra di lettura allargata di un giorno per
+lato) — verificandolo, trovato un secondo bug preesistente più serio:
+`ultimoGiorno` passava da `toISOString()`, che sul server (fuso
+Europe/Rome) fa sempre slittare indietro di un giorno la data — **l'ultimo
+giorno di ogni mese è sempre stato invisibile al report**, anche senza
+nessun turno notturno di mezzo. Corretto con un helper che legge la data
+locale senza passare da UTC, applicato ovunque nel file c'era lo stesso
+pattern rischioso. Tre nuovi test di regressione. "Applica turno standard" passato da
+skip a sovrascrittura (decisione esplicita, inverte quella dell'11/08,
+con conferma UI aggiunta); fix UX sul form modifica dipendente invisibile
+in liste lunghe; nuovo script `seedTimbratureTest.js` per dati di test
+giugno-luglio 2026; nuovi test `tests/api/users.test.js` +
+estensione `hr.test.js` per contratto/fascia e foglio Consulente (trovato
+e corretto un bug di validazione vero scrivendoli). **Verificato dal
+titolare via tab Code: hr.test.js 100/100, users.test.js 10/10, suite
+completa 727/728 — l'unico fallimento è preesistente, scollegato da questa
+sessione (test-guardia Alloggiati Web, `.env` di sviluppo condiviso con
+quello di test, non un bug di oggi).** Dettaglio completo:
+`docs/DIARIO_SESSIONI.md`, voce 13/08/2026.
+
 ## 17. DOCUMENTI DI PROGETTO
 
 Indice di dove si trova cosa, per evitare di ricreare doppioni:
@@ -1183,4 +1257,8 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 
 ---
 
-*Documento aggiornato al 09/08/2026 — **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`.*
+*Documento aggiornato al 13/08/2026 — **Audit HR/timbrature + provisioning
+dipendenti (Fasi A/B/C, dettaglio sopra e in `docs/DIARIO_SESSIONI.md`):
+migration 032/033, "Applica turno standard", contratto/fascia oraria,
+foglio "Consulente" nel report mensile — non ancora verificati end-to-end
+dal titolare a fine sessione.** **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`.*

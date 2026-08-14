@@ -23,4 +23,16 @@ router.post('/verifica-credenziali',  richiedeAzione('alloggiati', 'invio'), ctr
 router.post('/soggiorni/:id/test',    richiedeAzione('alloggiati', 'invio'), ctrl.testSchedineSoggiorno);
 router.post('/soggiorni/:id/invia',   richiedeAzione('alloggiati', 'invio'), ctrl.inviaSchedineSoggiorno);
 
+// Fase 2 (13/08/2026) — coda invii per la pagina Impostazioni: stessa
+// azione 'invio', chi può inviare deve poter vedere anche cosa c'è da inviare.
+router.get('/coda', richiedeAzione('alloggiati', 'invio'), ctrl.codaInvii);
+
+// Fase B (13/08/2026) — ricevute ufficiali (obbligo conservazione 5 anni).
+// Azione dedicata 'ricevute': contengono i dati di più ospiti in un solo
+// PDF, stesso giro ristretto di 'invio' ma tenuta separata in
+// shared/ruoli.js per poterla evolvere indipendentemente in futuro.
+router.get('/ricevute',                    richiedeAzione('alloggiati', 'ricevute'), ctrl.listaRicevute);
+router.post('/ricevute/:data/scarica',     richiedeAzione('alloggiati', 'ricevute'), ctrl.scaricaRicevutaManuale);
+router.get('/ricevute/:data/file',         richiedeAzione('alloggiati', 'ricevute'), ctrl.downloadRicevutaFile);
+
 module.exports = router;

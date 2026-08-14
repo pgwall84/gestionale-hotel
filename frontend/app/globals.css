@@ -17,7 +17,12 @@
   --sidebar-item-hover: rgba(255, 255, 255, 0.07);
   --sidebar-border: rgba(255, 255, 255, 0.1);
   --sidebar-label: rgba(255, 255, 255, 0.35);
-  --sidebar-width: 220px;
+  /* Sidebar a rail + pannello a comparsa (14/08/2026) — due variabili
+     separate invece di una larghezza fissa, cosi la proporzione rail/
+     pannello si puo cambiare in un punto solo senza toccare Sidebar.tsx. */
+  --sidebar-rail-width: 72px;
+  --sidebar-flyout-width: 200px;
+  --sidebar-width: calc(var(--sidebar-rail-width) + var(--sidebar-flyout-width));
 
   /* Topbar */
   --topbar-height: 60px;

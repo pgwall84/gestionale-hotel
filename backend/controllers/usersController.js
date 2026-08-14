@@ -6,12 +6,34 @@ const bcrypt = require('bcrypt');
 const pool = require('../config/db');
 const { RUOLI } = require('../../shared/ruoli');
 
+// Tipologia di contratto (Fase B, 13/08/2026) — determina l'orario proposto
+// in "Turni standard" (vedi turniStandardController.js). Entrambi opzionali:
+// un utente senza contratto impostato si comporta come 'chiamata' (nessuna
+// proposta automatica). Vedi migration 033.
+const CONTRATTI_VALIDI = ['tempo_indeterminato', 'part_time', 'chiamata'];
+const FASCE_VALIDE = ['diurna', 'notturna'];
+
+function validaContratto(contratto_tipo, fascia_oraria) {
+  // Stringa vuota trattata come "non impostato", non come valore da
+  // rifiutare — coerente con `contratto_tipo || null` più sotto, che la
+  // converte comunque in null prima di scrivere sul DB. Scritta scoperta
+  // scrivendo tests/api/users.test.js (13/08/2026): senza questo controllo,
+  // inviare '' per svuotare il campo tornava 400 invece di azzerarlo.
+  if (contratto_tipo && !CONTRATTI_VALIDI.includes(contratto_tipo)) {
+    return `Tipo di contratto non valido. Valori accettati: ${CONTRATTI_VALIDI.join(', ')}`;
+  }
+  if (fascia_oraria && !FASCE_VALIDE.includes(fascia_oraria)) {
+    return `Fascia oraria non valida. Valori accettati: ${FASCE_VALIDE.join(', ')}`;
+  }
+  return null;
+}
+
 // GET /api/users
 // Restituisce tutti gli utenti (attivi e non). Solo il titolare può vederli tutti.
 async function lista(req, res) {
   try {
     const result = await pool.query(
-      'SELECT id, nome, cognome, email, ruolo, attivo, created_at FROM users ORDER BY cognome, nome'
+      'SELECT id, nome, cognome, email, ruolo, attivo, contratto_tipo, fascia_oraria, created_at FROM users ORDER BY cognome, nome'
     );
     res.json({ utenti: result.rows });
   } catch (err) {
@@ -26,7 +48,7 @@ async function dettaglio(req, res) {
   const { id } = req.params;
   try {
     const result = await pool.query(
-      'SELECT id, nome, cognome, email, ruolo, attivo, created_at FROM users WHERE id = $1',
+      'SELECT id, nome, cognome, email, ruolo, attivo, contratto_tipo, fascia_oraria, created_at FROM users WHERE id = $1',
       [id]
     );
     if (result.rows.length === 0) {
@@ -42,7 +64,7 @@ async function dettaglio(req, res) {
 // POST /api/users
 // Crea un nuovo utente (dipendente). Solo il titolare può farlo.
 async function crea(req, res) {
-  const { nome, cognome, email, password, ruolo } = req.body;
+  const { nome, cognome, email, password, ruolo, contratto_tipo, fascia_oraria } = req.body;
 
   // Validazione campi obbligatori
   if (!nome || !cognome || !email || !password || !ruolo) {
@@ -59,6 +81,11 @@ async function crea(req, res) {
     return res.status(400).json({ errore: 'La password deve essere di almeno 8 caratteri.' });
   }
 
+  const erroreContratto = validaContratto(contratto_tipo, fascia_oraria);
+  if (erroreContratto) {
+    return res.status(400).json({ errore: erroreContratto });
+  }
+
   try {
     // Controlla se esiste già un utente con questa email
     const esistente = await pool.query('SELECT id FROM users WHERE email = $1', [email.toLowerCase().trim()]);
@@ -71,10 +98,10 @@ async function crea(req, res) {
     const passwordHash = await bcrypt.hash(password, 12);
 
     const result = await pool.query(
-      `INSERT INTO users (nome, cognome, email, password_hash, ruolo)
-       VALUES ($1, $2, $3, $4, $5)
-       RETURNING id, nome, cognome, email, ruolo, attivo, created_at`,
-      [nome.trim(), cognome.trim(), email.toLowerCase().trim(), passwordHash, ruolo]
+      `INSERT INTO users (nome, cognome, email, password_hash, ruolo, contratto_tipo, fascia_oraria)
+       VALUES ($1, $2, $3, $4, $5, $6, $7)
+       RETURNING id, nome, cognome, email, ruolo, attivo, contratto_tipo, fascia_oraria, created_at`,
+      [nome.trim(), cognome.trim(), email.toLowerCase().trim(), passwordHash, ruolo, contratto_tipo || null, fascia_oraria || null]
     );
 
     res.status(201).json({ utente: result.rows[0], messaggio: 'Utente creato con successo.' });
@@ -88,7 +115,7 @@ async function crea(req, res) {
 // Modifica i dati di un utente esistente. La password viene cambiata solo se fornita.
 async function modifica(req, res) {
   const { id } = req.params;
-  const { nome, cognome, email, password, ruolo } = req.body;
+  const { nome, cognome, email, password, ruolo, contratto_tipo, fascia_oraria } = req.body;
 
   if (!nome || !cognome || !email || !ruolo) {
     return res.status(400).json({ errore: 'Nome, cognome, email e ruolo sono obbligatori.' });
@@ -97,6 +124,11 @@ async function modifica(req, res) {
   const ruoliValidi = Object.values(RUOLI);
   if (!ruoliValidi.includes(ruolo)) {
     return res.status(400).json({ errore: `Ruolo non valido.` });
+  }
+
+  const erroreContratto = validaContratto(contratto_tipo, fascia_oraria);
+  if (erroreContratto) {
+    return res.status(400).json({ errore: erroreContratto });
   }
 
   try {
@@ -118,23 +150,25 @@ async function modifica(req, res) {
     }
 
     let result;
+    const contrattoVal = contratto_tipo || null;
+    const fasciaVal = fascia_oraria || null;
 
     if (password && password.length >= 8) {
       // Se è stata fornita una nuova password, aggiorna anche quella
       const passwordHash = await bcrypt.hash(password, 12);
       result = await pool.query(
-        `UPDATE users SET nome=$1, cognome=$2, email=$3, password_hash=$4, ruolo=$5
-         WHERE id=$6
-         RETURNING id, nome, cognome, email, ruolo, attivo`,
-        [nome.trim(), cognome.trim(), email.toLowerCase().trim(), passwordHash, ruolo, id]
+        `UPDATE users SET nome=$1, cognome=$2, email=$3, password_hash=$4, ruolo=$5, contratto_tipo=$6, fascia_oraria=$7
+         WHERE id=$8
+         RETURNING id, nome, cognome, email, ruolo, attivo, contratto_tipo, fascia_oraria`,
+        [nome.trim(), cognome.trim(), email.toLowerCase().trim(), passwordHash, ruolo, contrattoVal, fasciaVal, id]
       );
     } else {
       // Aggiorna tutto tranne la password
       result = await pool.query(
-        `UPDATE users SET nome=$1, cognome=$2, email=$3, ruolo=$4
-         WHERE id=$5
-         RETURNING id, nome, cognome, email, ruolo, attivo`,
-        [nome.trim(), cognome.trim(), email.toLowerCase().trim(), ruolo, id]
+        `UPDATE users SET nome=$1, cognome=$2, email=$3, ruolo=$4, contratto_tipo=$5, fascia_oraria=$6
+         WHERE id=$7
+         RETURNING id, nome, cognome, email, ruolo, attivo, contratto_tipo, fascia_oraria`,
+        [nome.trim(), cognome.trim(), email.toLowerCase().trim(), ruolo, contrattoVal, fasciaVal, id]
       );
     }
 

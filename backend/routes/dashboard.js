@@ -5,6 +5,7 @@ const dashboardCtrl = require('../controllers/dashboardController');
 
 router.get('/alert', verificaToken, dashboardCtrl.alert);
 router.get('/kpi', verificaToken, dashboardCtrl.kpi);
+router.get('/gruppi', verificaToken, dashboardCtrl.gruppiWidget);
 router.post('/incassi', verificaToken, soloTitolare, dashboardCtrl.registraIncasso);
 
 module.exports = router;

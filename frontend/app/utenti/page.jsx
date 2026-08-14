@@ -1,7 +1,16 @@
 'use client';
 
-// Pagina gestione utenti — solo TITOLARE.
+// Pagina gestione utenti — admin/titolare (shared/ruoli.js sezione 'utenti').
 // CRUD completo: lista dipendenti, creazione, modifica, attiva/disattiva.
+//
+// Fix 12/08/2026: la guardia di accesso qui sotto controllava solo
+// `ruolo === 'titolare'`, escludendo admin — mentre la sidebar (Sidebar.tsx,
+// voce Utenti, ruoli: AT) e il backend (routes/users.js, middleware
+// soloTitolare, che nonostante il nome ammette admin+titolare) la
+// consentivano a entrambi. Risultato: un account admin veniva rimbalzato
+// su /home aprendo questa pagina — causa reale della "pagina utenti non
+// raggiungibile in locale" segnalata da Marco. Anche LABEL_RUOLI era
+// disallineata: mancavano 'admin' e 'portiere_notte' (7 ruoli, non 5).
 
 import { useState, useEffect } from 'react';
 import { useRouter } from 'next/navigation';
@@ -12,9 +21,15 @@ import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 import { RUOLI } from '@/lib/ruoli';
 
+const RUOLI_CONSENTITI = ['admin', 'titolare'];
+
+// 'dipendente' resta la chiave interna (invariata in shared/ruoli.js — è il
+// ruolo generico riusato anche da 'pulizie'/'camere.pulizia'), ma in UI si
+// mostra come "Lavapiatti" su richiesta esplicita del titolare (13/08/2026).
 const LABEL_RUOLI = {
-  titolare: 'Titolare', receptionist: 'Receptionist',
-  cameriere: 'Cameriere', cuoco: 'Cuoco', dipendente: 'Dipendente',
+  admin: 'Admin', titolare: 'Titolare', receptionist: 'Receptionist',
+  cameriere: 'Cameriere', cuoco: 'Cuoco', portiere_notte: 'Portiere di notte',
+  dipendente: 'Lavapiatti',
 };
 
 export default function PaginaUtenti() {
@@ -30,11 +45,11 @@ export default function PaginaUtenti() {
   const [salvataggio, setSalvataggio] = useState(false);
 
   useEffect(() => {
-    if (!loading && (!utente || utente.ruolo !== 'titolare')) router.replace('/home');
+    if (!loading && (!utente || !RUOLI_CONSENTITI.includes(utente.ruolo))) router.replace('/home');
   }, [utente, loading, router]);
 
   useEffect(() => {
-    if (utente?.ruolo === 'titolare') caricaUtenti();
+    if (utente && RUOLI_CONSENTITI.includes(utente.ruolo)) caricaUtenti();
   }, [utente]);
 
   async function caricaUtenti() {
@@ -115,8 +130,15 @@ export default function PaginaUtenti() {
               </div>
 
               <div>
-                <label className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>Email *</label>
-                <input type="email" value={form.email} required
+                {/* Il campo si chiama "email" nel DB (colonna storica, usata per il
+                    login) ma non ha mai avuto una validazione di formato lato
+                    backend — solo obbligatorietà e unicità (usersController.js).
+                    Da 13/08/2026, su richiesta del titolare, si usa come "nome
+                    utente" (es. nome.cognome) invece di una vera email — niente
+                    type="email" per non forzare un formato con @ che qui non serve. */}
+                <label className="block text-[13px] font-medium mb-1.5" style={{ color: 'var(--foreground)' }}>Nome utente *</label>
+                <input type="text" value={form.email} required
+                       placeholder="nome.cognome"
                        onChange={e => setForm({ ...form, email: e.target.value })}
                        className="w-full px-3 rounded-lg text-sm outline-none"
                        style={{ height: '44px', border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--foreground)' }} />
@@ -140,9 +162,14 @@ export default function PaginaUtenti() {
                         className="w-full px-3 rounded-lg text-sm outline-none"
                         style={{ height: '44px', border: '1px solid var(--border)', background: 'var(--background)', color: 'var(--foreground)' }}>
                   <option value="">Seleziona ruolo...</option>
-                  {Object.entries(LABEL_RUOLI).map(([val, label]) => (
-                    <option key={val} value={val}>{label}</option>
-                  ))}
+                  {/* Un titolare non può assegnare il ruolo admin (solo un admin può) —
+                      LABEL_RUOLI serve anche per il badge in lista, dove admin va mostrato
+                      anche a chi non può assegnarlo, quindi qui filtriamo solo la tendina. */}
+                  {Object.entries(LABEL_RUOLI)
+                    .filter(([val]) => utente.ruolo === 'admin' || val !== 'admin')
+                    .map(([val, label]) => (
+                      <option key={val} value={val}>{label}</option>
+                    ))}
                 </select>
               </div>
 

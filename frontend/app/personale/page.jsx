@@ -6,7 +6,7 @@ import AppShell from '@/components/layout/AppShell';
 import StatusBadge from '@/components/ui/StatusBadge';
 import DataTable from '@/components/ui/DataTable';
 import { useAuth } from '@/context/AuthContext';
-import api from '@/lib/api';
+import api, { getApiUrl } from '@/lib/api';
 import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
 
 const TABS_TITOLARE = [
@@ -77,12 +77,22 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
   const [loading, setLoading] = useState(true);
   const [editingId, setEditingId] = useState(null); // null = nuovo, id = modifica
   const [showForm, setShowForm] = useState(false);
-  const [form, setForm] = useState({ nome: '', cognome: '', email: '', ruolo: 'dipendente', password: '' });
+  const [form, setForm] = useState({ nome: '', cognome: '', email: '', ruolo: 'dipendente', password: '', contratto_tipo: '', fascia_oraria: '' });
   const [invio, setInvio] = useState(false);
   const [errore, setErrore] = useState('');
   const [confermaDisattiva, setConfermaDisattiva] = useState(null);
+  const formRef = useRef(null);
 
   const ruoliDisponibili = isAdmin ? TUTTI_RUOLI : TUTTI_RUOLI.filter(r => r !== 'admin');
+
+  // Fix 13/08/2026 (segnalato dal titolare): il form nuovo/modifica si apre
+  // sempre in cima al contenitore scrollabile, sotto la lista — se si clicca
+  // "Modifica" su un dipendente in fondo a una lista lunga, il form si apre
+  // fuori dalla vista corrente e passa inosservato. Lo riporta in vista ad
+  // ogni apertura (anche cambiando dipendente da modificare a form già aperto).
+  useEffect(() => {
+    if (showForm) formRef.current?.scrollIntoView({ behavior: 'smooth', block: 'start' });
+  }, [showForm, editingId]);
 
   const carica = useCallback(async () => {
     setLoading(true);
@@ -98,14 +108,17 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
 
   function apriNuovo() {
     setEditingId(null);
-    setForm({ nome: '', cognome: '', email: '', ruolo: 'dipendente', password: '' });
+    setForm({ nome: '', cognome: '', email: '', ruolo: 'dipendente', password: '', contratto_tipo: '', fascia_oraria: '' });
     setErrore('');
     setShowForm(true);
   }
 
   function apriModifica(u) {
     setEditingId(u.id);
-    setForm({ nome: u.nome, cognome: u.cognome, email: u.email, ruolo: u.ruolo, password: '' });
+    setForm({
+      nome: u.nome, cognome: u.cognome, email: u.email, ruolo: u.ruolo, password: '',
+      contratto_tipo: u.contratto_tipo || '', fascia_oraria: u.fascia_oraria || '',
+    });
     setErrore('');
     setShowForm(true);
   }
@@ -121,7 +134,15 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
     setErrore('');
     setInvio(true);
     try {
-      const payload = { nome: form.nome, cognome: form.cognome, email: form.email, ruolo: form.ruolo };
+      const payload = {
+        nome: form.nome, cognome: form.cognome, email: form.email, ruolo: form.ruolo,
+        contratto_tipo: form.contratto_tipo || null,
+        // La fascia oraria ha senso solo per il tempo indeterminato (vedi
+        // ModalApplicaStandard/pannello Turni standard) — se il contratto
+        // cambia in un secondo momento, non lasciare in giro una fascia
+        // orfana che non corrisponde più a nulla.
+        fascia_oraria: form.contratto_tipo === 'tempo_indeterminato' ? (form.fascia_oraria || null) : null,
+      };
       if (form.password) payload.password = form.password;
       if (editingId) {
         await api.put(`/users/${editingId}`, payload);
@@ -161,6 +182,15 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
     dipendente:     { bg: 'var(--muted)', text: 'var(--muted-foreground)' },
   };
 
+  // Etichetta mostrata per ogni ruolo — la chiave interna 'dipendente' resta
+  // invariata (usata anche in shared/ruoli.js per pulizie/camere.pulizia
+  // come ruolo generico a bassa visibilità), ma in UI si mostra "Lavapiatti"
+  // su richiesta esplicita del titolare (13/08/2026). Se in futuro arriva
+  // un'assunzione generica diversa (es. giardiniere), qui va rivista.
+  function etichettaRuolo(r) {
+    return r === 'dipendente' ? 'Lavapiatti' : r.replace('_', ' ');
+  }
+
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4"
          style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onChiudi}>
@@ -196,7 +226,7 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
 
           {/* Form nuovo / modifica */}
           {showForm && (
-            <div className="rounded-xl p-4 flex flex-col gap-3"
+            <div ref={formRef} className="rounded-xl p-4 flex flex-col gap-3"
                  style={{ background: 'var(--background)', border: '0.5px solid var(--hotel-amber)' }}>
               <p className="text-[12px] font-semibold" style={{ color: 'var(--foreground)' }}>
                 {editingId ? 'Modifica dipendente' : 'Nuovo dipendente'}
@@ -213,8 +243,11 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
                   ))}
                 </div>
                 <div>
-                  <label className="text-[10px] font-medium mb-0.5 block" style={{ color: 'var(--muted-foreground)' }}>Email *</label>
-                  <input required type="email" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
+                  {/* Nome utente, non una vera email — vedi nota in /utenti/page.jsx
+                      (stessa colonna 'email' del DB, senza validazione di formato,
+                      13/08/2026). */}
+                  <label className="text-[10px] font-medium mb-0.5 block" style={{ color: 'var(--muted-foreground)' }}>Nome utente *</label>
+                  <input required type="text" placeholder="nome.cognome" value={form.email} onChange={e => setForm({ ...form, email: e.target.value })}
                          className="w-full px-2 rounded-lg text-sm outline-none"
                          style={{ height: '34px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
                 </div>
@@ -224,7 +257,7 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
                     <select required value={form.ruolo} onChange={e => setForm({ ...form, ruolo: e.target.value })}
                             className="w-full px-2 rounded-lg text-sm outline-none capitalize"
                             style={{ height: '34px', border: '0.5px solid var(--border)', background: 'var(--card)' }}>
-                      {ruoliDisponibili.map(r => <option key={r} value={r}>{r.replace('_', ' ')}</option>)}
+                      {ruoliDisponibili.map(r => <option key={r} value={r}>{etichettaRuolo(r)}</option>)}
                     </select>
                   </div>
                   <div>
@@ -237,6 +270,37 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
                            className="w-full px-2 rounded-lg text-sm outline-none"
                            style={{ height: '34px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
                   </div>
+                </div>
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    {/* Tipo di contratto (13/08/2026) — determina l'orario
+                        proposto in "Turni standard": 8h da tempo indeterminato
+                        (fascia scelta accanto), 5h da part-time (orario
+                        libero), nessuna proposta per chiamata. Ipotesi di
+                        lavoro dichiarate dal titolare, vedi CLAUDE.md Sezione 16. */}
+                    <label className="text-[10px] font-medium mb-0.5 block" style={{ color: 'var(--muted-foreground)' }}>Tipo contratto</label>
+                    <select value={form.contratto_tipo}
+                            onChange={e => setForm({ ...form, contratto_tipo: e.target.value, fascia_oraria: e.target.value === 'tempo_indeterminato' ? form.fascia_oraria : '' })}
+                            className="w-full px-2 rounded-lg text-sm outline-none"
+                            style={{ height: '34px', border: '0.5px solid var(--border)', background: 'var(--card)' }}>
+                      <option value="">Non impostato</option>
+                      <option value="tempo_indeterminato">Tempo indeterminato</option>
+                      <option value="part_time">Part-time</option>
+                      <option value="chiamata">Chiamata</option>
+                    </select>
+                  </div>
+                  {form.contratto_tipo === 'tempo_indeterminato' && (
+                    <div>
+                      <label className="text-[10px] font-medium mb-0.5 block" style={{ color: 'var(--muted-foreground)' }}>Fascia oraria</label>
+                      <select value={form.fascia_oraria} onChange={e => setForm({ ...form, fascia_oraria: e.target.value })}
+                              className="w-full px-2 rounded-lg text-sm outline-none"
+                              style={{ height: '34px', border: '0.5px solid var(--border)', background: 'var(--card)' }}>
+                        <option value="">Da impostare</option>
+                        <option value="diurna">Diurna (07-15)</option>
+                        <option value="notturna">Notturna (23-07)</option>
+                      </select>
+                    </div>
+                  )}
                 </div>
                 {errore && <p className="text-[12px]" style={{ color: 'var(--status-red-text)' }}>{errore}</p>}
                 <div className="flex gap-2">
@@ -285,7 +349,7 @@ function ModalGestionePersonale({ isAdmin, onChiudi }) {
                     {/* Badge ruolo */}
                     <span className="text-[10px] font-medium px-2 py-1 rounded-md capitalize shrink-0 hidden sm:inline"
                           style={{ background: col.bg, color: col.text }}>
-                      {u.ruolo.replace('_', ' ')}
+                      {etichettaRuolo(u.ruolo)}
                     </span>
                     {/* Azioni */}
                     <div className="flex items-center gap-1 shrink-0">
@@ -358,11 +422,32 @@ function TurniStandardPanel({ utenti, onChiudi }) {
   const standardMap = {};
   for (const s of standards) standardMap[s.user_id] = s;
 
+  // Proposta di default in base al contratto (13/08/2026, Fase B) — solo per
+  // chi non ha già un turno standard salvato. Ipotesi dichiarate dal
+  // titolare (CLAUDE.md Sezione 16): tempo indeterminato 8h, fascia diurna
+  // (07-15, combacia col preset "Mattina") o notturna (23-07, preset
+  // "Notte"); part-time 5h, 09-14 (confermato dal titolare 13/08/2026).
+  // Per 'chiamata' o contratto non impostato, nessuna proposta specifica:
+  // resta il default generico preesistente.
+  function defaultDaContratto(u) {
+    if (u.contratto_tipo === 'tempo_indeterminato' && u.fascia_oraria === 'notturna') {
+      return { tipo_turno: 'notte', ora_inizio: '23:00', ora_fine: '07:00', note: '' };
+    }
+    if (u.contratto_tipo === 'tempo_indeterminato') {
+      // fascia 'diurna' o non ancora scelta — 07-15 è comunque il preset "Mattina"
+      return { tipo_turno: 'mattina', ora_inizio: '07:00', ora_fine: '15:00', note: '' };
+    }
+    if (u.contratto_tipo === 'part_time') {
+      return { tipo_turno: 'mattina', ora_inizio: '09:00', ora_fine: '14:00', note: '' };
+    }
+    return { tipo_turno: 'mattina', ora_inizio: '07:00', ora_fine: '15:00', note: '' };
+  }
+
   function apriEdit(u) {
     const s = standardMap[u.id];
     setForm(s
       ? { tipo_turno: s.tipo_turno, ora_inizio: s.ora_inizio?.slice(0,5) || '', ora_fine: s.ora_fine?.slice(0,5) || '', note: s.note || '' }
-      : { tipo_turno: 'mattina', ora_inizio: '07:00', ora_fine: '15:00', note: '' }
+      : defaultDaContratto(u)
     );
     setEditing(u.id);
   }
@@ -596,9 +681,10 @@ function ModalTurno({ utente, data, turnoEsistente, turnoStandard, onSalva, onEl
 
 // ── Modal Applica turno standard su un periodo ───────────────────────────────
 // Genera i turni del periodo scelto dal turno standard di ogni dipendente.
-// Non tocca mai un giorno che ha già un turno assegnato (manuale o generato
-// prima) — scelta esplicita del titolare, 11/08/2026: evita di cancellare in
-// silenzio scambi/modifiche già fatte a mano.
+// SOVRASCRIVE ogni turno già presente nel periodo per i dipendenti che hanno
+// uno standard configurato (manuale o generato prima) — decisione esplicita
+// del titolare, 13/08/2026: il turno standard è predominante. Fino all'11/08
+// era il contrario (mai sovrascrivere), invertito su sua richiesta esplicita.
 function ModalApplicaStandard({ onChiudi, onFatto }) {
   const oggi = new Date();
   const defaultInizio = isoDate(new Date(oggi.getFullYear(), oggi.getMonth() + 1, 1));
@@ -607,11 +693,16 @@ function ModalApplicaStandard({ onChiudi, onFatto }) {
   const [dataFine, setDataFine] = useState(defaultFine);
   const [invio, setInvio] = useState(false);
   const [errore, setErrore] = useState('');
-  const [esito, setEsito] = useState(null); // { creati, saltati, dipendentiSenzaStandard }
+  const [esito, setEsito] = useState(null); // { creati, sovrascritti, dipendentiSenzaStandard }
 
   async function applica(e) {
     e.preventDefault();
     setErrore('');
+    // Azione distruttiva (sovrascrive anche turni assegnati a mano) — conferma
+    // esplicita prima di procedere, non solo il pulsante "Applica" del form.
+    if (!window.confirm('Questo sostituirà anche i turni già assegnati a mano nel periodo scelto, per chi ha un turno standard configurato. Continuare?')) {
+      return;
+    }
     setInvio(true);
     try {
       const res = await api.post('/hr/turni/applica-standard', { data_inizio: dataInizio, data_fine: dataFine });
@@ -631,7 +722,7 @@ function ModalApplicaStandard({ onChiudi, onFatto }) {
           <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Applica turno standard</p>
           <p className="text-[12px] mt-0.5" style={{ color: 'var(--muted-foreground)' }}>
             Genera i turni del periodo scelto usando il turno standard di ogni dipendente.
-            Non modifica i giorni che hanno già un turno assegnato.
+            Sostituisce anche i turni già assegnati (a mano o in precedenza) per chi ha uno standard configurato.
           </p>
         </div>
 
@@ -669,7 +760,7 @@ function ModalApplicaStandard({ onChiudi, onFatto }) {
           <div className="flex flex-col gap-3">
             <div className="rounded-xl px-3 py-2.5 text-[13px]"
                  style={{ background: 'var(--status-green-bg)', color: 'var(--status-green-text)' }}>
-              {esito.creati} turni creati · {esito.saltati} giorni già assegnati (non toccati)
+              {esito.creati} turni creati · {esito.sovrascritti} turni precedenti sostituiti
             </div>
             {esito.dipendentiSenzaStandard?.length > 0 && (
               <div className="rounded-xl px-3 py-2.5 text-[12px]"
@@ -941,7 +1032,7 @@ function TabPresenze() {
     try {
       const Cookies = (await import('js-cookie')).default;
       const token = Cookies.get('token');
-      const res = await fetch(`${process.env.NEXT_PUBLIC_API_URL}${url}`, { headers: { Authorization: `Bearer ${token}` } });
+      const res = await fetch(`${getApiUrl()}${url}`, { headers: { Authorization: `Bearer ${token}` } });
       if (!res.ok) throw new Error();
       const blob = await res.blob();
       const link = document.createElement('a');
@@ -1353,8 +1444,7 @@ function TabDocumenti({ utenti }) {
               <button onClick={async () => {
                         try {
                           const token = document.cookie.split(';').map(c => c.trim()).find(c => c.startsWith('token='))?.split('=')[1];
-                          const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
-                          const res = await fetch(`${base}/hr/documenti/${r.id}/download`, {
+                          const res = await fetch(`${getApiUrl()}/hr/documenti/${r.id}/download`, {
                             headers: { Authorization: `Bearer ${token}` },
                           });
                           if (!res.ok) return;
@@ -1397,11 +1487,10 @@ function DownloadZipDocumenti({ utenti }) {
     try {
       const Cookies = (await import('js-cookie')).default;
       const token = Cookies.get('token');
-      const base = process.env.NEXT_PUBLIC_API_URL || 'http://localhost:7001/api';
       const params = new URLSearchParams({ tipo });
       if (anno) params.set('anno', anno);
       if (userId) params.set('user_id', userId);
-      const res = await fetch(`${base}/hr/documenti/download-zip?${params}`, {
+      const res = await fetch(`${getApiUrl()}/hr/documenti/download-zip?${params}`, {
         headers: { Authorization: `Bearer ${token}` },
       });
       if (!res.ok) {
@@ -1530,7 +1619,7 @@ function TabBacheca() {
                           background: form.ruoli_destinatari.includes(r) ? 'var(--hotel-navy)' : 'var(--card)',
                           color: form.ruoli_destinatari.includes(r) ? 'white' : 'var(--foreground)',
                           border: '0.5px solid var(--border)',
-                        }}>{r}</button>
+                        }}>{r === 'dipendente' ? 'Lavapiatti' : r}</button>
               ))}
             </div>
           </div>

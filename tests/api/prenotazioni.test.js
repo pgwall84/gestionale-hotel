@@ -317,6 +317,37 @@ describe('PATCH /api/prenotazioni/:id/stato', () => {
     expect(fuoriMappa.body.error).toMatch(/non consentita/i);
   });
 
+  test('check_in valorizza soggiorni.check_in_effettuato_at (migration 035, prerequisito regola 24h/6h Alloggiati Web)', async () => {
+    // Date 15-19 ottobre, deliberatamente diverse da 01-05 ottobre usato dal
+    // test 'interrotta' più sotto — stessa cameraTestId di default: date
+    // sovrapposte avrebbero fatto fallire la creazione per il vincolo
+    // EXCLUDE su camera+intervallo (migration 017), lasciando creata.body.id
+    // undefined e facendo esplodere in modo criptico un test successivo e
+    // apparentemente scollegato (bug reale trovato dal titolare 13/08/2026).
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-10-15', data_partenza: '2099-10-19' },
+    });
+    const id = creata.body.id;
+    const db = getPool();
+
+    const prima = await db.query(
+      'SELECT check_in_effettuato_at FROM soggiorni WHERE prenotazione_id = $1', [id]
+    );
+    expect(prima.rows[0].check_in_effettuato_at).toBeNull();
+
+    await request(app).patch(`/api/prenotazioni/${id}/stato`).set(authHeader.titolare()).send({ stato: 'confermata' });
+    const dopoConfermata = await db.query(
+      'SELECT check_in_effettuato_at FROM soggiorni WHERE prenotazione_id = $1', [id]
+    );
+    expect(dopoConfermata.rows[0].check_in_effettuato_at).toBeNull(); // solo check_in lo valorizza, non confermata
+
+    await request(app).patch(`/api/prenotazioni/${id}/stato`).set(authHeader.titolare()).send({ stato: 'check_in' });
+    const dopoCheckIn = await db.query(
+      'SELECT check_in_effettuato_at FROM soggiorni WHERE prenotazione_id = $1', [id]
+    );
+    expect(dopoCheckIn.rows[0].check_in_effettuato_at).not.toBeNull();
+  });
+
   test('transizione non valida: opzione → check_in (salta confermata) → 400', async () => {
     const creata = await creaPrenotazione(authHeader.receptionist(), {
       soggiorno: { data_arrivo: '2099-09-01', data_partenza: '2099-09-05' },

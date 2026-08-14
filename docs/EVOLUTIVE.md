@@ -262,10 +262,16 @@ Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
     (sottoscrizione WuBook — non ancora fatta dal titolare, bloccante),
     poi ricezione prenotazioni via webhook, invio disponibilità/tariffe.
   2.4 Tassa di soggiorno custom
-  2.5 Alloggiati Web — Fase 2 (generatore schedina + client SOAP + invio
-    reale Test/Send), vedi voce dedicata "Modulo 2.5" più sotto per lo
-    stato Fase 1b e il test reale ancora da fare
-  2.6 Export ROSS1000/ISTAT
+  2.5 Alloggiati Web — Fase 2: NON PIÙ "non ancora avviato", superato
+    dai fatti del 13/08/2026 — vedi voce dedicata "Modulo 2.5 — Fase 2,
+    stato al 13/08/2026" più sotto per lo stato reale (Test validato
+    contro il servizio vero, invio reale implementato con interruttore
+    di sicurezza spento di default, coda manuale funzionante; restano
+    4 gap noti con piano concordato).
+  2.6 Export ROSS1000/ISTAT — riaperto il 13/08/2026: emerso un conflitto
+    tra il canale già implementato (webservice checkinV2) e la
+    documentazione ufficiale Liguria (sistema RIMOVCLI, upload manuale),
+    vedi voce dedicata "Modulo 2.6 — RIMOVCLI vs ROSS1000" più sotto.
   3.1 Integrazione A-Cube API corrispettivi (scontrini — sostituisce Hugin RT-K50)
   3.2 Fatturazione B2B (rivalutare A-Cube vs Fatture in Cloud con commercialista)
   3.3 Pagamenti online Nexi + Stripe via WuBook
@@ -358,6 +364,112 @@ Modulo 5.2 — limiti noti dell'OCR documento, dopo test reali su CIE
     Nessuna azione da intraprendere ora.
   - Dettaglio tecnico completo dell'iterazione (Otsu, ritaglio, modello
     OCR-B, parsing tollerante): `docs/DIARIO_SESSIONI.md`, voce 04/08/2026.
+
+Modulo 2.5 — Fase 2, stato al 13/08/2026: implementato e in uso in modo
+  controllato, con 4 gap noti e un piano concordato per chiuderli.
+  ✅ Fatto: generatore schedina (`alloggiatiSchedina.js`), client SOAP con
+  `GenerateToken`/`Test`/`Send` (`alloggiatiSoapClient.js`), `Test`
+  validato contro il servizio reale (1/1 schedine valide, 13/08/2026),
+  invio reale (`eseguiInvioReale`) con pattern Test-before-Send, blocco di
+  sicurezza contro i dati di test (`canale_origine='test_interno'`,
+  verificato con test di regressione sia a livello di funzione che HTTP),
+  job notturno (`invioAlloggiatiWeb.js`) dietro un interruttore esplicito
+  `ALLOGGIATI_JOB_ATTIVO` (spento di default — non parte da solo dopo un
+  deploy/riavvio), coda manuale in Impostazioni ▸ Alloggiati Web
+  ("Invia ora" per singolo soggiorno, sempre con conferma esplicita).
+  Prenotazioni di test (script `creaPrenotazioneTestAlloggiati.js` e
+  `seedPrenotazioniTest.js`) possono restare nel database: bloccate a
+  livello di funzione, non solo di lista, quindi mai inviabili per errore.
+
+  Gap noti, con piano concordato il 13/08/2026 (ordine di sviluppo
+  D→A→B→C, un giro al giorno per il job — non due). **D, A, B eseguite
+  nella stessa sessione ("parti pure"), non ancora verificate contro
+  Postgres reale dal titolare — vedi `docs/DIARIO_SESSIONI.md` voce
+  "Fasi D, A, B del piano eseguite" per il dettaglio tecnico completo.**
+  - ✅ **D — cattura ora check-in** (13/08/2026): migration 035, colonna
+    `soggiorni.check_in_effettuato_at`, valorizzata alla transizione verso
+    `check_in`. Solo cattura dato, enforcement 24h/6h ancora da costruire
+    quando servirà davvero (nessuna prenotazione day-use reale oggi).
+  - ✅ **A — retry vero con tentativi visibili** (13/08/2026):
+    `eseguiInvioReale` scrive sempre una riga (anche esito `'errore_rete'`
+    sugli errori di rete, prima invisibile), `GET /api/alloggiati/coda`
+    mostra `tentativi_falliti` consecutivi. Un giro al giorno confermato.
+  - ✅ **B — ricevute scaricate e archiviate** (13/08/2026): scoperta
+    chiave dalla lettura del manuale — la ricevuta WS_ALLOGGIATI è UN PDF
+    PER GIORNO (non per soggiorno), scaricabile solo "ultimi 30gg escluso
+    il giorno corrente". Nuova tabella `alloggiati_ricevute` (migration
+    036, chiave per data), job notturno esteso per scaricare le ricevute
+    pendenti dopo il giro di invio, nuova card "Ricevute" in
+    Impostazioni▸Alloggiati Web.
+  - ✅ **C — dashboard con pallino verde/giallo** (14/08/2026): nuovo
+    blocco in `dashboardController.alert()`, riusa l'`AlertItem` esistente
+    (dot rosso/ambra, stesso meccanismo già in uso per ZTL/Magazzino/HR —
+    nessun componente nuovo). Diverso dall'alert "documento incompleto" del
+    06/08 (quello è readiness prima dell'arrivo, questo è invio mancato
+    dopo il check-in). Termine legale = 24h da `check_in_effettuato_at`
+    (Fase D) se presente, altrimenti da `data_arrivo` 00:00 per i soggiorni
+    più vecchi. Rosso se scaduto, ambra se ancora in coda ma nei termini.
+    **Deliberatamente NON implementata la regola delle 6h per il day-use**
+    (arrivo e partenza lo stesso giorno) — stessa scelta già fatta per la
+    Fase D, nessuna prenotazione così esiste oggi nel sistema. Esclude
+    sempre `canale_origine='test_interno'`. Nuovi test in
+    `tests/api/dashboard.test.js` (4 casi: rosso, ambra, esclusione esito
+    'ok', esclusione test_interno) — non ancora eseguiti contro Postgres
+    reale dal titolare.
+
+    **Seguito 14/08/2026 — bug di isolamento test, non applicativo**: nel
+    DB di sviluppo esistono 6 soggiorni reali mai inviati (termine
+    risalente a fine luglio/inizio agosto) che riempivano da soli il
+    LIMIT 5 della query, escludendo i fixture dei test. Estratta la query
+    in `alertInviiAlloggiati()` con un filtro opzionale `soggiornoIds`
+    usato solo dai test — `alert()` in produzione invariato. Nessun dato
+    reale toccato.
+
+    **Domanda di prodotto aperta, non decisa**: se in produzione si
+    accumula un backlog cronico di soggiorni mai inviabili (dati
+    insufficienti, bloccati in `errore` per sempre), il LIMIT 5 ordinato
+    per urgenza li mostrerebbe per sempre, nascondendo i problemi nuovi.
+    Non affrontabile ora — serve osservare un backlog reale di produzione
+    per capire se è uno scenario concreto o solo teorico. Da rivedere dopo
+    il go-live se il titolare nota l'alert "bloccato" sugli stessi
+    soggiorni per giorni.
+
+Modulo 2.6 — RIMOVCLI vs ROSS1000, conflitto scoperto il 13/08/2026: il
+  codice esistente (`ross1000Xml.js`, `ross1000Controller.js`, generazione
+  XML ✅ fatta) punta al webservice SOAP `turismows.regione.liguria.it/
+  ws/checkinV2?wsdl`, piattaforma nazionale ROSS1000/Turismo5 (GIES)
+  condivisa da altre regioni. Il titolare ha però trovato nella
+  documentazione ufficiale Liguria (`docs/ross1000/regione liguria/`) un
+  sistema diverso, RIMOVCLI: upload MANUALE di file XML su un portale
+  dedicato (`flussituristici.regione.liguria.it/importc59-prod/
+  login.c59`), non un webservice, con obbligo di certificazione preventiva
+  del software (elenco delle "software house" compatibili). Confermato
+  dal titolare: per la categoria Hotel in Liguria il canale corretto è
+  RIMOVCLI, non il webservice già implementato.
+
+  Prima domanda aperta: se un hotel possa far certificare un gestionale
+  sviluppato internamente (non commercializzato ad altre strutture),
+  senza essere una "software house" in senso tradizionale — l'elenco
+  regionale contiene anche ditte individuali (es. "Guazzi di Stefano
+  Guazzi", "CSG di Giulio Frusi"), ma nessuna voce è "un hotel che usa
+  solo il proprio gestionale interno": la situazione non ha un precedente
+  chiaro nell'elenco. Mail preparata e salvata in
+  `docs/mail_statistiche_liguria.md`, indirizzata al referente corretto
+  per le richieste tecniche (Mario Schenone, Settore Politiche Turistiche
+  Regione Liguria — diverso dall'ufficio territoriale che gestisce
+  l'adesione di chi usa un gestionale già in elenco). Non ancora inviata:
+  il titolare deve completare nome/telefono/email prima dell'invio.
+
+  Bloccato in attesa di risposta, nessuna stima possibile. Nel frattempo,
+  a rischio zero: rinominare i riferimenti UI/commenti da "ROSS1000" a
+  "RIMOVCLI / Statistiche turistiche Regione Liguria" per non fuorviare —
+  NON toccare `ross1000Xml.js`/`ross1000Controller.js` prima della
+  risposta, perché non è confermato che il generatore XML esistente resti
+  valido per RIMOVCLI (stesso modello ISTAT C/59 di base, ma da
+  verificare, non da assumere). Due scenari alla risposta: canale manuale
+  confermato → basta l'export XML già esistente, nessuna nuova
+  integrazione da scrivere; canale automatizzabile alternativo confermato
+  → nuovo modulo vero (nuovo client, nuove credenziali), non un ritocco.
 
 Modulo 5.1 — riordino menu/sidebar (segnalato dal titolare 03/08/2026, non
   sviluppare ora). Aggiungendo "Arrivi/Partenze" la sezione OSPITALITÀ della
@@ -563,7 +675,14 @@ torna a discutere la direzione del prodotto.
     catalogo_addebiti_rapidi), due percorsi verso addebiti_extra (comanda
     reale con addebito_camera per gli extra a tavola in ristorante; griglia
     rapida a quadratoni per il bar/camera, senza passare da comanda/cucina).
-    In esecuzione.
+    ✅ **FATTO E IN PRODUZIONE (10/08/2026)**: 21/21 test verdi, verificato
+    manualmente in locale (login reale, catalogo, griglia, addebito
+    salvato), migration applicata anche sul VPS (hdgolfo-gestionale.com),
+    deploy confermato con health check + pagina nuova entrambi 200. Resta
+    volutamente non fatto: UI nel flusso comanda ristorante normale per
+    soggiorno/esterno + toggle addebito camera (deprioritizzato dal
+    titolare rispetto al bar — vedi voce "MEDIA" sopra, ora comunque
+    superata dal fatto che il percorso principale è deciso e in uso).
   - Stampa comande su stampante termica in cucina/bar (oggi solo monitor
     SSE su tablet): richiede hardware, non solo software — da valutare
     solo se il monitor a schermo si rivela insufficiente in pratica con
@@ -575,6 +694,53 @@ torna a discutere la direzione del prodotto.
   channel manager/booking engine (stessa dipendenza WuBook già nota),
   invio reale Alloggiati Web e ROSS1000 (Fase 2 di entrambi, bloccate su
   credenziali).
+
+4 QUESTIONI APERTE DA RIPRENDERE INSIEME (raggruppate esplicitamente dal
+titolare il 10/08/2026 a fine sessione — "non fare nulla ora", solo
+segnate per una revisione congiunta futura, nessuna investigata/toccata):
+
+1. Toggle "addebita a camera" nel flusso comanda ristorante normale
+   (apertura comanda con scelta soggiorno/cliente esterno, marcatura riga)
+   — backend già pronto (modulo Addebiti extra, vedi sotto), solo la UI
+   nel flusso comanda standard non è stata costruita, deprioritizzata dal
+   titolare rispetto al bar.
+
+2. Tariffe per camera/canale di provenienza — domanda del titolare
+   ("serve un sistema che associa alla camera il prezzo") mai
+   completamente chiarita in questa sessione. Verificato cosa esiste già:
+   modulo 2.2 (stagionalità+pacchetti per TIPO camera/periodo) e modulo
+   2.3 Fase 1 (mappatura tipo_camera↔canale OTA, solo identificazione
+   canale per il channel manager, non prezzo differenziato). Non ancora
+   confermato dal titolare se intende tariffe differenziate per canale di
+   prenotazione (diretto/Booking/telefono), prezzo per singola camera
+   fisica invece che per categoria, o altro — chiarire prima di
+   pianificare qualunque cosa.
+
+3. **NUOVO (10/08/2026)** — Monitor cucina (`/cucina`, SSE) non funziona
+   in produzione: il titolare segnala "connessione in corso" senza mai
+   visualizzare nulla, diverso dal comportamento in locale (dove
+   funziona). Non investigato in questa sessione su richiesta esplicita
+   del titolare. Prima ipotesi da verificare quando si riprende (non
+   confermata, solo un punto di partenza): SSE dietro reverse proxy è
+   notoriamente sensibile a buffering/timeout — Nginx ha bisogno di
+   `proxy_buffering off` e simili sulla route `/api/ristorante/cucina/
+   stream` (il codice lato Express imposta già `X-Accel-Buffering: no`,
+   vedi `comandeController.js`); verificare anche che Cloudflare sul
+   dominio resti DNS-only/nuvoletta grigia (CLAUDE.md/DEPLOY_VPS_NETCUP.md
+   §1 — se qualcuno l'ha attivata per errore, l'SSE si rompe). Da
+   confermare con i log Nginx reali prima di toccare la configurazione,
+   stesso principio già seguito per l'incidente permessi DB di oggi.
+
+4. Manca un punto centrale per gestire lo stato e i conti di tutti i
+   tavoli contemporaneamente durante un pasto — espande quanto già
+   segnato subito sotto ("procedura di accesso da planning-camere") con
+   una cornice più ampia data dal titolare oggi: non solo la UX di un
+   singolo pulsante, ma "la dinamica dei vari passaggi" del flusso
+   ristorante (apertura tavolo → comanda → cucina → conto → chiusura →
+   incasso) da rivedere nel suo complesso — il titolare stesso ha detto
+   di non essersi spiegato bene, quindi la prima cosa da fare quando si
+   riprende è capire con lui cosa esattamente non funziona nella pratica
+   quotidiana, non proporre soluzioni a priori.
 
 Modulo Addebiti extra — procedura di accesso da planning-camere da
 rivedere (segnalato dal titolare 10/08/2026, non ora). Il pulsante
@@ -615,4 +781,48 @@ ordini → chiusura → incasso) prima di proporre modifiche — il titolare ha
 detto esplicitamente di non essere sicuro di come funzioni oggi, quindi
 prima chiarire lo stato attuale insieme a lui, poi progettare la vista
 aggregata.
+
+Infrastruttura test — email di test condivise tra file (13/08/2026).
+`npm test`/`npm run test:api` ora forzano `--runInBand` (package.json) dopo
+che una corsa parallela ha fatto fallire 10 test per race condition su un
+utente di test con email tipo `%@test.hotel`, creato/cancellato da più
+worker Jest in contemporanea — non un bug applicativo, confermato con
+`--runInBand` sequenziale: 738/738 verdi. La causa di fondo resta: più
+file di test condividono la stessa email fissa invece di generarne una
+univoca per file (pattern già usato in `tests/api/alloggiati.test.js` con
+un suffisso timestamp, non generalizzato altrove). Con `--runInBand` come
+default il problema non si presenta più nell'uso normale, ma tornerebbe se
+qualcuno eseguisse due suite in parallelo manualmente o un CI futuro non
+rispettasse questo script — non urgente ora, da sistemare alla radice
+(email/utenti di test univoci per file) se si introduce un CI parallelo.
+
+Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
+1. "Altri alert" (ex "Alert del giorno") tenuta sotto ai widget invariata:
+   il titolare non ha deciso se toglierla ora che gran parte del suo
+   contenuto è duplicato nei widget dedicati (ZTL, magazzino, Alloggiati
+   Web, manutenzione, pre check-in). Restano lì solo per completezza
+   scadenze HR, opzioni prenotazione in scadenza, documenti Alloggiati
+   incompleti, menu non configurato, pre check-in da rivedere (diverso da
+   "da inviare" — quello è la richiesta già compilata dall'ospite, non il
+   link da mandare). Da rivedere quando il titolare deciderà se tenerla,
+   ridurla alle sole voci non coperte, o toglierla del tutto.
+2. "Tavoli occupati ora" nel widget Ristorante è un proxy, non il dato
+   letterale chiesto ("quanti clienti stanno mangiando ora"): nessuna
+   tabella traccia i coperti effettivamente seduti, `comande` ha solo lo
+   stato aperta/chiusa. Se in futuro serve un vero conteggio persone,
+   servirebbe aggiungere un campo "coperti reali" alla comanda (chiesto al
+   cameriere in apertura tavolo) — non fatto ora, nessuna richiesta
+   esplicita in questo senso, solo la constatazione che il dato attuale è
+   un'approssimazione onesta ma non lo stesso numero.
+
+Dashboard home — receptionist/cuoco/dipendente senza contenuto dedicato
+(14/08/2026, emerso rispondendo a una domanda del titolare sulla riga
+KPI). Questi tre ruoli non rientrano né nella griglia widget (solo
+admin/titolare) né in `RiepilogoCamere` (solo cameriere/portiere notte):
+la loro home ha solo 2 KPI generici (Camere movimenti, Coperti oggi), non
+tagliati sul lavoro specifico di ciascuno (es. il cuoco non ha bisogno di
+sapere i movimenti camere, la receptionist trarrebbe più valore da
+arrivi/check-in che da coperti). Non è la priorità di questa sessione
+(centrata su admin/titolare) — da riprendere se il titolare vuole
+dashboard più mirate per questi ruoli.
 ```

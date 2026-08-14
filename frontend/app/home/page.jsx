@@ -1,15 +1,37 @@
 'use client';
 
-// Dashboard principale — KPI, alert, presenze (admin/titolare), camere oggi (cameriere).
+// Dashboard principale — KPI, widget a gruppi (14/08/2026), alert, presenze
+// (admin/titolare), camere oggi (cameriere/portiere notte).
+//
+// La griglia di widget a gruppi (Clienti/Adempimenti/Hotel/Costi/Ristorante)
+// sostituisce concettualmente la vecchia lista piatta di "Alert del giorno"
+// come punto di ingresso principale per admin/titolare: ogni tessera è un
+// numero reale cliccabile che porta alla pagina che lo gestisce, raggruppato
+// per tema. Dove il dato non esiste ancora (integrazione OTA/WuBook — modulo
+// 2.3 non avviato; stima automatica fabbisogno cucina) la tessera lo dichiara
+// apertamente ("Modulo non sviluppato") invece di mostrare uno zero finto.
+// Vedi docs/DIARIO_SESSIONI.md, voce 14/08/2026, per la ricerca sui
+// competitor (TeamSystem/Cloudbeds/Mews) che ha guidato questo pattern.
+//
+// La vecchia lista di alert resta sotto, ridimensionata: molte voci sono
+// ora coperte dai widget dedicati, ma alcune (scadenze HR, opzioni
+// prenotazione in scadenza, pre check-in da rivedere, documenti Alloggiati
+// incompleti) non hanno ancora una tessera propria — tenerla evita di perdere
+// segnalazioni reali finché non si decide se/come integrarle nei gruppi.
 
 import { useState, useEffect } from 'react';
-import { BedDouble, UtensilsCrossed, Banknote, TrendingDown, X } from 'lucide-react';
+import {
+  BedDouble, UtensilsCrossed, Banknote, TrendingDown, X,
+  Users, ShieldCheck, Wrench, UtensilsCrossed as IconaRistorante,
+} from 'lucide-react';
 import Link from 'next/link';
 import AppShell from '@/components/layout/AppShell';
 import KpiCard from '@/components/ui/KpiCard';
 import AlertItem from '@/components/ui/AlertItem';
 import StatusBadge from '@/components/ui/StatusBadge';
 import DataTable from '@/components/ui/DataTable';
+import WidgetGruppo from '@/components/ui/WidgetGruppo';
+import WidgetItem from '@/components/ui/WidgetItem';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
 
@@ -47,6 +69,11 @@ function costruisciKpi(dati) {
       sub: 'mese corrente', Icona: TrendingDown,
     },
   ];
+}
+
+function formattaDataOra(iso) {
+  if (!iso) return null;
+  return new Date(iso).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
 // Bottom sheet registrazione incasso giornaliero — solo admin/titolare
@@ -148,6 +175,100 @@ function RiepilogoCamere() {
   );
 }
 
+// Griglia dei 5 gruppi di widget — solo admin/titolare. Dati da /dashboard/gruppi
+// più incasso/food cost già disponibili da /dashboard/kpi (nessuna doppia query).
+function GrigliaWidget({ dati, datiKpi, loading, onRegistraIncasso }) {
+  if (loading) {
+    return (
+      <p className="text-center py-6 text-sm mb-6" style={{ color: 'var(--muted-foreground)' }}>
+        Caricamento widget...
+      </p>
+    );
+  }
+  if (!dati) return null;
+
+  const { clienti, adempimenti, hotel, ristorante } = dati;
+
+  return (
+    <div className="grid grid-cols-1 lg:grid-cols-3 gap-4 mb-6">
+
+      {/* Gestione cliente — più importante, in alto a sinistra, doppia larghezza */}
+      <WidgetGruppo titolo="Gestione cliente" Icona={Users} className="lg:col-span-2">
+        <WidgetItem label="Arrivi oggi" valore={clienti.arriviOggi} href="/arrivi-partenze" />
+        <WidgetItem label="Partenze oggi" valore={clienti.partenzeOggi} href="/arrivi-partenze" />
+        <WidgetItem label="Check-in da fare" valore={clienti.checkInDaFare}
+                    stato={clienti.checkInDaFare > 0 ? 'ambra' : 'verde'} href="/arrivi-partenze" />
+        <WidgetItem label="Pre check-in da inviare" valore={clienti.preCheckinDaInviare}
+                    stato={clienti.preCheckinDaInviare > 0 ? 'ambra' : 'verde'} href="/pre-checkin" />
+        <WidgetItem label="Prenotazioni OTA da gestire" sviluppato={false}
+                    messaggio={clienti.prenotazioniOta.messaggio} />
+      </WidgetGruppo>
+
+      {/* Adempimenti */}
+      <WidgetGruppo titolo="Adempimenti" Icona={ShieldCheck}>
+        <WidgetItem label="Alloggiati Web"
+                    valore={`${adempimenti.alloggiatiWeb.daInviare} da inviare`}
+                    sub={adempimenti.alloggiatiWeb.ultimoInvio
+                      ? `Ultimo invio: ${formattaDataOra(adempimenti.alloggiatiWeb.ultimoInvio)}`
+                      : 'Nessun invio riuscito registrato'}
+                    stato={adempimenti.alloggiatiWeb.stato} href="/alloggiati-web" />
+        <WidgetItem label="Statistiche Liguria" sub={adempimenti.statisticheLiguria.messaggio}
+                    stato="neutro" href="/impostazioni/ross1000" />
+        <WidgetItem label="ZTL — targhe mancanti" valore={adempimenti.ztlMancanti}
+                    stato={adempimenti.ztlMancanti > 0 ? 'rosso' : 'verde'} href="/ztl" />
+        <WidgetItem label="Tassa di soggiorno da riscuotere" valore={adempimenti.tassaDaRiscuotere}
+                    stato={adempimenti.tassaDaRiscuotere > 0 ? 'ambra' : 'verde'} href="/tassa-soggiorno" />
+      </WidgetGruppo>
+
+      {/* Gestione hotel */}
+      <WidgetGruppo titolo="Gestione hotel" Icona={Wrench}>
+        <WidgetItem label="Camere da fare" valore={hotel.camereDaFare}
+                    stato={hotel.camereDaFare > 0 ? 'ambra' : 'verde'} href="/camere" />
+        <WidgetItem label="Manutenzioni aperte" valore={hotel.manutenzioniAperte}
+                    sub={hotel.manutenzioniUrgenti > 0 ? `${hotel.manutenzioniUrgenti} urgenti` : undefined}
+                    stato={hotel.manutenzioniUrgenti > 0 ? 'rosso' : hotel.manutenzioniAperte > 0 ? 'ambra' : 'verde'}
+                    href="/manutenzione" />
+        <WidgetItem label="Magazzino sotto scorta" valore={hotel.magazzinoSottoScorta}
+                    stato={hotel.magazzinoSottoScorta > 0 ? 'ambra' : 'verde'} href="/magazzino" />
+        <WidgetItem label="Materiale per i prossimi pasti" sviluppato={false}
+                    messaggio={hotel.fabbisognoPasti.messaggio} />
+      </WidgetGruppo>
+
+      {/* Ristorante — affiancato a Gestione hotel, non isolato su una riga a sé */}
+      <WidgetGruppo titolo="Ristorante" Icona={IconaRistorante}>
+        <WidgetItem label="Coperti colazione" valore={ristorante.copertiColazione} />
+        <WidgetItem label="Coperti pranzo" valore={ristorante.copertiPranzo} />
+        <WidgetItem label="Coperti cena" valore={ristorante.copertiCena} />
+        <WidgetItem label="Tavoli occupati ora" valore={ristorante.tavoliOccupatiOra}
+                    sub="comande aperte oggi" href="/sala" />
+        <WidgetItem label="Menu del giorno" valore={ristorante.menuPronto ? 'Pronto' : 'Da controllare'}
+                    stato={ristorante.menuPronto ? 'verde' : 'ambra'} href="/menu" />
+      </WidgetGruppo>
+
+      {/* Costi — riusa i dati già caricati da /dashboard/kpi, nessuna query in più.
+          "Registra incasso" vive qui ora (prima era un bottone isolato sopra la
+          griglia, senza contesto): è l'unico modo per inserire il dato che questo
+          stesso widget mostra come "Incasso oggi" — incassi_giornalieri non ha
+          nessuna fonte automatica, va sempre registrato a mano dal titolare. */}
+      <WidgetGruppo titolo="Costi" Icona={Banknote}
+                     azione={onRegistraIncasso && (
+                       <button onClick={onRegistraIncasso} className="text-[11px] font-medium shrink-0"
+                               style={{ color: 'var(--hotel-amber)' }}>
+                         + Registra incasso
+                       </button>
+                     )}>
+        <WidgetItem label="Incasso oggi"
+                    valore={datiKpi ? `€ ${datiKpi.incasso.attuale.toFixed(2)}` : '—'}
+                    sub="contanti + POS" />
+        <WidgetItem label="Food cost mese"
+                    valore={datiKpi?.foodCost.euroPerCoperto !== null && datiKpi?.foodCost.euroPerCoperto !== undefined
+                      ? `€ ${datiKpi.foodCost.euroPerCoperto.toFixed(2)}/coperto` : '—'} />
+      </WidgetGruppo>
+
+    </div>
+  );
+}
+
 export default function PaginaHome() {
   const { utente } = useAuth();
   const [presenti, setPresenti] = useState([]);
@@ -156,6 +277,8 @@ export default function PaginaHome() {
   const [loadingAlerts, setLoadingAlerts] = useState(true);
   const [datiKpi, setDatiKpi] = useState(null);
   const [loadingKpi, setLoadingKpi] = useState(true);
+  const [datiGruppi, setDatiGruppi] = useState(null);
+  const [loadingGruppi, setLoadingGruppi] = useState(true);
   const [mostraIncasso, setMostraIncasso] = useState(false);
   const [salvandoIncasso, setSalvandoIncasso] = useState(false);
 
@@ -181,9 +304,14 @@ export default function PaginaHome() {
         .then(r => setAlerts(r.data.alerts))
         .catch(() => {})
         .finally(() => setLoadingAlerts(false));
+      api.get('/dashboard/gruppi')
+        .then(r => setDatiGruppi(r.data))
+        .catch(() => {})
+        .finally(() => setLoadingGruppi(false));
     } else {
       setLoadingPresenze(false);
       setLoadingAlerts(false);
+      setLoadingGruppi(false);
     }
   }, [utente]);
 
@@ -211,51 +339,59 @@ export default function PaginaHome() {
         <p className="text-[13px] capitalize" style={{ color: 'var(--muted-foreground)' }}>{oggi}</p>
       </div>
 
-      {/* KPI — incasso e food cost solo per gestione */}
-      <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
-        {loadingKpi ? (
-          <p className="col-span-2 md:col-span-4 text-center py-4 text-sm" style={{ color: 'var(--muted-foreground)' }}>
-            Caricamento KPI...
-          </p>
-        ) : (
-          kpiCards
-            .filter(k => {
-              if (['Incasso oggi', 'Food cost'].includes(k.label)) return isGestione;
-              return true;
-            })
-            .map(k => <KpiCard key={k.label} {...k} />)
-        )}
-      </div>
-
-      {isGestione && (
-        <button onClick={() => setMostraIncasso(true)}
-                className="mb-6 px-4 py-2 rounded-lg text-sm font-medium"
-                style={{ background: 'var(--muted)', color: 'var(--foreground)' }}>
-          Registra incasso di oggi
-        </button>
-      )}
-
-      {/* Griglia principale — layout dipende dal ruolo */}
-      <div className={`grid grid-cols-1 gap-4 ${isGestione ? 'md:grid-cols-2' : ''}`}>
-
-        {/* Alert del giorno */}
-        <div className="rounded-xl p-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
-          <p className="text-[13px] font-medium mb-1" style={{ color: 'var(--foreground)' }}>Alert del giorno</p>
-          <p className="text-[11px] mb-3" style={{ color: 'var(--muted-foreground)' }}>
-            {loadingAlerts ? '...' : alerts.length === 0 ? 'Tutto ok, nessun alert' : `${alerts.length} ${alerts.length === 1 ? 'elemento richiede' : 'elementi richiedono'} attenzione`}
-          </p>
-          {loadingAlerts ? (
-            <p className="text-sm text-center py-3" style={{ color: 'var(--muted-foreground)' }}>Caricamento...</p>
-          ) : alerts.length === 0 ? (
-            <p className="text-sm text-center py-3" style={{ color: 'var(--status-green-text)' }}>✓ Nessun problema rilevato</p>
+      {/* KPI — solo per chi NON vede la griglia widget sotto (cameriere, cuoco,
+          portiere notte, receptionist): per admin/titolare questi 4 numeri sono
+          ora ridondanti con Gestione cliente/Ristorante/Costi, tolti da qui per
+          non mostrare lo stesso dato due volte nella stessa pagina. */}
+      {!isGestione && (
+        <div className="grid grid-cols-2 md:grid-cols-4 gap-3 mb-6">
+          {loadingKpi ? (
+            <p className="col-span-2 md:col-span-4 text-center py-4 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+              Caricamento KPI...
+            </p>
           ) : (
-            alerts.map((a, i) => (
-              a.link
-                ? <Link key={i} href={a.link}><AlertItem {...a} /></Link>
-                : <AlertItem key={i} {...a} />
-            ))
+            kpiCards.map(k => <KpiCard key={k.label} {...k} />)
           )}
         </div>
+      )}
+
+      {/* Widget a gruppi — solo admin/titolare. Il pulsante "Registra incasso"
+          vive dentro il widget Costi (azione del gruppo), non più isolato qui. */}
+      {isGestione && (
+        <GrigliaWidget dati={datiGruppi} datiKpi={datiKpi} loading={loadingGruppi}
+                        onRegistraIncasso={() => setMostraIncasso(true)} />
+      )}
+
+      {/* Griglia secondaria — layout dipende dal ruolo */}
+      <div className={`grid grid-cols-1 gap-4 ${isGestione ? 'md:grid-cols-2' : ''}`}>
+
+        {/* Altri alert — quanto non ancora coperto da un widget dedicato sopra
+            (scadenze HR, opzioni prenotazione in scadenza, pre check-in da
+            rivedere, documenti Alloggiati Web incompleti, menu non configurato).
+            Solo admin/titolare: per gli altri ruoli `alerts` non viene mai
+            caricato (vedi useEffect sotto) — mostrarlo comunque avrebbe fatto
+            vedere "Tutto ok, nessun alert" anche a receptionist/cuoco/dipendente
+            senza che l'endpoint fosse mai stato interrogato per loro: non
+            un'informazione mancante, una falsa rassicurazione. */}
+        {isGestione && (
+          <div className="rounded-xl p-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
+            <p className="text-[13px] font-medium mb-1" style={{ color: 'var(--foreground)' }}>Altri alert</p>
+            <p className="text-[11px] mb-3" style={{ color: 'var(--muted-foreground)' }}>
+              {loadingAlerts ? '...' : alerts.length === 0 ? 'Tutto ok, nessun alert' : `${alerts.length} ${alerts.length === 1 ? 'elemento richiede' : 'elementi richiedono'} attenzione`}
+            </p>
+            {loadingAlerts ? (
+              <p className="text-sm text-center py-3" style={{ color: 'var(--muted-foreground)' }}>Caricamento...</p>
+            ) : alerts.length === 0 ? (
+              <p className="text-sm text-center py-3" style={{ color: 'var(--status-green-text)' }}>✓ Nessun problema rilevato</p>
+            ) : (
+              alerts.map((a, i) => (
+                a.link
+                  ? <Link key={i} href={a.link}><AlertItem {...a} /></Link>
+                  : <AlertItem key={i} {...a} />
+              ))
+            )}
+          </div>
+        )}
 
         {/* Presenze — solo admin e titolare */}
         {isGestione && (
