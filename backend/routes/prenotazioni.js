@@ -32,6 +32,9 @@ function richiedeTransizioneStato(req, res, next) {
 
 router.use(verificaToken);
 
+// Elenco filtrabile (14/08/2026) — GET / (root del router), nessun
+// conflitto di ordine con /griglia o /:id (pattern diversi).
+router.get('/',             richiedeAzione('prenotazioni', 'lettura'),   ctrl.lista);
 router.get('/griglia',      richiedeAzione('prenotazioni', 'lettura'),   ctrl.griglia);
 router.get('/:id',          richiedeAzione('prenotazioni', 'lettura'),   ctrl.dettaglio);
 router.post('/',            richiedeAzione('prenotazioni', 'scrittura'), ctrl.crea);
@@ -40,6 +43,11 @@ router.patch('/:id',        richiedeAzione('prenotazioni', 'scrittura'), ctrl.ag
 router.patch('/:id/stato',  richiedeTransizioneStato,                    ctrl.aggiornaStato);
 router.get('/:id/pagamenti',  richiedeAzione('pagamenti', 'lettura'),   pagamentiCtrl.listaPerPrenotazione);
 router.post('/:id/pagamenti', richiedeAzione('pagamenti', 'scrittura'), pagamentiCtrl.creaPerPrenotazione);
+
+// Riepilogo economico (camera + addebiti extra + tassa di soggiorno −
+// pagamenti), 14/08/2026 — stessi permessi di /:id/pagamenti, niente
+// portiere_notte.
+router.get('/:id/conto', richiedeAzione('pagamenti', 'lettura'), ctrl.conto);
 
 // Invio manuale di test delle email automatiche (modulo 5.3, 04/08/2026) —
 // riservato ad admin/titolare, vedi shared/ruoli.js sezione 'prenotazioni'.test_email.

@@ -512,6 +512,42 @@ giustificato dal volume attuale (20 camere).
   sia lato frontend (disabled) sia lato backend (già garantito dai permessi
   del controller).
 
+### Elenco prenotazioni (toggle Griglia/Elenco, 14/08/2026)
+
+Nasce dal confronto con la pagina "Reservations" di Cloudbeds (separata dal
+calendario): non una voce nuova in sidebar — la sezione OSPITALITÀ era già
+segnalata come troppo affollata (7 voci, nota 04/08/2026) — ma un secondo
+"modo" della stessa voce Prenotazioni, toggle Griglia/Elenco in alto a
+sinistra della pagina `/planning-camere` (stesso pattern già usato per
+Alloggiati Web operativa/configurazione).
+
+- `GET /api/prenotazioni` — una riga per soggiorno/camera (non per
+  prenotazione: un gruppo multi-camera compare su più righe, è la
+  granularità utile a "trova questo ospite"). Filtri combinabili: `ricerca`
+  (nome/cognome ospite o numero camera, ILIKE), `data_da`/`data_a` (su
+  `data_arrivo`), `stato`, `canale_origine`. Paginazione (`pagina`,
+  `per_pagina`, default 50, tetto 200). Stessi permessi di `/griglia`
+  (admin/titolare/receptionist/portiere_notte, lettura) — è la stessa vista
+  in un'altra forma, non una nuova superficie di accesso.
+- Esclude sempre `soggiorni.cancellato = true`, stessa scelta della griglia
+  (`/griglia` filtra allo stesso modo nel JOIN) — un soggiorno interrotto
+  non compare né lì né qui.
+- UI: barra filtri (ricerca, intervallo arrivo, stato), tabella con click →
+  stesso pannello dettaglio della griglia (`PannelloDettaglio`, nessun
+  componente duplicato), paginazione.
+
+### Ricerca nella griglia (14/08/2026)
+
+Casella di ricerca nella toolbar di `/planning-camere` (solo vista Griglia)
+— confronto su nome/cognome ospite e numero camera, stessi dati già
+presenti nella risposta di `/griglia` (nessuna chiamata in più). Evidenzia
+per contrasto invece di nascondere: le barre che non corrispondono restano
+visibili ma con opacità ridotta (stesso pattern "grayed out" di Cloudbeds,
+che mantiene il contesto visivo della griglia invece di uno stato vuoto
+disorientante). Ambito diverso dalla lente di ricerca globale della
+Sidebar (quella è navigazione tra pagine, non filtro sui dati di questa
+pagina).
+
 ### Form "Nuova prenotazione"
 
 Due punti d'ingresso, stesso componente: pulsante accanto al selettore vista
@@ -561,13 +597,40 @@ sposta una prenotazione — resta manuale come prima del modulo 2.2.
 - **Conferma**: da `opzione`, admin/titolare/receptionist. Nessuna
   validazione di prerequisiti (caparra/documento) — controllo professionale
   manuale della reception.
-- **Check-out**: da `check_in`, admin/titolare/receptionist. Non distruttivo,
-  nessuna conferma richiesta.
+- **Check-out**: da `check_in`, admin/titolare/receptionist. Non più un
+  PATCH diretto (fino al 14/08/2026 lo era, senza nessuna schermata
+  dedicata) — apre `PannelloCheckOut`, vedi sezione dedicata più sotto.
 - **Annulla**: da `opzione`/`confermata` → `interrotta`, admin/titolare/
   receptionist. Conferma esplicita richiesta prima del PATCH (irreversibile
   via UI).
 - `chiusa` resta senza transizione UI per scelta — va collegata
   all'emissione fattura reale (modulo 2.5/A-Cube), non a un click manuale.
+
+### Check-out — schermata dedicata (`PannelloCheckOut`, 14/08/2026)
+
+Segnalato dal titolare come gap reale dopo aver visto il riepilogo
+economico appena costruito: fino a questa sessione il check-out era un
+singolo `PATCH .../stato` senza nessuna schermata, nessun riepilogo
+preciso, nessuna possibilità di stampare qualcosa per l'ospite.
+
+- Click su "Check-out" nel pannello dettaglio apre `PannelloCheckOut`
+  (modal separato) invece del PATCH diretto — la transizione avviene solo
+  dopo conferma esplicita dentro il nuovo pannello.
+- Riusa `RiepilogoEconomico` (stesso componente del pannello dettaglio,
+  estratto apposta il 14/08/2026 per evitare duplicazione) — stessa fonte
+  dati, `GET /api/prenotazioni/:id/conto`.
+- Se `saldo_da_incassare > 0`: banner di avviso + mini-form per registrare
+  un pagamento al volo (`POST /api/prenotazioni/:id/pagamenti`, stesso
+  endpoint già esistente) senza dover chiudere il pannello. Non blocca il
+  check-out se il saldo resta positivo — resta una scelta professionale
+  della reception (es. saldato fuori sistema), non un vincolo software.
+- Pulsante "Stampa ricevuta di cortesia" apre `/ricevuta-cortesia/:id`
+  (nuova scheda, stesso pattern `@media print` + `window.print()` già
+  usato per `/menu-stampa`) — documento **esplicitamente NON fiscale**,
+  solo promemoria per l'ospite. Nessun collegamento a un registratore
+  telematico: l'emissione fiscale reale arriverà con l'integrazione A-Cube
+  (modulo 3.1, non ancora iniziata) — questa ricevuta non la anticipa né la
+  sostituisce.
 
 ---
 
@@ -591,10 +654,18 @@ fatto anche prima. Stato occupazione camera (oggi statico in tre punti
 scollegati: Camere, Prenotazioni, Dashboard) andrebbe calcolato dalla stessa
 fonte `soggiorni` in tutti e tre.
 
-**Conto ospite (folio).** Accumula addebiti da fonti diverse (camera,
-ristorante, extra) con saldo al checkout. Richiede una funzione "addebita
-alla camera" nel modulo Ristorante (tag `soggiorno_id` sulla comanda) — è una
-modifica al modulo esistente, non solo un'aggiunta.
+**Conto ospite (folio) — ✅ Fatto 14/08/2026, riepilogo di sola lettura.**
+`GET /api/prenotazioni/:id/conto` aggrega camera (`soggiorni.tariffa_totale`)
++ addebiti extra (`addebiti_extra`, già esistente dal 10/08/2026) + tassa di
+soggiorno (`tasse_soggiorno`, se già calcolata — non la calcola qui, nessun
+side effect da un endpoint di lettura) − pagamenti (`pagamenti`) = saldo da
+incassare. Sostituisce, nel pannello dettaglio, la vecchia lista pagamenti
+grezza. La tassa di soggiorno resta un flusso volutamente separato (la sua
+riscossione non crea una riga in `pagamenti`, tracciata a parte nella
+risposta). Non ancora fatto: una funzione "addebita alla camera" nel flusso
+comanda **normale** del modulo Ristorante (oggi solo la griglia rapida
+bar/camera scrive su `addebiti_extra`, non la comanda standard con piatti
+dal menu) — voce aperta in `docs/EVOLUTIVE.md`.
 
 **Report avanzati.** ADR, RevPAR, tasso di occupazione medio, grafico
 andamento 7/30 giorni — tutti calcolabili da `soggiorni`+`pagamenti` una volta

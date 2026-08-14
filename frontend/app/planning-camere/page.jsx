@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
-  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt,
+  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
@@ -158,9 +158,23 @@ function calcolaBarra(giorni, arrivo, partenza) {
   return { colStart: startIdx + 1, colEnd: Math.max(endIdx, startIdx + 1) + 1 };
 }
 
+// Ricerca nella griglia (14/08/2026) — evidenzia/sfuma invece di nascondere,
+// per non perdere il contesto visivo della griglia (stesso pattern di
+// Cloudbeds). Confronto su nome/cognome ospite e numero camera, tutti dati
+// già presenti nella risposta di /griglia — nessuna chiamata in più.
+function corrispondeRicerca(soggiorno, cameraNumero, ricerca) {
+  const q = ricerca.trim().toLowerCase();
+  if (!q) return true;
+  return (
+    (soggiorno.ospite_nome || '').toLowerCase().includes(q) ||
+    (soggiorno.ospite_cognome || '').toLowerCase().includes(q) ||
+    (cameraNumero || '').toLowerCase().includes(q)
+  );
+}
+
 // ── Barra prenotazione (draggable) ──────────────────────────────────────────
 
-function Barra({ soggiorno, style, puoTrascinare, onApri }) {
+function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
   const { attributes, listeners, setNodeRef, transform, isDragging } = useDraggable({
     id: `soggiorno-${soggiorno.soggiorno_id}`,
     data: { soggiorno },
@@ -182,7 +196,7 @@ function Barra({ soggiorno, style, puoTrascinare, onApri }) {
         ...trasformStyle,
         background: colori.bg,
         color: colori.text,
-        opacity: isDragging ? 0.6 : 1,
+        opacity: isDragging ? 0.6 : (attenuata ? 0.25 : 1),
         cursor: puoTrascinare ? 'grab' : 'pointer',
       }}
       className="rounded-md px-2 py-1 text-[11px] font-medium truncate m-0.5 flex items-center select-none"
@@ -204,7 +218,7 @@ function Barra({ soggiorno, style, puoTrascinare, onApri }) {
 
 // ── Riga camera (droppable) ─────────────────────────────────────────────────
 
-function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGestireCamere, statoOggi, larghezzaColonnaMin, onApriDettaglio, onCellaVuota, onApriStatoCamera }) {
+function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGestireCamere, statoOggi, larghezzaColonnaMin, onApriDettaglio, onCellaVuota, onApriStatoCamera, ricerca }) {
   const { setNodeRef, isOver } = useDroppable({
     id: `camera-${camera.camera_id}`,
     data: { cameraId: camera.camera_id },
@@ -271,6 +285,7 @@ function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGesti
         })}
         {camera.soggiorni.map((s) => {
           const { colStart, colEnd } = calcolaBarra(giorni, s.data_arrivo, s.data_partenza);
+          const attenuata = !!ricerca && !corrispondeRicerca(s, camera.numero, ricerca);
           return (
             <Barra
               key={s.soggiorno_id}
@@ -278,11 +293,90 @@ function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGesti
               style={{ gridColumn: `${colStart} / ${colEnd}`, gridRow: 1 }}
               puoTrascinare={puoTrascinare}
               onApri={onApriDettaglio}
+              attenuata={attenuata}
             />
           );
         })}
       </div>
     </>
+  );
+}
+
+// ── Riepilogo economico (estratto il 14/08/2026, seguito) ──────────────────
+// Usato sia nel pannello dettaglio sia nella nuova schermata di check-out
+// (PannelloCheckOut) — stesso contenuto, stessa fonte dati
+// (GET /api/prenotazioni/:id/conto), nessuna duplicazione di JSX.
+function RiepilogoEconomico({ conto, contoErrore }) {
+  return (
+    <div className="text-sm rounded-lg border p-3 space-y-2">
+      <p className="font-medium flex items-center gap-1.5"><CreditCard size={14} /> Riepilogo economico</p>
+      {contoErrore && (
+        <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Riepilogo non disponibile.</p>
+      )}
+      {conto && (
+        <>
+          <div className="space-y-1" style={{ color: 'var(--muted-foreground)' }}>
+            <div className="flex justify-between">
+              <span>Camera</span><span>€{conto.camera.totale.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Addebiti extra</span><span>€{conto.addebiti_extra.totale.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>
+                Tassa di soggiorno
+                {conto.tassa_soggiorno.soggiorni.some(t => !t.calcolata) && (
+                  <span className="italic"> (non ancora calcolata su tutte le camere)</span>
+                )}
+              </span>
+              <span>€{conto.tassa_soggiorno.dovuta.toFixed(2)}</span>
+            </div>
+            <div className="flex justify-between">
+              <span>Già pagato</span><span>− €{conto.pagamenti.totale.toFixed(2)}</span>
+            </div>
+            {conto.tassa_soggiorno.riscossa > 0 && (
+              <div className="flex justify-between">
+                <span>Tassa già riscossa</span><span>− €{conto.tassa_soggiorno.riscossa.toFixed(2)}</span>
+              </div>
+            )}
+          </div>
+          <div className="flex justify-between pt-2 border-t font-semibold">
+            <span>Saldo da incassare</span>
+            <span style={{ color: conto.saldo_da_incassare > 0 ? 'var(--status-red-text)' : 'var(--status-green-text)' }}>
+              €{conto.saldo_da_incassare.toFixed(2)}
+            </span>
+          </div>
+          {conto.pagamenti.voci.length > 0 && (
+            <details className="text-xs pt-1">
+              <summary className="cursor-pointer" style={{ color: 'var(--muted-foreground)' }}>
+                Dettaglio pagamenti ({conto.pagamenti.voci.length})
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {conto.pagamenti.voci.map(p => (
+                  <li key={p.id} style={{ color: 'var(--muted-foreground)' }}>
+                    {Number(p.importo).toFixed(2)} € — {p.metodo || '—'} ({p.tipo})
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+          {conto.addebiti_extra.voci.length > 0 && (
+            <details className="text-xs pt-1">
+              <summary className="cursor-pointer" style={{ color: 'var(--muted-foreground)' }}>
+                Dettaglio addebiti extra ({conto.addebiti_extra.voci.length})
+              </summary>
+              <ul className="mt-1 space-y-0.5">
+                {conto.addebiti_extra.voci.map(a => (
+                  <li key={a.id} style={{ color: 'var(--muted-foreground)' }}>
+                    {Number(a.importo).toFixed(2)} € — {a.descrizione}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
@@ -300,6 +394,12 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   const [testEmailEsito, setTestEmailEsito] = useState(null); // { tipo, ok, motivo?, destinatario? }
   const [preCheckinInCorso, setPreCheckinInCorso] = useState(false);
   const [preCheckinEsito, setPreCheckinEsito] = useState(null);
+  // Riepilogo economico (14/08/2026) — endpoint separato da /prenotazioni/:id
+  // perché aggrega tabelle diverse (soggiorni, addebiti_extra, tasse_soggiorno,
+  // pagamenti); caricato in parallelo, un suo errore non deve bloccare il
+  // resto del pannello (contoErrore mostra solo un avviso locale).
+  const [conto, setConto] = useState(null);
+  const [contoErrore, setContoErrore] = useState(false);
 
   const carica = useCallback(async () => {
     try {
@@ -314,7 +414,21 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     }
   }, [prenotazioneId]);
 
-  useEffect(() => { carica(); }, [carica]);
+  const caricaConto = useCallback(async () => {
+    // Stessi ruoli di 'pagamenti'/'addebiti_extra' lettura (shared/ruoli.js):
+    // niente portiere_notte — evita una chiamata destinata comunque a un 403.
+    if (!['admin', 'titolare', 'receptionist'].includes(utente?.ruolo)) return;
+    try {
+      setContoErrore(false);
+      const risposta = await api.get(`/prenotazioni/${prenotazioneId}/conto`);
+      setConto(risposta.data);
+    } catch (err) {
+      setConto(null);
+      setContoErrore(true);
+    }
+  }, [prenotazioneId, utente?.ruolo]);
+
+  useEffect(() => { carica(); caricaConto(); }, [carica, caricaConto]);
 
   function apriModifica() {
     const primoSoggiorno = dati.soggiorni?.[0];
@@ -387,18 +501,10 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
 
   // Check-out (→ 'check_out') — solo da 'check_in' (unica transizione valida).
   // A differenza del check-in, portiere_notte NON è autorizzato: vedi puoCheckOut.
-  async function fasiCheckOut() {
-    setSalvataggio(true);
-    setErrore(null);
-    try {
-      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'check_out' });
-      onChiudi();
-      onCambiato();
-    } catch (err) {
-      setErrore(err.message || 'Errore nel check-out');
-      setSalvataggio(false);
-    }
-  }
+  // 14/08/2026: non più un PATCH diretto da qui — apre PannelloCheckOut
+  // (riepilogo economico + pagamento rapido + stampa ricevuta di cortesia),
+  // che esegue il PATCH solo dopo la conferma esplicita dell'operatore.
+  const [mostraCheckOut, setMostraCheckOut] = useState(false);
 
   // Annulla prenotazione (→ 'interrotta') — solo da 'opzione'/'confermata'
   // (uniche transizioni valide, vedi state machine). Il backend sincronizza
@@ -420,6 +526,11 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   }
 
   const puoScrivere = ['admin', 'titolare', 'receptionist'].includes(utente?.ruolo);
+  // Stesso set di ruoli di puoScrivere per coincidenza di oggi (pagamenti/
+  // addebiti_extra lettura = admin/titolare/receptionist) — tenuto come
+  // costante a sé, non un riuso di puoScrivere, perché le due permission
+  // potrebbero divergere in futuro senza che sia lo stesso concetto.
+  const puoVedereConto = ['admin', 'titolare', 'receptionist'].includes(utente?.ruolo);
   const puoConfermare = puoScrivere && dati?.stato === 'opzione';
   const puoCheckIn = puoScrivere || utente?.ruolo === 'portiere_notte';
   const puoCheckOut = puoScrivere && dati?.stato === 'check_in';
@@ -473,6 +584,7 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   }
 
   return (
+    <>
     <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
       <div
         className="h-full w-full max-w-md bg-white shadow-xl overflow-y-auto"
@@ -553,20 +665,13 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                 </div>
               )}
 
-              <div className="text-sm">
-                <p className="font-medium mb-1 flex items-center gap-1.5"><CreditCard size={14} /> Pagamenti</p>
-                {dati.pagamenti?.length ? (
-                  <ul className="space-y-1">
-                    {dati.pagamenti.map(p => (
-                      <li key={p.id} style={{ color: 'var(--muted-foreground)' }}>
-                        {p.importo} € — {p.metodo} ({p.tipo})
-                      </li>
-                    ))}
-                  </ul>
-                ) : (
-                  <p style={{ color: 'var(--muted-foreground)' }}>Nessun pagamento registrato.</p>
-                )}
-              </div>
+              {/* Riepilogo economico (14/08/2026) — sostituisce la vecchia
+                  lista pagamenti grezza: camera + addebiti extra + tassa di
+                  soggiorno, al netto di quanto già incassato. Non visibile a
+                  portiere_notte (stessi permessi di pagamenti/addebiti_extra
+                  lettura), coerente con puoVedereConto lato fetch. Componente
+                  condiviso con PannelloCheckOut — vedi RiepilogoEconomico. */}
+              {puoVedereConto && <RiepilogoEconomico conto={conto} contoErrore={contoErrore} />}
 
               <div className="flex gap-2 pt-2">
                 {puoConfermare && (
@@ -591,7 +696,7 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                 )}
                 {puoCheckOut && (
                   <button
-                    onClick={fasiCheckOut}
+                    onClick={() => setMostraCheckOut(true)}
                     disabled={salvataggio}
                     className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
                     style={{ background: 'var(--hotel-navy)' }}
@@ -744,6 +849,256 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                 </button>
               </div>
             </div>
+          )}
+        </div>
+      </div>
+    </div>
+
+    {/* Check-out (14/08/2026) — z-50 sopra, sopra il pannello dettaglio
+        (anch'esso z-50): livello di stacking identico ma renderizzato dopo
+        nel DOM vince, coerente con l'ordine visivo atteso (modal in primo
+        piano sul pannello). */}
+    {mostraCheckOut && (
+      <PannelloCheckOut
+        prenotazioneId={prenotazioneId}
+        onChiudi={() => setMostraCheckOut(false)}
+        onCompletato={() => { setMostraCheckOut(false); onChiudi(); onCambiato(); }}
+      />
+    )}
+    </>
+  );
+}
+
+// ── Pannello check-out ───────────────────────────────────────────────────────
+// Nasce dal confronto competitivo del 14/08/2026: fino a oggi il check-out
+// era un semplice PATCH stato='check_out' senza nessuna schermata dedicata,
+// nessun riepilogo, nessuna possibilità di stampare una ricevuta —
+// segnalato dal titolare come gap reale. Riusa RiepilogoEconomico (stessa
+// fonte dati del pannello dettaglio) + un mini-form per registrare un
+// pagamento al volo se il saldo non è ancora incassato + un link alla
+// ricevuta di cortesia stampabile (NON fiscale — il collegamento
+// all'emissione fiscale reale arriverà col modulo 3.1/A-Cube, fuori scope
+// qui). Non blocca il check-out se il saldo è ancora positivo: la reception
+// può aver incassato altrove (es. contanti già consegnati fuori sistema),
+// resta una scelta professionale sua, non un vincolo del software.
+function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
+  const [dati, setDati] = useState(null);
+  const [conto, setConto] = useState(null);
+  const [contoErrore, setContoErrore] = useState(false);
+  const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState(null);
+  const [salvataggio, setSalvataggio] = useState(false);
+  const [formPagamento, setFormPagamento] = useState({ importo: '', metodo: 'contanti' });
+  const [pagamentoInCorso, setPagamentoInCorso] = useState(false);
+  const [pagamentoErrore, setPagamentoErrore] = useState(null);
+  // Conferma visibile dopo un pagamento riuscito (14/08/2026, seguito —
+  // segnalato dal titolare: se l'importo azzera il saldo, il box con
+  // form+pulsante sparisce di scatto perché è condizionato a
+  // saldo_da_incassare > 0, senza nessun messaggio — sembrava che il click
+  // non avesse fatto nulla). Tenuta visibile ~2.5s anche quando il box del
+  // form sta per sparire, poi si cancella da sola.
+  const [pagamentoEsito, setPagamentoEsito] = useState(null); // { importo } | null
+
+  const carica = useCallback(async () => {
+    try {
+      setLoading(true);
+      setErrore(null);
+      const risDati = await api.get(`/prenotazioni/${prenotazioneId}`);
+      setDati(risDati.data);
+      try {
+        const risConto = await api.get(`/prenotazioni/${prenotazioneId}/conto`);
+        setConto(risConto.data);
+        setContoErrore(false);
+      } catch {
+        setContoErrore(true);
+      }
+    } catch (err) {
+      setErrore('Errore nel caricamento');
+    } finally {
+      setLoading(false);
+    }
+  }, [prenotazioneId]);
+
+  useEffect(() => { carica(); }, [carica]);
+
+  async function ricaricaConto() {
+    try {
+      const risConto = await api.get(`/prenotazioni/${prenotazioneId}/conto`);
+      setConto(risConto.data);
+      setContoErrore(false);
+    } catch {
+      setContoErrore(true);
+    }
+  }
+
+  async function registraPagamento(e) {
+    e.preventDefault();
+    const importo = Number(formPagamento.importo);
+    if (!formPagamento.importo || isNaN(importo) || importo <= 0) {
+      setPagamentoErrore('Importo non valido.');
+      return;
+    }
+    setPagamentoInCorso(true);
+    setPagamentoErrore(null);
+    try {
+      await api.post(`/prenotazioni/${prenotazioneId}/pagamenti`, {
+        importo, metodo: formPagamento.metodo, tipo: 'saldo',
+      });
+      setFormPagamento(f => ({ ...f, importo: '' }));
+      await ricaricaConto();
+      setPagamentoEsito({ importo });
+      setTimeout(() => setPagamentoEsito(null), 2500);
+    } catch (err) {
+      setPagamentoErrore(err.message || 'Errore nella registrazione del pagamento');
+    } finally {
+      setPagamentoInCorso(false);
+    }
+  }
+
+  async function confermaCheckOut() {
+    setSalvataggio(true);
+    setErrore(null);
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'check_out' });
+      onCompletato();
+    } catch (err) {
+      setErrore(err.message || 'Errore nel check-out');
+      setSalvataggio(false);
+    }
+  }
+
+  function apriRicevuta() {
+    // Nuova scheda, così il modal di check-out resta aperto — stesso
+    // pattern d'apertura di /menu-stampa (link diretto, non window.open per
+    // quello, ma qui serve restare sul modal quindi window.open).
+    window.open(`/ricevuta-cortesia/${prenotazioneId}`, '_blank');
+  }
+
+  const soggiorno = dati?.soggiorni?.[0];
+  const intestatario = soggiorno?.ospiti?.find(o => ['16', '17', '18'].includes(o.tipo_alloggiato)) || soggiorno?.ospiti?.[0];
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}>
+      <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <p className="font-semibold text-sm">Check-out</p>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {loading && (
+            <div className="flex items-center justify-center py-10 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+              <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
+            </div>
+          )}
+
+          {errore && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {errore}
+            </div>
+          )}
+
+          {dati && !loading && (
+            <>
+              <div className="text-sm">
+                <p className="font-medium flex items-center gap-1.5">
+                  <User size={14} /> {intestatario ? `${intestatario.nome} ${intestatario.cognome}` : 'Ospite non indicato'}
+                </p>
+                {soggiorno && (
+                  <p style={{ color: 'var(--muted-foreground)' }}>
+                    Camera {soggiorno.camera_numero} · {formatDataEstesa(soggiorno.data_arrivo)} → {formatDataEstesa(soggiorno.data_partenza)}
+                  </p>
+                )}
+              </div>
+
+              <RiepilogoEconomico conto={conto} contoErrore={contoErrore} />
+
+              {conto && conto.saldo_da_incassare > 0 && (
+                <div className="rounded-lg border p-3 space-y-2" style={{ borderColor: 'var(--status-red-text)' }}>
+                  <p className="text-xs font-medium" style={{ color: 'var(--status-red-text)' }}>
+                    Saldo non ancora incassato — registra un pagamento, oppure procedi comunque se già saldato fuori sistema.
+                  </p>
+                  {/* Conferma dopo un pagamento parziale (14/08/2026, seguito)
+                      — il saldo resta > 0 quindi il form sotto non sparisce,
+                      ma senza questa riga non c'era comunque nessun segnale
+                      che il click avesse funzionato. */}
+                  {pagamentoEsito && (
+                    <p className="text-xs font-medium flex items-center gap-1.5" style={{ color: 'var(--status-green-text)' }}>
+                      <CheckCircle size={13} /> Pagamento di €{pagamentoEsito.importo.toFixed(2)} registrato.
+                    </p>
+                  )}
+                  <form onSubmit={registraPagamento} className="flex items-end gap-2 flex-wrap">
+                    <div>
+                      <label className="text-xs block mb-1">Importo (€)</label>
+                      <input
+                        type="number" step="0.01" min="0" value={formPagamento.importo}
+                        onChange={(e) => setFormPagamento(f => ({ ...f, importo: e.target.value }))}
+                        className="w-24 border rounded-lg px-2 py-1.5 text-sm"
+                      />
+                    </div>
+                    <div>
+                      <label className="text-xs block mb-1">Metodo</label>
+                      <select
+                        value={formPagamento.metodo}
+                        onChange={(e) => setFormPagamento(f => ({ ...f, metodo: e.target.value }))}
+                        className="border rounded-lg px-2 py-1.5 text-sm"
+                      >
+                        <option value="contanti">Contanti</option>
+                        <option value="pos">POS</option>
+                        <option value="bonifico">Bonifico</option>
+                        <option value="altro">Altro</option>
+                      </select>
+                    </div>
+                    <button
+                      type="submit" disabled={pagamentoInCorso}
+                      className="rounded-lg px-3 py-1.5 text-xs font-medium text-white disabled:opacity-60"
+                      style={{ background: 'var(--hotel-navy)' }}
+                    >
+                      {pagamentoInCorso ? '...' : 'Registra'}
+                    </button>
+                  </form>
+                  {pagamentoErrore && (
+                    <p className="text-xs" style={{ color: 'var(--status-red-text)' }}>{pagamentoErrore}</p>
+                  )}
+                </div>
+              )}
+
+              {/* Saldo azzerato da un pagamento appena registrato
+                  (14/08/2026, seguito) — senza questo il box sopra sparisce
+                  di scatto non appena saldo_da_incassare tocca 0, senza
+                  nessuna conferma visibile. Si cancella da sola dopo ~2.5s
+                  (stesso timer di pagamentoEsito). */}
+              {conto && conto.saldo_da_incassare <= 0 && pagamentoEsito && (
+                <div className="rounded-lg border p-3" style={{ borderColor: 'var(--status-green-text)' }}>
+                  <p className="text-xs font-medium flex items-center gap-1.5" style={{ color: 'var(--status-green-text)' }}>
+                    <CheckCircle size={13} /> Pagamento di €{pagamentoEsito.importo.toFixed(2)} registrato — saldo azzerato.
+                  </p>
+                </div>
+              )}
+
+              <button
+                onClick={apriRicevuta}
+                className="w-full rounded-lg py-2 text-sm font-medium border flex items-center justify-center gap-1.5"
+              >
+                <Printer size={14} /> Stampa ricevuta di cortesia
+              </button>
+
+              <div className="flex gap-2">
+                <button
+                  onClick={confermaCheckOut} disabled={salvataggio}
+                  className="flex-1 rounded-lg py-2 text-sm font-medium text-white disabled:opacity-60"
+                  style={{ background: 'var(--hotel-navy)' }}
+                >
+                  {salvataggio ? 'Conferma in corso...' : 'Conferma check-out'}
+                </button>
+                <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">
+                  Annulla
+                </button>
+              </div>
+            </>
           )}
         </div>
       </div>
@@ -1255,11 +1610,203 @@ function PopupStatoCamera({ camera, statoOggi, onChiudi, onSalvato }) {
   );
 }
 
+// ── Vista elenco (lista filtrabile) ─────────────────────────────────────────
+// Alternativa alla griglia per la ricerca libera su tutto lo storico
+// (14/08/2026, confronto con la pagina "Reservations" di Cloudbeds) — la
+// griglia resta la vista operativa quotidiana (range di date visibili),
+// questa risponde a "trovami questa prenotazione", una riga per soggiorno/
+// camera (non per prenotazione — un gruppo multi-camera compare su più
+// righe, stessa scelta di granularità già motivata in prenotazioniController.lista).
+function VistaElenco({ onApriPrenotazione }) {
+  const [filtri, setFiltri] = useState({ ricerca: '', data_da: '', data_a: '', stato: '' });
+  const [pagina, setPagina] = useState(1);
+  const [risultati, setRisultati] = useState([]);
+  const [totale, setTotale] = useState(0);
+  const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState(null);
+  const PER_PAGINA = 30;
+
+  const carica = useCallback(async () => {
+    try {
+      setLoading(true);
+      setErrore(null);
+      const parametri = new URLSearchParams({ pagina: String(pagina), per_pagina: String(PER_PAGINA) });
+      if (filtri.ricerca) parametri.set('ricerca', filtri.ricerca);
+      if (filtri.data_da) parametri.set('data_da', filtri.data_da);
+      if (filtri.data_a) parametri.set('data_a', filtri.data_a);
+      if (filtri.stato) parametri.set('stato', filtri.stato);
+      const risposta = await api.get(`/prenotazioni?${parametri.toString()}`);
+      setRisultati(risposta.data.risultati);
+      setTotale(risposta.data.totale);
+    } catch (err) {
+      setErrore('Errore nel caricamento dell\'elenco');
+    } finally {
+      setLoading(false);
+    }
+  }, [filtri, pagina]);
+
+  useEffect(() => { carica(); }, [carica]);
+
+  // Ogni cambio filtro riparte da pagina 1 — evita di restare su una pagina
+  // che risulta vuota dopo aver ristretto la ricerca.
+  function aggiornaFiltro(campo, valore) {
+    setFiltri(f => ({ ...f, [campo]: valore }));
+    setPagina(1);
+  }
+
+  function azzeraFiltri() {
+    setFiltri({ ricerca: '', data_da: '', data_a: '', stato: '' });
+    setPagina(1);
+  }
+
+  const filtriAttivi = !!(filtri.ricerca || filtri.data_da || filtri.data_a || filtri.stato);
+  const numPagine = Math.max(1, Math.ceil(totale / PER_PAGINA));
+  const campoDataStyle = { border: '1px solid var(--border)', background: 'var(--background)', padding: '5px 6px' };
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-end gap-2 flex-wrap rounded-lg border bg-white p-3">
+        <div>
+          <label className="text-xs font-medium block mb-1">Ospite o camera</label>
+          <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5">
+            <Search size={14} style={{ color: 'var(--muted-foreground)' }} />
+            <input
+              type="text"
+              value={filtri.ricerca}
+              onChange={(e) => aggiornaFiltro('ricerca', e.target.value)}
+              placeholder="Nome, cognome, numero camera..."
+              className="text-xs outline-none w-48"
+            />
+          </div>
+        </div>
+        <div>
+          <label className="text-xs font-medium block mb-1">Arrivo dal</label>
+          <CampoData value={filtri.data_da} onChange={(v) => aggiornaFiltro('data_da', v)} className="rounded-lg" style={campoDataStyle} />
+        </div>
+        <div>
+          <label className="text-xs font-medium block mb-1">al</label>
+          <CampoData value={filtri.data_a} onChange={(v) => aggiornaFiltro('data_a', v)} className="rounded-lg" style={campoDataStyle} />
+        </div>
+        <div>
+          <label className="text-xs font-medium block mb-1">Stato</label>
+          <select
+            value={filtri.stato}
+            onChange={(e) => aggiornaFiltro('stato', e.target.value)}
+            className="text-xs border rounded-lg px-2 py-2"
+          >
+            <option value="">Tutti</option>
+            {Object.entries(STATI_COLORI).map(([chiave, c]) => (
+              <option key={chiave} value={chiave}>{c.label}</option>
+            ))}
+          </select>
+        </div>
+        {filtriAttivi && (
+          <button onClick={azzeraFiltri} className="text-xs font-medium rounded-lg px-3 py-2 border">
+            Azzera filtri
+          </button>
+        )}
+        <span className="text-xs ml-auto" style={{ color: 'var(--muted-foreground)' }}>
+          {totale} {totale === 1 ? 'risultato' : 'risultati'}
+        </span>
+      </div>
+
+      {errore && (
+        <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+             style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+          <AlertTriangle size={14} /> {errore}
+        </div>
+      )}
+
+      <div className="rounded-lg border bg-white overflow-x-auto">
+        {loading ? (
+          <div className="flex items-center justify-center py-16 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+            <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
+          </div>
+        ) : risultati.length === 0 ? (
+          <p className="text-sm text-center py-10" style={{ color: 'var(--muted-foreground)' }}>
+            Nessuna prenotazione trovata{filtriAttivi ? ' con questi filtri.' : '.'}
+          </p>
+        ) : (
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b text-left text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
+                <th className="px-3 py-2">Ospite</th>
+                <th className="px-3 py-2">Camera</th>
+                <th className="px-3 py-2">Arrivo</th>
+                <th className="px-3 py-2">Partenza</th>
+                <th className="px-3 py-2">Ospiti</th>
+                <th className="px-3 py-2">Canale</th>
+                <th className="px-3 py-2">Stato</th>
+              </tr>
+            </thead>
+            <tbody>
+              {risultati.map((r) => {
+                const colori = STATI_COLORI[r.stato] || STATI_COLORI.opzione;
+                return (
+                  <tr
+                    key={r.soggiorno_id}
+                    onClick={() => onApriPrenotazione(r.prenotazione_id)}
+                    className="border-b cursor-pointer hover:bg-gray-50"
+                  >
+                    <td className="px-3 py-2">{r.ospite_nome ? `${r.ospite_nome} ${r.ospite_cognome}` : '—'}</td>
+                    <td className="px-3 py-2">{r.camera_numero}</td>
+                    <td className="px-3 py-2">{formatDataEstesa(r.data_arrivo)}</td>
+                    <td className="px-3 py-2">{formatDataEstesa(r.data_partenza)}</td>
+                    <td className="px-3 py-2">{r.num_ospiti}</td>
+                    <td className="px-3 py-2">{r.canale_origine || '—'}</td>
+                    <td className="px-3 py-2">
+                      <span
+                        className="inline-block text-xs font-medium rounded-full px-2 py-0.5"
+                        style={{ background: colori.bg, color: colori.text }}
+                      >
+                        {colori.label}
+                      </span>
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        )}
+      </div>
+
+      {numPagine > 1 && (
+        <div className="flex items-center justify-center gap-3">
+          <button
+            onClick={() => setPagina(p => Math.max(1, p - 1))}
+            disabled={pagina === 1}
+            className="p-1.5 rounded-lg border bg-white disabled:opacity-40"
+          >
+            <ChevronLeft size={16} />
+          </button>
+          <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+            Pagina {pagina} di {numPagine}
+          </span>
+          <button
+            onClick={() => setPagina(p => Math.min(numPagine, p + 1))}
+            disabled={pagina === numPagine}
+            className="p-1.5 rounded-lg border bg-white disabled:opacity-40"
+          >
+            <ChevronRight size={16} />
+          </button>
+        </div>
+      )}
+    </div>
+  );
+}
+
 // ── Pagina principale ────────────────────────────────────────────────────────
 
 export default function PaginaPlanningCamere() {
   const { utente } = useAuth();
   // Default 14 giorni (era 7) — richiesto dal titolare 04/08/2026.
+  // Toggle Griglia/Elenco (14/08/2026) — stessa voce di sidebar, due modi di
+  // consultare la stessa realtà: griglia per l'operatività quotidiana,
+  // elenco per la ricerca libera su tutto lo storico (vedi VistaElenco).
+  const [vista, setVista] = useState('griglia');
+  // Ricerca nella griglia (14/08/2026) — evidenzia/sfuma le barre, non le
+  // nasconde: vedi corrispondeRicerca.
+  const [ricercaGriglia, setRicercaGriglia] = useState('');
   const [rangeModo, setRangeModo] = useState('14');
   const [ancora, setAncora] = useState(oggi());
   const [righe, setRighe] = useState([]);
@@ -1463,48 +2010,90 @@ export default function PaginaPlanningCamere() {
   return (
     <AppShell titolo="Prenotazioni camere" sottotitolo="Vista griglia / planning">
       <div className="space-y-3">
-        {/* Selettore range + navigazione */}
+        {/* Toggle vista + selettore range + navigazione */}
         <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
-            {RANGE_OPZIONI.map(opt => (
+          <div className="flex items-center gap-2 flex-wrap">
+            {/* Griglia/Elenco (14/08/2026) — stessa voce di sidebar, due modi
+                di consultare la stessa realtà, non una pagina nuova. */}
+            <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
               <button
-                key={opt.chiave}
-                onClick={() => cambiaRange(opt.chiave)}
-                className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                onClick={() => setVista('griglia')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
                 style={{
-                  background: rangeModo === opt.chiave ? 'var(--hotel-navy)' : 'transparent',
-                  color: rangeModo === opt.chiave ? '#fff' : 'var(--foreground)',
+                  background: vista === 'griglia' ? 'var(--hotel-navy)' : 'transparent',
+                  color: vista === 'griglia' ? '#fff' : 'var(--foreground)',
                 }}
               >
-                {opt.label}
+                <LayoutGrid size={13} /> Griglia
               </button>
-            ))}
-          </div>
-
-          <div className="flex items-center gap-2">
-            <button onClick={vaiIndietro} className="p-1.5 rounded-lg border bg-white"><ChevronLeft size={16} /></button>
-            <div className="min-w-32 text-center">
-              {/* Mese/anno aggiunto il 31/07/2026 — prima non c'era da nessuna
-                  parte un'indicazione del mese, solo il range giorno/giorno. */}
-              <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
-                {formatMesePeriodo(giorni)}
-              </p>
-              <p className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
-                {formatGiornoBreve(giorni[0])} – {formatGiornoBreve(giorni[giorni.length - 1])}
-              </p>
+              <button
+                onClick={() => setVista('elenco')}
+                className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                style={{
+                  background: vista === 'elenco' ? 'var(--hotel-navy)' : 'transparent',
+                  color: vista === 'elenco' ? '#fff' : 'var(--foreground)',
+                }}
+              >
+                <List size={13} /> Elenco
+              </button>
             </div>
-            <button onClick={vaiAvanti} className="p-1.5 rounded-lg border bg-white"><ChevronRight size={16} /></button>
+
+            {vista === 'griglia' && (
+              <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
+                {RANGE_OPZIONI.map(opt => (
+                  <button
+                    key={opt.chiave}
+                    onClick={() => cambiaRange(opt.chiave)}
+                    className="px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
+                    style={{
+                      background: rangeModo === opt.chiave ? 'var(--hotel-navy)' : 'transparent',
+                      color: rangeModo === opt.chiave ? '#fff' : 'var(--foreground)',
+                    }}
+                  >
+                    {opt.label}
+                  </button>
+                ))}
+              </div>
+            )}
+
+            {/* Ricerca nella griglia (14/08/2026) — evidenzia/sfuma le barre,
+                vedi corrispondeRicerca. Ambito diverso dalla lente globale
+                della Sidebar (navigazione, non filtro sui dati di questa pagina). */}
+            {vista === 'griglia' && (
+              <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 bg-white">
+                <Search size={14} style={{ color: 'var(--muted-foreground)' }} />
+                <input
+                  type="text"
+                  value={ricercaGriglia}
+                  onChange={(e) => setRicercaGriglia(e.target.value)}
+                  placeholder="Cerca ospite o camera..."
+                  className="text-xs outline-none w-40"
+                />
+                {ricercaGriglia && (
+                  <button onClick={() => setRicercaGriglia('')} style={{ color: 'var(--muted-foreground)' }}>
+                    <X size={12} />
+                  </button>
+                )}
+              </div>
+            )}
           </div>
 
-          {/* Legenda stati */}
-          <div className="flex items-center gap-3 flex-wrap">
-            {Object.entries(STATI_COLORI).map(([chiave, c]) => (
-              <div key={chiave} className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
-                <span className="w-2.5 h-2.5 rounded-full" style={{ background: c.bg, border: `1px solid ${c.text}` }} />
-                {c.label}
+          {vista === 'griglia' && (
+            <div className="flex items-center gap-2">
+              <button onClick={vaiIndietro} className="p-1.5 rounded-lg border bg-white"><ChevronLeft size={16} /></button>
+              <div className="min-w-32 text-center">
+                {/* Mese/anno aggiunto il 31/07/2026 — prima non c'era da nessuna
+                    parte un'indicazione del mese, solo il range giorno/giorno. */}
+                <p className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>
+                  {formatMesePeriodo(giorni)}
+                </p>
+                <p className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
+                  {formatGiornoBreve(giorni[0])} – {formatGiornoBreve(giorni[giorni.length - 1])}
+                </p>
               </div>
-            ))}
-          </div>
+              <button onClick={vaiAvanti} className="p-1.5 rounded-lg border bg-white"><ChevronRight size={16} /></button>
+            </div>
+          )}
 
           {puoTrascinare && (
             <button
@@ -1517,21 +2106,40 @@ export default function PaginaPlanningCamere() {
           )}
         </div>
 
-        {dragErrore && (
+        {/* Legenda stati (14/08/2026, seguito: spostata su una riga propria
+            centrata, prima condivideva la riga toolbar con justify-between e
+            finiva schiacciata/non centrata a seconda della larghezza degli
+            altri gruppi). */}
+        {vista === 'griglia' && (
+          <div className="flex items-center justify-center gap-3 flex-wrap">
+            {Object.entries(STATI_COLORI).map(([chiave, c]) => (
+              <div key={chiave} className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+                <span className="w-2.5 h-2.5 rounded-full" style={{ background: c.bg, border: `1px solid ${c.text}` }} />
+                {c.label}
+              </div>
+            ))}
+          </div>
+        )}
+
+        {vista === 'griglia' && dragErrore && (
           <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
                style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
             <AlertTriangle size={14} /> {dragErrore}
           </div>
         )}
 
-        {errore && (
+        {vista === 'griglia' && errore && (
           <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
                style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
             <AlertTriangle size={14} /> {errore}
           </div>
         )}
 
-        {loading && righe.length === 0 ? (
+        {vista === 'elenco' && (
+          <VistaElenco onApriPrenotazione={setPrenotazioneApertaId} />
+        )}
+
+        {vista === 'griglia' && (loading && righe.length === 0 ? (
           <div className="flex items-center justify-center py-16 text-sm" style={{ color: 'var(--muted-foreground)' }}>
             <Loader2 size={18} className="animate-spin mr-2" /> Caricamento griglia...
           </div>
@@ -1590,6 +2198,7 @@ export default function PaginaPlanningCamere() {
                           onApriDettaglio={setPrenotazioneApertaId}
                           onCellaVuota={apriFormDaCella}
                           onApriStatoCamera={setCameraStatoAperta}
+                          ricerca={ricercaGriglia}
                         />
                       );
                       riga++;
@@ -1600,7 +2209,7 @@ export default function PaginaPlanningCamere() {
               </div>
             </DndContext>
           </div>
-        )}
+        ))}
       </div>
 
       {prenotazioneApertaId && (

@@ -9,6 +9,19 @@ require('dotenv').config({ quiet: true });
 // (evita la conversione UTC che causa shift di timezone in UTC+2)
 types.setTypeParser(1082, val => val);
 
+// Restituisce i BIGINT (OID 20 — anche il risultato di COUNT(*), sempre
+// bigint in Postgres) come number invece che come stringa (14/08/2026).
+// node-pg li manda come stringa di default perché un bigint può eccedere
+// Number.MAX_SAFE_INTEGER — qui è sicuro: i bigint del gestionale sono
+// conteggi di righe (COUNT) su un hotel di 20 camere, mai vicini a quel
+// limite. Prima di questa riga ogni query con COUNT(*) doveva ricordarsi
+// di fare Number(...) a mano lato controller (decine di punti in tutto il
+// codice) — centralizzato qui una volta sola, stesso principio già usato
+// per le date sopra. I punti che già facevano Number(...) esplicito
+// restano corretti (Number(Number(x)) === Number(x)), quindi questa
+// modifica non richiede toccare i controller esistenti.
+types.setTypeParser(20, val => parseInt(val, 10));
+
 // Pool di connessioni: legge le credenziali dal file .env
 const pool = new Pool({
   host: process.env.DB_HOST,

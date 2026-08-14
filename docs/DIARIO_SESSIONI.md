@@ -3617,3 +3617,174 @@ visiva del titolare sul menu, quindi va guardata anche lei prima del
 deploy insieme al resto rimasto in sospeso (checklist data al titolare
 nel messaggio precedente: `npm test` aggiornato + controllo visivo
 completo della rail).
+
+**Type parser BIGINT centralizzato in `backend/config/db.js`** (14/08/2026,
+tolto dalla coda su richiesta esplicita del titolare — era stato segnalato
+come annotazione minore mentre si sistemava `pre-checkin.test.js`, non un
+bug attivo). `types.setTypeParser(20, val => parseInt(val, 10))`,
+simmetrico a quello già esistente per le date (OID 1082). Prima, ogni
+`COUNT(*)` (sempre bigint in Postgres) tornava come stringa da node-pg —
+dipendeva da ogni controller ricordarsi `Number(...)` a mano, decine di
+punti in tutto il codice (inclusi i widget dashboard di oggi stesso).
+Sicuro per questo gestionale: i bigint in uso sono conteggi di riga su un
+hotel di 20 camere, mai vicini a `Number.MAX_SAFE_INTEGER` — da rivalutare
+se un giorno comparisse un vero bigint id di grandi dimensioni, non il
+caso oggi. I punti che già facevano `Number(...)` esplicito restano
+corretti senza modifiche (`Number(Number(x)) === Number(x)`). Aggiornato
+anche il commento in `tests/api/pre-checkin.test.js` che spiegava il
+motivo del cast esplicito lì, ormai storicamente superato dalla fix ma
+non rimosso (resta innocuo). Verificato solo con `node -c` — è un cambio
+di comportamento globale (tocca ogni bigint di ogni query del
+gestionale), va rieseguita la suite completa `npm test` per conferma
+prima di considerarlo davvero chiuso, non solo i file toccati oggi.
+
+**Contatto A-Cube corretto + mail preparata** (14/08/2026, il titolare ha
+chiesto come contattarli per il preventivo del modulo 3.1). Verificato dal
+vivo sul sito ufficiale (`acubeapi.com`): l'indirizzo `sales@a-cube.io`
+scritto in `docs/DOMANDE_APERTE_07-08-2026.md` e
+`docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` è sbagliato — dominio diverso da
+quello reale dell'azienda, nessuna prova sia mai stato valido. Corretto in
+entrambi i file: `info@acubeapi.com`, o il form su `acubeapi.com/contatti`
+(categoria "E-Receipts"). Scritta `docs/mail_acube_preventivo.md` (stesso
+schema di `mail_statistiche_liguria.md`), riusando i volumi camere già
+preparati in `DOMANDE_APERTE` e lasciando il dato ristorante esplicitamente
+"da recuperare" invece di aspettare di averlo prima di scrivere — i tempi
+di risposta commerciale di A-Cube sono già segnalati nel piano come il
+rischio meno controllabile, meglio far partire il contatto ora. Non
+inviata: nome/telefono/email del titolare ancora da completare, stesso
+punto aperto già presente per la mail a Mario Schenone.
+
+**Planning camere vs PMS leader + 3 sviluppi (14/08/2026, ultima parte
+della sessione)**. Su richiesta del titolare, confronto mirato tra
+`/planning-camere` e Cloudbeds/Mews/Slope prima di proporre una scaletta di
+sviluppo — dettaglio dei riferimenti in `docs/EVOLUTIVE.md` (voce "confronto
+con Slope" del 10/08/2026, riusata) più tre ricerche web mirate su
+Cloudbeds/Mews. Conclusione: la meccanica di base (drag-and-drop, vincolo
+anti-overbooking a livello DB, state machine) è già alla pari — i gap reali
+stavano nella comodità operativa quotidiana. Il titolare ha approvato tre
+dei cinque punti emersi per sviluppo immediato, gli altri due rimandati a
+`docs/EVOLUTIVE.md` (icona gruppo sulla barra — rinviabile; gestione
+"prenotazioni non assegnate" — solo col modulo 2.3/WuBook).
+
+1. **Elenco prenotazioni (toggle Griglia/Elenco)** — `GET /api/prenotazioni`
+   nuovo (`prenotazioniController.lista`), una riga per soggiorno/camera,
+   filtri ricerca/data_da/data_a/stato/canale_origine, paginazione. Non una
+   voce nuova in sidebar (era già segnalata come troppo affollata, 7 voci)
+   — un secondo "modo" della stessa voce Prenotazioni, stesso pattern già
+   usato per Alloggiati Web operativa/configurazione. Nuovo componente
+   `VistaElenco` in `planning-camere/page.jsx`, click riga → stesso
+   `PannelloDettaglio` della griglia (nessun componente duplicato).
+2. **Ricerca nella griglia** — casella di ricerca nella toolbar (solo vista
+   Griglia), confronto su nome/cognome ospite e numero camera. Evidenzia
+   per contrasto (opacità ridotta sulle barre non corrispondenti) invece di
+   nascondere — stesso pattern "grayed out" di Cloudbeds, mantiene il
+   contesto visivo della griglia. Zero chiamate in più: i dati sono già
+   nella risposta di `/griglia`.
+3. **Riepilogo economico (conto/folio)** — `GET /api/prenotazioni/:id/conto`
+   nuovo, aggrega camera (`soggiorni.tariffa_totale`) + addebiti extra
+   (`addebiti_extra`, esistente dal 10/08) + tassa di soggiorno
+   (`tasse_soggiorno`, se già calcolata — l'endpoint non la calcola, nessun
+   side effect da una lettura) − pagamenti = saldo da incassare. Sostituisce
+   nel pannello dettaglio la vecchia lista pagamenti grezza (prima il totale
+   camera si vedeva solo nel tooltip al passaggio del mouse, gli addebiti
+   extra solo aprendo un'altra pagina, la tassa di soggiorno non compariva
+   affatto). La tassa resta un flusso volutamente separato dai pagamenti
+   (la sua riscossione non crea una riga in `pagamenti`, tracciata a parte
+   nella risposta — `tassa_soggiorno.riscossa`).
+
+File toccati: `backend/controllers/prenotazioniController.js` (+`lista`,
++`conto`), `backend/routes/prenotazioni.js` (+`GET /`, +`GET /:id/conto`),
+`frontend/app/planning-camere/page.jsx` (toggle vista, `VistaElenco`,
+ricerca griglia con `corrispondeRicerca`, sezione "Riepilogo economico" nel
+pannello dettaglio), `tests/api/prenotazioni.test.js` (+13 test nuovi,
+inclusa la correzione all'`afterAll`: `addebiti_extra`/`pagamenti` non
+hanno `ON DELETE CASCADE` su soggiorno_id/prenotazione_id, la pulizia dei
+dati di test doveva succedere PRIMA di quella di soggiorni/prenotazioni, non
+dopo — altrimenti la suite avrebbe iniziato a fallire per violazione FK non
+appena un test avesse creato un pagamento/addebito). Aggiornato anche
+`docs/PRENOTAZIONI_FASE2.md` Parte C (nuove sezioni "Elenco prenotazioni" e
+"Ricerca nella griglia") e Parte D ("Conto ospite (folio)" segnato ✅, con
+nota su cosa resta aperto: il toggle "addebita a camera" nel flusso comanda
+**normale** del Ristorante, oggi solo la griglia rapida bar/camera scrive
+su `addebiti_extra` — voce propria in `docs/EVOLUTIVE.md`).
+
+Verificato solo con `tsc --noEmit` (0 errori, frontend) e `node -c`
+(backend + file di test, tutti puliti) — **`npm test` non ancora eseguito
+dal titolare in locale**, va lanciato prima di considerare il lavoro
+davvero chiuso. `tests/api/prenotazioni.test.js` ha 13 test nuovi (elenco +
+conto) e testa per la prima volta in questo file la creazione di un
+addebito extra e di un pagamento nello stesso giro — punto dell'`afterAll`
+più delicato di prima, verificare con attenzione l'esito di quella suite in
+particolare.
+
+**Seguito stesso giorno — verifica del titolare (tutto verde) + 2 fix UI +
+schermata di check-out (14/08/2026)**. Confermato dal titolare: `npm test`
+tutto verde su `tests/api/prenotazioni.test.js`. Due fix di layout su
+`/planning-camere` richiesti a seguire: legenda stati spostata dalla riga
+toolbar (condivisa con `justify-between`, risultava schiacciata/non
+centrata) a una riga propria con `justify-center`; "Nuova prenotazione"
+rimasto sulla riga toolbar principale (toggle Griglia/Elenco + range +
+ricerca + navigazione), sempre come ultimo elemento a destra.
+
+**Gap reale segnalato dal titolare, confermato da codice**: il check-out
+era — fino a questo momento — un singolo `PATCH .../stato` senza nessuna
+schermata, nessun riepilogo, nessuna possibilità di stampare qualcosa per
+l'ospite (verificato: `fasiCheckOut()` faceva solo il PATCH e chiudeva il
+pannello). Anche la "ricevuta di cortesia" già *decisa* nel commento della
+migration 031 (10/08/2026) non era mai stata costruita — zero righe di
+codice `ricevuta`/`stampa` in `addebiti-extra`. Il titolare ha scelto di
+svilupparla subito (non rimandarla alla scaletta).
+
+Costruito `PannelloCheckOut` (nuovo componente in `planning-camere/
+page.jsx`): il pulsante Check-out nel pannello dettaglio ora apre questo
+modal invece del PATCH diretto. Contenuto: dati ospite/camera/date,
+`RiepilogoEconomico` (estratto dal pannello dettaglio in un componente
+condiviso, stessa fonte `GET /api/prenotazioni/:id/conto`, zero
+duplicazione), un mini-form per registrare un pagamento al volo se
+`saldo_da_incassare > 0` (riusa `POST /api/prenotazioni/:id/pagamenti`,
+nessun endpoint nuovo — non blocca il check-out se il saldo resta
+positivo, resta una scelta della reception), pulsante "Stampa ricevuta di
+cortesia" (apre `/ricevuta-cortesia/:id` in una nuova scheda), pulsante
+"Conferma check-out" che esegue il PATCH solo a questo punto.
+
+Nuova pagina `frontend/app/ricevuta-cortesia/[id]/page.jsx`: stesso
+pattern CSS `@media print` + `window.print()` già collaudato in
+`/menu-stampa`, ma protetta da autenticazione (usa `api.get`, non fetch
+pubblico — il cookie JWT è condiviso tra schede dello stesso browser,
+`window.open` in una nuova scheda eredita la sessione senza bisogno di
+passare token). Documento **esplicitamente etichettato non fiscale** in
+due punti (sottotitolo e footer): l'emissione fiscale reale è compito del
+modulo 3.1/A-Cube (non ancora iniziato), questa ricevuta non la anticipa
+né la sostituisce — solo un promemoria di cortesia con lo stesso
+riepilogo camera/addebiti extra/tassa di soggiorno/pagamenti/saldo del
+modal.
+
+Nessuna migration, nessun endpoint backend nuovo — tutto il lavoro riusa
+`GET /api/prenotazioni/:id`, `GET /api/prenotazioni/:id/conto` (di questa
+stessa sessione) e `POST /api/prenotazioni/:id/pagamenti` (già esistente).
+Verificato solo con `tsc --noEmit` (0 errori) — **non ancora verificato in
+UI dal titolare**: apertura del modal al click su Check-out, il mini-form
+pagamento, e soprattutto la stampa/anteprima PDF della ricevuta (mai
+testata la resa reale su carta/PDF, solo il markup). Aggiornato
+`docs/PRENOTAZIONI_FASE2.md` Parte C con la nuova sezione "Check-out —
+schermata dedicata".
+
+**Seguito immediato — chiarimento + micro-fix "Registra pagamento"**. Il
+titolare ha chiesto conferma su cosa faccia davvero il pulsante "Registra"
+nel mini-form del check-out, sospettando non facesse nulla. Chiarito: fa
+già una scrittura reale in `pagamenti` — non tocca mai lo stato della
+prenotazione (nessun pulsante di questo flusso porta a `chiusa`, quella
+transizione resta legata all'emissione fiscale reale/A-Cube, come già
+documentato). Causa reale della sensazione "non fa nulla": il box con
+form+pulsante è condizionato a `saldo_da_incassare > 0` — se l'importo
+copre tutto il saldo il box sparisce di scatto alla risposta, senza
+nessuna conferma visibile. Non è (e non deve diventare) un addebito carta
+vero: stesso principio già in uso nel resto del gestionale (incasso fisico
+fuori sistema, "Registra" è solo la scrittura contabile) — un vero
+processore di pagamento è il modulo 3.3 (Nexi/Stripe via WuBook), fuori
+scope qui. Fix richiesto e fatto subito: nuovo stato `pagamentoEsito`,
+messaggio verde "Pagamento di €X registrato" visibile ~2.5s sia nel caso
+di pagamento parziale (il form resta visibile, prima non c'era comunque
+nessun segnale) sia nel caso che azzera il saldo (box dedicato che
+sostituisce per qualche secondo quello che sta per sparire). Verificato
+solo con `tsc --noEmit` (0 errori) — non ancora visto in UI.

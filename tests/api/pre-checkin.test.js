@@ -180,9 +180,12 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
       expect(res.status).toBe(200);
       const trovata = res.body.find(r => r.prenotazione_id === prenotazioneId);
       expect(trovata).toBeTruthy();
-      // COUNT(*) di Postgres torna bigint → node-pg lo restituisce come
-      // stringa (backend/config/db.js non ha un type parser per OID 20,
-      // solo per le date/1082) — cast esplicito, non un bug applicativo.
+      // COUNT(*) di Postgres torna bigint. Fino al 14/08/2026 node-pg lo
+      // restituiva come stringa (nessun type parser per OID 20 in
+      // backend/config/db.js) — da quella data c'è, quindi questo sarebbe
+      // già un number anche senza Number(...). Lasciato esplicito: non fa
+      // male (Number(5) === 5) e non lega il test all'implementazione
+      // interna del parser globale.
       expect(Number(trovata.numero_ospiti)).toBe(2);
     });
 

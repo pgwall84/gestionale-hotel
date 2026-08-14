@@ -55,7 +55,7 @@ in sequenza con lo sviluppo.**
 | # | Azione | Chi | Sblocca | Perché è urgente |
 |---|---|---|---|---|
 | 0.1 | Sottoscrivere WuBook (channel manager + booking engine) | Titolare | 2.3, 3.3, 4.1 | Mai fatta (Fase 0 di 2.3) — è il blocco più vecchio del progetto |
-| 0.2 | Richiedere preventivo A-Cube (sales@a-cube.io) con i volumi | Titolare | 3.1 | Nessun prezzo pubblico, tempi di risposta commerciale non stimabili |
+| 0.2 | Richiedere preventivo A-Cube (info@acubeapi.com o form su acubeapi.com/contatti, categoria "E-Receipts" — corretto il 14/08/2026, l'indirizzo sales@a-cube.io scritto qui prima non risulta più valido/verificabile sul sito ufficiale) con i volumi | Titolare | 3.1 | Nessun prezzo pubblico, tempi di risposta commerciale non stimabili |
 | 0.3 | Recuperare il numero reale di scontrini/anno del ristorante dai report Hugin/corrispettivi già trasmessi | Titolare | 0.2 | Serve per un preventivo A-Cube vero, non una stima |
 | 0.4 | Decidere con il commercialista: A-Cube anche per fatturazione B2B, o tenere Fatture in Cloud (già in uso, 500€/anno)? | Titolare + commercialista | 3.2 | Oggi pagate già FiC — capire se si sovrappone o si sostituisce prima di sviluppare l'integrazione sbagliata |
 | 0.5 | Sbloccare l'accesso alla mail aziendale (serve per: dominio DNS, account Iubenda, account GA4) | Titolare | Fase 2 (sito) | Ferma 3 attività diverse contemporaneamente |

@@ -59,6 +59,14 @@ beforeAll(async () => {
 
 afterAll(async () => {
   const db = getPool();
+  // addebiti_extra e pagamenti (14/08/2026, test del riepilogo economico
+  // /conto) non hanno ON DELETE CASCADE su soggiorno_id/prenotazione_id
+  // (migration 031 e 016) — vanno ripuliti PRIMA di soggiorni/prenotazioni,
+  // altrimenti le DELETE sotto falliscono per violazione FK.
+  await db.query('DELETE FROM addebiti_extra WHERE soggiorno_id IN (SELECT id FROM soggiorni WHERE camera_id = $1)', [cameraTestId]);
+  if (prenotazioniCreate.length) {
+    await db.query('DELETE FROM pagamenti WHERE prenotazione_id = ANY($1)', [prenotazioniCreate]);
+  }
   await db.query('DELETE FROM soggiorno_ospiti WHERE ospite_id = $1', [ospiteTestId]);
   await db.query('DELETE FROM soggiorni WHERE camera_id = $1', [cameraTestId]);
   if (prenotazioniCreate.length) {
@@ -122,6 +130,75 @@ describe('GET /api/prenotazioni/griglia', () => {
   });
 });
 
+// ─── GET /api/prenotazioni (elenco filtrabile, 14/08/2026) ──────────────────
+// Una riga per soggiorno/camera (non per prenotazione) — vedi commento del
+// controller. Esegue prima di POST/PATCH .../stato più sotto: nessuna
+// prenotazione è ancora 'chiusa'/'confermata' a questo punto del file.
+
+describe('GET /api/prenotazioni', () => {
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/prenotazioni');
+    expect(res.status).toBe(401);
+  });
+
+  test('cameriere → 403', async () => {
+    const res = await request(app).get('/api/prenotazioni').set(authHeader.cameriere());
+    expect(res.status).toBe(403);
+  });
+
+  test('portiere_notte (sola lettura, stessi permessi di /griglia) → 200, forma paginata', async () => {
+    const res = await request(app).get('/api/prenotazioni').set(authHeader.portiere_notte());
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.risultati)).toBe(true);
+    expect(typeof res.body.totale).toBe('number'); // COUNT(*) — type parser bigint, non stringa
+    expect(res.body.pagina).toBe(1);
+    expect(res.body.per_pagina).toBe(50);
+  });
+
+  test('ricerca per cognome ospite trova il soggiorno, con camera_numero corretto', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-01-02', data_partenza: '2099-01-03' },
+    });
+    expect(creata.status).toBe(201);
+
+    const res = await request(app)
+      .get(`/api/prenotazioni?ricerca=TestPrenotazioni${SUFFISSO}`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const trovata = res.body.risultati.find(r => r.soggiorno_id === creata.body.soggiorno.id);
+    expect(trovata).toBeDefined();
+    expect(trovata.prenotazione_id).toBe(creata.body.id);
+    expect(trovata.camera_numero).toBe(`TEST-PREN${SUFFISSO}`);
+  });
+
+  test('ricerca per numero camera trova lo stesso soggiorno', async () => {
+    const res = await request(app)
+      .get(`/api/prenotazioni?ricerca=TEST-PREN${SUFFISSO}`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    expect(res.body.risultati.some(r => r.camera_numero === `TEST-PREN${SUFFISSO}`)).toBe(true);
+  });
+
+  test('filtro stato: opzione include la prenotazione appena creata, confermata la esclude', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-01-04', data_partenza: '2099-01-05' },
+    });
+    expect(creata.status).toBe(201);
+
+    const conOpzione = await request(app)
+      .get(`/api/prenotazioni?ricerca=TestPrenotazioni${SUFFISSO}&stato=opzione`)
+      .set(authHeader.receptionist());
+    expect(conOpzione.status).toBe(200);
+    expect(conOpzione.body.risultati.some(r => r.prenotazione_id === creata.body.id)).toBe(true);
+
+    const conConfermata = await request(app)
+      .get(`/api/prenotazioni?ricerca=TestPrenotazioni${SUFFISSO}&stato=confermata`)
+      .set(authHeader.receptionist());
+    expect(conConfermata.status).toBe(200);
+    expect(conConfermata.body.risultati.some(r => r.prenotazione_id === creata.body.id)).toBe(false);
+  });
+});
+
 // ─── GET /api/prenotazioni/:id ────────────────────────────────────────────────
 
 describe('GET /api/prenotazioni/:id', () => {
@@ -156,6 +233,66 @@ describe('GET /api/prenotazioni/:id', () => {
     expect(res.body.soggiorni[0].ospiti[0].tipo_alloggiato).toBe('17');
     expect(res.body.soggiorni[0].ospiti[0].id).toBe(ospiteTestId);
     expect(res.body.pagamenti).toEqual([]);
+  });
+});
+
+// ─── GET /api/prenotazioni/:id/conto (riepilogo economico, 14/08/2026) ──────
+
+describe('GET /api/prenotazioni/:id/conto', () => {
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/prenotazioni/1/conto');
+    expect(res.status).toBe(401);
+  });
+
+  test('portiere_notte → 403 (stessi permessi di pagamenti/addebiti_extra lettura)', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-02-10', data_partenza: '2099-02-11' },
+    });
+    expect(creata.status).toBe(201);
+
+    const res = await request(app)
+      .get(`/api/prenotazioni/${creata.body.id}/conto`)
+      .set(authHeader.portiere_notte());
+    expect(res.status).toBe(403);
+  });
+
+  test('id inesistente → 404', async () => {
+    const res = await request(app).get('/api/prenotazioni/999999999/conto').set(authHeader.titolare());
+    expect(res.status).toBe(404);
+  });
+
+  test('receptionist → 200, camera + addebiti extra − pagamenti = saldo corretto (tassa non calcolata → 0)', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-02-12', data_partenza: '2099-02-14', tariffa_totale: 200 },
+    });
+    expect(creata.status).toBe(201);
+    const soggiornoId = creata.body.soggiorno.id;
+    const prenotazioneId = creata.body.id;
+
+    const addebito = await request(app)
+      .post(`/api/soggiorni/${soggiornoId}/addebiti/rapido`)
+      .set(authHeader.receptionist())
+      .send({ descrizione: 'Minibar test', importo: 15.5 });
+    expect(addebito.status).toBe(201);
+
+    const pagamento = await request(app)
+      .post(`/api/prenotazioni/${prenotazioneId}/pagamenti`)
+      .set(authHeader.receptionist())
+      .send({ importo: 100, metodo: 'contanti', tipo: 'caparra' });
+    expect(pagamento.status).toBe(201);
+
+    const res = await request(app)
+      .get(`/api/prenotazioni/${prenotazioneId}/conto`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    expect(res.body.camera.totale).toBe(200);
+    expect(res.body.addebiti_extra.totale).toBe(15.5);
+    expect(res.body.addebiti_extra.voci.length).toBe(1);
+    expect(res.body.pagamenti.totale).toBe(100);
+    expect(res.body.tassa_soggiorno.dovuta).toBe(0);
+    expect(res.body.tassa_soggiorno.soggiorni[0].calcolata).toBe(false);
+    // saldo = (200 camera + 15.5 extra) − 100 pagato + 0 tassa = 115.5
+    expect(res.body.saldo_da_incassare).toBe(115.5);
   });
 });
 

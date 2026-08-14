@@ -622,18 +622,17 @@ esplicitamente "cosa manca" oltre agli aspetti funzionali di lancio.
   - API pubblica / webhook verso terzi: bassa urgenza finché l'unico
     partner esterno pianificato resta WuBook (già previsto ad hoc in 2.3).
 
-Test preesistenti falliti, scoperti il 10/08/2026 durante il bump di
-sicurezza bcrypt/Next.js (tab Code) — 590/613 test verdi, 3 suite rosse:
-`email-prenotazioni`, `email-template`, `pre-checkin`. Verificato via
-`git diff` che le uniche modifiche di quella sessione erano righe di
-versione in `package.json` (nessun codice applicativo toccato), quindi
-non è una regressione introdotta dal bump — erano già rotti prima. Almeno
-una causa nota: `email-template` non riconosce ancora il tipo
-`pre_checkin` introdotto dal modulo 5.2 Fase B. Da investigare e
-sistemare in una sessione dedicata — non bloccante per il deploy di
-sicurezza in corso, ma non ignorare: se un giorno questi tre tornano verdi
-senza che nessuno li abbia toccati esplicitamente, verificare comunque
-cosa è cambiato prima di fidarsi.
+✅ [FATTO 14/08/2026] Test preesistenti falliti, scoperti il 10/08/2026
+durante il bump di sicurezza bcrypt/Next.js (tab Code) — 590/613 test
+verdi, 3 suite rosse: `email-prenotazioni`, `email-template`,
+`pre-checkin`. Root cause diagnosticata e corretta nella stessa sessione
+in cui è stata scritta la voce sopra (non una sessione "dedicata"
+separata come previsto): `email-template` non riconosceva il tipo
+`pre_checkin` introdotto dal modulo 5.2 Fase B — confermato in codice,
+`emailTemplateController.js` oggi gestisce esplicitamente `pre_checkin`.
+Verifica per il titolare: `npm run test:api -- tests/api/email-template.test.js
+tests/api/email-prenotazioni.test.js tests/api/pre-checkin.test.js` (o la
+suite completa) deve dare tutte e tre le suite verdi.
 
 Evolutive competitive — confronto con Slope (10/08/2026). A differenza del
 confronto con Mews/Cloudbeds/RoomRaccoon (sopra), Slope è un concorrente
@@ -716,20 +715,19 @@ segnate per una revisione congiunta futura, nessuna investigata/toccata):
    fisica invece che per categoria, o altro — chiarire prima di
    pianificare qualunque cosa.
 
-3. **NUOVO (10/08/2026)** — Monitor cucina (`/cucina`, SSE) non funziona
-   in produzione: il titolare segnala "connessione in corso" senza mai
-   visualizzare nulla, diverso dal comportamento in locale (dove
-   funziona). Non investigato in questa sessione su richiesta esplicita
-   del titolare. Prima ipotesi da verificare quando si riprende (non
-   confermata, solo un punto di partenza): SSE dietro reverse proxy è
-   notoriamente sensibile a buffering/timeout — Nginx ha bisogno di
-   `proxy_buffering off` e simili sulla route `/api/ristorante/cucina/
-   stream` (il codice lato Express imposta già `X-Accel-Buffering: no`,
-   vedi `comandeController.js`); verificare anche che Cloudflare sul
-   dominio resti DNS-only/nuvoletta grigia (CLAUDE.md/DEPLOY_VPS_NETCUP.md
-   §1 — se qualcuno l'ha attivata per errore, l'SSE si rompe). Da
-   confermare con i log Nginx reali prima di toccare la configurazione,
-   stesso principio già seguito per l'incidente permessi DB di oggi.
+3. ✅ [FATTO 14/08/2026] Monitor cucina (`/cucina`, SSE) non funzionava
+   in produzione: il titolare segnalava "connessione in corso" senza mai
+   visualizzare nulla, diverso dal comportamento in locale. Root cause
+   reale, diversa dalle ipotesi Nginx/Cloudflare scritte qui sotto quando
+   il problema è stato segnalato: `frontend/app/cucina/page.jsx` costruiva
+   l'URL dell'EventSource con la porta 7001 hardcodata, violazione della
+   stessa regola di rete di CLAUDE.md Sezione 12 già trovata altrove (7
+   file HR il 13/08/2026) — in produzione, dietro Nginx, la porta 7001 non
+   è esposta, quindi la connessione SSE falliva sempre. Corretto usando
+   `getApiUrl()` come ovunque altro nel gestionale, confermato dal
+   titolare: "funziona in produzione, io vedo che va". Le ipotesi
+   Nginx/Cloudflare sotto restano solo come nota storica, non erano la
+   causa reale.
 
 4. Manca un punto centrale per gestire lo stato e i conti di tutti i
    tavoli contemporaneamente durante un pasto — espande quanto già
@@ -814,6 +812,36 @@ Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
    cameriere in apertura tavolo) — non fatto ora, nessuna richiesta
    esplicita in questo senso, solo la constatazione che il dato attuale è
    un'approssimazione onesta ma non lo stesso numero.
+
+Planning camere — icona gruppo sulla barra (14/08/2026, rinviabile su
+indicazione esplicita del titolare). I gruppi (`gruppi_prenotazione`)
+esistono nel sistema ma non sono visibili a colpo d'occhio guardando la
+griglia — oggi si scoprono solo aprendo il pannello dettaglio di ogni
+singola barra. Da riprendere con una piccola icona/badge sulla `Barra`
+quando `prenotazione.gruppo_id` è valorizzato — nessuna nuova chiamata,
+il dato andrebbe solo aggiunto alla query di `/griglia` (oggi non seleziona
+`gruppo_id`).
+
+Planning camere — gestione "prenotazioni non assegnate" (14/08/2026, da
+costruire insieme al modulo 2.3 — channel manager WuBook, non prima).
+Cloudbeds/Mews mostrano un pannello dedicato per le prenotazioni OTA che
+arrivano senza una camera specifica assegnata, da smistare manualmente.
+Oggi non è un gap reale: ogni prenotazione nel gestionale nasce già con una
+camera scelta (form "Nuova prenotazione" la richiede sempre). Diventerà
+rilevante solo quando le prenotazioni inizieranno ad arrivare da un canale
+esterno (webhook WuBook) che potrebbe non specificare la camera — a quel
+punto valutare uno stato "camera_id NULL" su `soggiorni` (oggi NOT NULL,
+servirebbe una migration) e un pannello "Da assegnare" nella griglia/elenco.
+
+Modulo Ristorante — toggle "addebita a camera" nel flusso comanda normale
+(14/08/2026, dallo stesso confronto competitivo del riepilogo economico).
+Oggi solo la griglia rapida bar/camera scrive su `addebiti_extra`
+(`POST /api/soggiorni/:id/addebiti/rapido`) — il flusso comanda standard
+del cameriere (selezione piatti dal menu, cucina, ecc.) non ha un modo di
+marcare una riga come "addebita alla camera invece che pagare al tavolo".
+Richiede una modifica al modulo Ristorante esistente (tag `soggiorno_id`
+sulla comanda + flag per riga), non solo un'aggiunta — da trattare come
+sessione a sé, tocca `comandeController.js`/`comande_righe`.
 
 Dashboard home — receptionist/cuoco/dipendente senza contenuto dedicato
 (14/08/2026, emerso rispondendo a una domanda del titolare sulla riga

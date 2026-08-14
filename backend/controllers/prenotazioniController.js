@@ -63,6 +63,91 @@ async function griglia(req, res) {
   }
 }
 
+// GET /api/prenotazioni — elenco filtrabile/ricercabile, una riga per
+// soggiorno (camera), non per prenotazione: è la granularità che serve
+// davvero a chi cerca ("dov'è Mario Rossi", "chi c'è in camera 12"), una
+// prenotazione multi-camera comparirà con più righe. Nasce dal confronto
+// con Cloudbeds (pagina "Reservations" separata dalla griglia calendario,
+// 14/08/2026) — la griglia (/griglia) resta vincolata al range di date
+// visibili, questo endpoint fa ricerca libera su tutto lo storico.
+// Filtri tutti opzionali e combinabili: ricerca (nome/cognome ospite o
+// numero camera, ILIKE), data_da/data_a (su data_arrivo), stato, canale_origine.
+// Paginazione: pagina (default 1), per_pagina (default 50, tetto 200 per
+// evitare query senza filtri troppo pesanti).
+// Accessibile a: admin, titolare, receptionist, portiere_notte (lettura) —
+// stessi permessi di /griglia, è la stessa vista in un'altra forma.
+async function lista(req, res) {
+  const { ricerca, data_da, data_a, stato, canale_origine } = req.query;
+  const pagina = Math.max(1, parseInt(req.query.pagina, 10) || 1);
+  const perPagina = Math.min(200, Math.max(1, parseInt(req.query.per_pagina, 10) || 50));
+  const offset = (pagina - 1) * perPagina;
+
+  const condizioni = ['1=1'];
+  const parametri = [];
+
+  if (ricerca) {
+    parametri.push(`%${ricerca}%`);
+    const idx = parametri.length;
+    condizioni.push(`(o.nome ILIKE $${idx} OR o.cognome ILIKE $${idx} OR c.numero ILIKE $${idx})`);
+  }
+  if (data_da) {
+    parametri.push(data_da);
+    condizioni.push(`s.data_arrivo >= $${parametri.length}`);
+  }
+  if (data_a) {
+    parametri.push(data_a);
+    condizioni.push(`s.data_arrivo <= $${parametri.length}`);
+  }
+  if (stato) {
+    parametri.push(stato);
+    condizioni.push(`p.stato = $${parametri.length}`);
+  }
+  if (canale_origine) {
+    parametri.push(canale_origine);
+    condizioni.push(`p.canale_origine = $${parametri.length}`);
+  }
+
+  const whereSql = condizioni.join(' AND ');
+
+  try {
+    const totaleRes = await pool.query(
+      `SELECT COUNT(*) AS totale
+       FROM soggiorni s
+       JOIN camere c ON c.id = s.camera_id
+       JOIN prenotazioni p ON p.id = s.prenotazione_id
+       LEFT JOIN ospiti o ON o.id = s.ospite_id
+       WHERE ${whereSql} AND s.cancellato = false`,
+      parametri
+    );
+
+    parametri.push(perPagina, offset);
+    const result = await pool.query(
+      `SELECT s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
+              c.numero AS camera_numero, c.piano,
+              p.id AS prenotazione_id, p.stato, p.canale_origine, p.created_at,
+              o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
+       FROM soggiorni s
+       JOIN camere c ON c.id = s.camera_id
+       JOIN prenotazioni p ON p.id = s.prenotazione_id
+       LEFT JOIN ospiti o ON o.id = s.ospite_id
+       WHERE ${whereSql} AND s.cancellato = false
+       ORDER BY s.data_arrivo DESC
+       LIMIT $${parametri.length - 1} OFFSET $${parametri.length}`,
+      parametri
+    );
+
+    res.json({
+      risultati: result.rows,
+      totale: totaleRes.rows[0].totale,
+      pagina,
+      per_pagina: perPagina,
+    });
+  } catch (err) {
+    console.error('lista prenotazioni error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
 // GET /api/prenotazioni/:id — dettaglio completo.
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 async function dettaglio(req, res) {
@@ -118,6 +203,116 @@ async function dettaglio(req, res) {
     });
   } catch (err) {
     console.error('dettaglio prenotazione error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// GET /api/prenotazioni/:id/conto — riepilogo economico completo: camera +
+// addebiti extra + tassa di soggiorno, al netto dei pagamenti già
+// incassati (14/08/2026). Nasce dal confronto con Cloudbeds (riepilogo
+// saldo nel popover prenotazione): prima il pannello mostrava la tariffa
+// solo nel tooltip al passaggio del mouse, i pagamenti in lista grezza
+// senza somma, gli addebiti extra solo con un link a un'altra pagina, e la
+// tassa di soggiorno non compariva affatto.
+//
+// La tassa di soggiorno resta un flusso volutamente separato dai pagamenti
+// prenotazione — quando si riscuote (tassaSoggiornoController.riscuoti)
+// NON viene creata una riga in `pagamenti` — quindi qui è sommata al saldo
+// ma il suo "riscosso" è tracciato a parte (tassa_soggiorno.riscossa),
+// mai fuso dentro pagamenti.totale. Non viene calcolata da questo
+// endpoint se manca (nessuna chiamata a tassaSoggiornoController.calcola):
+// un side effect con possibili errori di configurazione aliquota non è
+// pertinente a un endpoint di sola lettura — un soggiorno senza calcolo
+// espone semplicemente calcolata:false, dovuto:null, senza bloccare il
+// resto del riepilogo.
+// Accessibile a: admin, titolare, receptionist — stessi permessi di
+// 'pagamenti' (route), niente portiere_notte (come addebiti_extra).
+async function conto(req, res) {
+  try {
+    const prenotazione = await pool.query(
+      'SELECT id FROM prenotazioni WHERE id = $1',
+      [req.params.id]
+    );
+    if (!prenotazione.rows.length) {
+      return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+
+    // Solo soggiorni non cancellati: una stanza interrotta non deve pesare
+    // sul saldo dovuto.
+    const soggiorniRes = await pool.query(
+      `SELECT s.id, c.numero AS camera_numero, s.tariffa_totale
+       FROM soggiorni s
+       JOIN camere c ON c.id = s.camera_id
+       WHERE s.prenotazione_id = $1 AND s.cancellato = false
+       ORDER BY s.data_arrivo`,
+      [req.params.id]
+    );
+    const soggiornoIds = soggiorniRes.rows.map(s => s.id);
+    const totaleCamera = soggiorniRes.rows.reduce((sum, s) => sum + parseFloat(s.tariffa_totale || 0), 0);
+
+    let addebitiExtra = [];
+    let totaleAddebitiExtra = 0;
+    if (soggiornoIds.length) {
+      const addebitiRes = await pool.query(
+        `SELECT ae.id, ae.soggiorno_id, ae.descrizione, ae.importo, ae.data
+         FROM addebiti_extra ae
+         WHERE ae.soggiorno_id = ANY($1::int[])
+         ORDER BY ae.created_at`,
+        [soggiornoIds]
+      );
+      addebitiExtra = addebitiRes.rows;
+      totaleAddebitiExtra = addebitiRes.rows.reduce((sum, a) => sum + parseFloat(a.importo || 0), 0);
+    }
+
+    let tasseSoggiorno = [];
+    let tassaDovuta = 0;
+    let tassaRiscossa = 0;
+    if (soggiornoIds.length) {
+      const tasseRes = await pool.query(
+        `SELECT soggiorno_id, importo_dovuto, importo_riscosso
+         FROM tasse_soggiorno
+         WHERE soggiorno_id = ANY($1::int[])`,
+        [soggiornoIds]
+      );
+      tasseSoggiorno = soggiorniRes.rows.map(s => {
+        const riga = tasseRes.rows.find(t => t.soggiorno_id === s.id);
+        return {
+          soggiorno_id: s.id,
+          camera_numero: s.camera_numero,
+          calcolata: !!riga,
+          dovuto: riga ? parseFloat(riga.importo_dovuto) : null,
+          riscosso: riga && riga.importo_riscosso !== null ? parseFloat(riga.importo_riscosso) : null,
+        };
+      });
+      tassaDovuta = tasseRes.rows.reduce((sum, t) => sum + parseFloat(t.importo_dovuto || 0), 0);
+      tassaRiscossa = tasseRes.rows.reduce((sum, t) => sum + parseFloat(t.importo_riscosso || 0), 0);
+    }
+
+    const pagamentiRes = await pool.query(
+      `SELECT id, importo, metodo, tipo, created_at
+       FROM pagamenti WHERE prenotazione_id = $1 ORDER BY created_at`,
+      [req.params.id]
+    );
+    const totalePagamenti = pagamentiRes.rows.reduce((sum, p) => sum + parseFloat(p.importo || 0), 0);
+
+    const arrotonda = n => Math.round(n * 100) / 100;
+    const tassaDaRiscuotere = tassaDovuta - tassaRiscossa;
+    const saldoDaIncassare = (totaleCamera + totaleAddebitiExtra) - totalePagamenti + tassaDaRiscuotere;
+
+    res.json({
+      camera: { totale: arrotonda(totaleCamera) },
+      addebiti_extra: { totale: arrotonda(totaleAddebitiExtra), voci: addebitiExtra },
+      tassa_soggiorno: {
+        dovuta: arrotonda(tassaDovuta),
+        riscossa: arrotonda(tassaRiscossa),
+        da_riscuotere: arrotonda(tassaDaRiscuotere),
+        soggiorni: tasseSoggiorno,
+      },
+      pagamenti: { totale: arrotonda(totalePagamenti), voci: pagamentiRes.rows },
+      saldo_da_incassare: arrotonda(saldoDaIncassare),
+    });
+  } catch (err) {
+    console.error('conto prenotazione error:', err);
     res.status(500).json({ error: 'Errore interno' });
   }
 }
@@ -400,4 +595,4 @@ async function inviaPreCheckin(req, res) {
   }
 }
 
-module.exports = { griglia, dettaglio, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };
+module.exports = { griglia, lista, dettaglio, conto, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };

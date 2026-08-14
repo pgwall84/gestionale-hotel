@@ -108,7 +108,10 @@ en.wubook.net/page/WooDoo-Partner-Form-31.html.
 
 ---
 
-## 5. A-Cube (sales@a-cube.io)
+## 5. A-Cube (info@acubeapi.com o form su acubeapi.com/contatti — corretto
+   14/08/2026, l'indirizzo sales@a-cube.io scritto qui prima non risulta
+   più valido/verificabile sul sito ufficiale, dominio diverso da quello
+   reale dell'azienda)
 
 - Preventivo per corrispettivi elettronici (scontrini ristorante + camera),
   con questi volumi indicativi:
