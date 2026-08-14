@@ -572,4 +572,50 @@ async function registraIncasso(req, res) {
   }
 }
 
-module.exports = { alert, kpi, registraIncasso, alertInviiAlloggiati, gruppiWidget };
+// GET /api/dashboard/incassi/suggerimento?data=YYYY-MM-DD — somma i
+// pagamenti REALI (per metodo) registrati quel giorno, per precompilare il
+// form di registraIncasso invece di lasciarlo sempre vuoto (14/08/2026).
+//
+// Copre SOLO la parte camere: `pagamenti` è alimentata dal check-out
+// (PannelloCheckOut) e dai depositi di prenotazione — il ristorante non
+// passa da questa tabella, chiude ancora sul registratore fisico Hugin
+// RT-K50, non integrato col gestionale (lo sostituirà A-Cube, modulo 3.1,
+// non ancora iniziato). Il titolare resta sempre libero di correggere il
+// suggerimento — non sostituisce mai l'inserimento manuale, lo aiuta.
+// Accessibile a: admin, titolare (stessi permessi di registraIncasso)
+async function suggerimentoIncasso(req, res) {
+  // Data locale senza passare da toISOString() (converte in UTC e può far
+  // slittare il giorno — stesso bug già corretto altrove nel progetto,
+  // vedi timbratureController.js fmtDataLocale). In pratica il frontend
+  // passa sempre `data` esplicitamente: questo è solo un fallback sicuro.
+  const oggiLocale = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const giorno = req.query.data || oggiLocale();
+  try {
+    const result = await pool.query(
+      `SELECT metodo, COALESCE(SUM(importo), 0)::float AS totale
+       FROM pagamenti
+       WHERE created_at::date = $1::date AND stato = 'completato'
+       GROUP BY metodo`,
+      [giorno]
+    );
+    const somme = { contanti: 0, pos: 0, bonifico: 0, altro: 0 };
+    result.rows.forEach((r) => {
+      const chiave = ['contanti', 'pos', 'bonifico'].includes(r.metodo) ? r.metodo : 'altro';
+      somme[chiave] += Number(r.totale);
+    });
+    res.json({
+      data: giorno,
+      contanti: somme.contanti,
+      pos: somme.pos,
+      altri: { bonifico: somme.bonifico, altro: somme.altro },
+    });
+  } catch (err) {
+    console.error('Errore suggerimentoIncasso:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+module.exports = { alert, kpi, registraIncasso, suggerimentoIncasso, alertInviiAlloggiati, gruppiWidget };

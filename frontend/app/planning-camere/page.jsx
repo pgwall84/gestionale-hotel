@@ -11,7 +11,7 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
-  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer,
+  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer, Download,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
@@ -124,6 +124,22 @@ function formatDataEstesa(d) {
   return new Date(d + 'T00:00:00').toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' });
 }
 
+// Data compatta per le tabelle export PDF (dd/mm/yyyy) — formatDataEstesa
+// è troppo lunga per stare nelle colonne strette dell'elenco stampato.
+function formatDataBreve(d) {
+  if (!d) return '—';
+  const [y, m, g] = d.split('-');
+  return `${g}/${m}/${y}`;
+}
+
+// Slug mese/anno per il nome file dell'export (es. "agosto_2026").
+function slugMese(d) {
+  return new Date(d + 'T00:00:00')
+    .toLocaleDateString('it-IT', { month: 'long', year: 'numeric' })
+    .toLowerCase()
+    .replace(/\s+/g, '_');
+}
+
 function capitalizza(s) {
   return s.charAt(0).toUpperCase() + s.slice(1);
 }
@@ -170,6 +186,29 @@ function corrispondeRicerca(soggiorno, cameraNumero, ricerca) {
     (soggiorno.ospite_cognome || '').toLowerCase().includes(q) ||
     (cameraNumero || '').toLowerCase().includes(q)
   );
+}
+
+// Export PDF (14/08/2026) — riduce il font finché il testo non entra nella
+// larghezza data, come richiesto esplicitamente dal titolare per il
+// planning mensile ("si riduca la dimensione del carattere del cognome").
+// Oltre il font minimo, troncamento con "..." come rete di sicurezza per
+// cognomi molto lunghi in colonne molto strette — non richiesto dal
+// titolare, ma evita testo sovrapposto illeggibile nei casi limite.
+// Effetto collaterale voluto: imposta pdf.setFontSize() al valore scelto,
+// il chiamante deve solo disegnare il testo restituito dopo la chiamata.
+function adattaFontATesto(pdf, testo, larghezzaMax, fontMax = 7, fontMin = 4) {
+  let font = fontMax;
+  pdf.setFontSize(font);
+  while (font > fontMin && pdf.getTextWidth(testo) > larghezzaMax) {
+    font -= 0.5;
+    pdf.setFontSize(font);
+  }
+  if (pdf.getTextWidth(testo) <= larghezzaMax) return testo;
+  let t = testo;
+  while (t.length > 2 && pdf.getTextWidth(`${t}...`) > larghezzaMax) {
+    t = t.slice(0, -1);
+  }
+  return t.length < testo.length ? `${t}...` : testo;
 }
 
 // ── Barra prenotazione (draggable) ──────────────────────────────────────────
@@ -1617,7 +1656,7 @@ function PopupStatoCamera({ camera, statoOggi, onChiudi, onSalvato }) {
 // questa risponde a "trovami questa prenotazione", una riga per soggiorno/
 // camera (non per prenotazione — un gruppo multi-camera compare su più
 // righe, stessa scelta di granularità già motivata in prenotazioniController.lista).
-function VistaElenco({ onApriPrenotazione }) {
+function VistaElenco({ onApriPrenotazione, onFiltriCambiati }) {
   const [filtri, setFiltri] = useState({ ricerca: '', data_da: '', data_a: '', stato: '' });
   const [pagina, setPagina] = useState(1);
   const [risultati, setRisultati] = useState([]);
@@ -1646,6 +1685,13 @@ function VistaElenco({ onApriPrenotazione }) {
   }, [filtri, pagina]);
 
   useEffect(() => { carica(); }, [carica]);
+
+  // Espone i filtri correnti al genitore (14/08/2026, export PDF) — il
+  // pulsante "Esporta" vive nel toolbar della pagina principale, non qui,
+  // ma l'export dell'elenco deve rispettare gli stessi filtri attivi a
+  // schermo. Nessun sollevamento di stato: solo un callback, VistaElenco
+  // resta proprietaria del proprio stato come prima.
+  useEffect(() => { onFiltriCambiati?.(filtri); }, [filtri, onFiltriCambiati]);
 
   // Ogni cambio filtro riparte da pagina 1 — evita di restare su una pagina
   // che risulta vuota dopo aver ristretto la ricerca.
@@ -1817,6 +1863,18 @@ export default function PaginaPlanningCamere() {
   const [formNuovaPrenotazione, setFormNuovaPrenotazione] = useState(null);
   const [statoOggiMap, setStatoOggiMap] = useState({}); // camera_id → {arrivo,partenza,pronta,note} di OGGI
   const [cameraStatoAperta, setCameraStatoAperta] = useState(null); // camera su cui è aperto il popup scopetta
+
+  // Export PDF (14/08/2026) — pulsante "Esporta" nel toolbar, prima di
+  // "Nuova prenotazione". Due contenuti diversi (vedi docs/EVOLUTIVE.md):
+  // planning mensile (griglia camere × giorni del mese corrente) ed elenco
+  // prenotazioni (rispetta i filtri attivi in VistaElenco). filtriElencoRef
+  // riceve i filtri correnti da VistaElenco via callback, senza sollevarne
+  // lo stato — vedi onFiltriCambiati lì sopra.
+  const [menuEsportaAperto, setMenuEsportaAperto] = useState(false);
+  const [esportando, setEsportando] = useState(null); // 'planning' | 'elenco' | null
+  const [erroreExport, setErroreExport] = useState(null);
+  const filtriElencoRef = useRef({ ricerca: '', data_da: '', data_a: '', stato: '' });
+  const setFiltriElencoRef = useCallback((f) => { filtriElencoRef.current = f; }, []);
 
   const puoTrascinare = RUOLI_TRASCINA.includes(utente?.ruolo);
   const puoGestireCamere = RUOLI_GESTIONE_CAMERE.includes(utente?.ruolo);
@@ -2007,6 +2065,267 @@ export default function PaginaPlanningCamere() {
 
   const numRighe = gruppiPiano.reduce((tot, g) => tot + 1 + g.camere.length, 0);
 
+  // ── Export planning mensile (PDF, 14/08/2026) ─────────────────────────────
+  // Sempre il mese di "ancora" (indipendente dal range di vista 7/14gg/mese
+  // a schermo) — è il concetto "planning mensile" richiesto dal titolare,
+  // non "l'export di qualunque range si stia guardando". Fetch dedicato,
+  // non riusa `righe`/`gruppiPiano` dello stato pagina: quelli riflettono
+  // il range visualizzato, che può non coincidere col mese intero.
+  // Layout: A4 orizzontale, riga per camera, colonna per giorno, cognome
+  // dentro una barra unica per soggiorno (stessa geometria di calcolaBarra
+  // usata a schermo) — non una cella per ogni giorno separatamente.
+  async function esportaPlanningMensile() {
+    setErroreExport(null);
+    setEsportando('planning');
+    try {
+      const mese = primoGiornoMese(ancora);
+      const giorniMese = calcolaGiorni(mese, 'mese');
+      const dataFineEsclusiva = spostaData(giorniMese[giorniMese.length - 1], 1);
+      const risposta = await api.get(`/prenotazioni/griglia?data_inizio=${mese}&data_fine=${dataFineEsclusiva}`);
+      const righeMese = risposta.data;
+
+      // Raggruppamento camere/piano identico a gruppiPiano sopra, ma
+      // calcolato qui su dati del mese intero appena scaricati.
+      const cameraMap = new Map();
+      righeMese.forEach((r) => {
+        if (!cameraMap.has(r.camera_id)) {
+          cameraMap.set(r.camera_id, { camera_id: r.camera_id, numero: r.camera_numero, nome: r.camera_nome, piano: r.piano, soggiorni: [] });
+        }
+        if (r.soggiorno_id) cameraMap.get(r.camera_id).soggiorni.push(r);
+      });
+      const gruppiMese = [];
+      cameraMap.forEach((camera) => {
+        const chiave = camera.piano === null ? 'esterno' : camera.piano;
+        let gruppo = gruppiMese.find(g => g.chiave === chiave);
+        if (!gruppo) {
+          gruppo = { chiave, etichetta: camera.piano === null ? 'Appartamento esterno' : `Piano ${camera.piano}`, camere: [] };
+          gruppiMese.push(gruppo);
+        }
+        gruppo.camere.push(camera);
+      });
+
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'landscape' });
+      const pw = pdf.internal.pageSize.getWidth();
+      const ph = pdf.internal.pageSize.getHeight();
+      const margine = 10;
+      const colCamera = 26;
+      const larghezzaUtile = pw - margine * 2 - colCamera;
+      const colGiorno = larghezzaUtile / giorniMese.length;
+      const altezzaRiga = 6;
+      let y = margine;
+
+      function disegnaIntestazione() {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        pdf.setTextColor(27, 58, 92);
+        pdf.text('Hotel del Golfo — Planning camere', margine, y);
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(10);
+        pdf.setTextColor(100);
+        pdf.text(formatMesePeriodo(giorniMese), margine, y + 6);
+        y += 12;
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(7);
+        pdf.setTextColor(27, 58, 92);
+        pdf.setDrawColor(200);
+        pdf.rect(margine, y, colCamera, altezzaRiga);
+        pdf.text('Camera', margine + 2, y + altezzaRiga - 2);
+        giorniMese.forEach((g, i) => {
+          const x = margine + colCamera + i * colGiorno;
+          pdf.rect(x, y, colGiorno, altezzaRiga);
+          const numGiorno = String(new Date(g + 'T00:00:00').getDate());
+          pdf.text(numGiorno, x + colGiorno / 2, y + altezzaRiga - 2, { align: 'center' });
+        });
+        y += altezzaRiga;
+      }
+
+      function nuovaPagina() {
+        pdf.addPage();
+        y = margine;
+        disegnaIntestazione();
+      }
+
+      disegnaIntestazione();
+
+      gruppiMese.forEach((gruppo) => {
+        if (y + altezzaRiga > ph - margine) nuovaPagina();
+        pdf.setFillColor(240, 240, 240);
+        pdf.rect(margine, y, colCamera + larghezzaUtile, altezzaRiga - 1, 'F');
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(7.5);
+        pdf.setTextColor(27, 58, 92);
+        pdf.text(gruppo.etichetta, margine + 2, y + altezzaRiga - 2.3);
+        y += altezzaRiga;
+
+        gruppo.camere.forEach((camera) => {
+          if (y + altezzaRiga > ph - margine) nuovaPagina();
+          const nomeCamera = camera.numero !== 'app' ? `Camera ${camera.numero}` : camera.nome;
+
+          pdf.setDrawColor(220);
+          pdf.rect(margine, y, colCamera, altezzaRiga);
+          pdf.setFont('helvetica', 'normal');
+          pdf.setTextColor(50);
+          const testoCamera = adattaFontATesto(pdf, nomeCamera, colCamera - 4, 7, 5);
+          pdf.text(testoCamera, margine + 2, y + altezzaRiga - 2);
+
+          giorniMese.forEach((g, i) => {
+            const x = margine + colCamera + i * colGiorno;
+            pdf.rect(x, y, colGiorno, altezzaRiga);
+          });
+
+          // Una barra per soggiorno (non una cella per giorno) — stessa
+          // geometria di calcolaBarra usata a schermo, applicata ai giorni
+          // del mese intero invece che al range di vista.
+          camera.soggiorni.forEach((s) => {
+            const { colStart, colEnd } = calcolaBarra(giorniMese, s.data_arrivo, s.data_partenza);
+            const xStart = margine + colCamera + (colStart - 1) * colGiorno;
+            const larghezzaBarra = (colEnd - colStart) * colGiorno;
+            pdf.setFillColor(230, 238, 245);
+            pdf.setDrawColor(27, 58, 92);
+            pdf.rect(xStart, y, larghezzaBarra, altezzaRiga, 'FD');
+            pdf.setFont('helvetica', 'bold');
+            pdf.setTextColor(27, 58, 92);
+            const cognome = s.ospite_cognome || '—';
+            // Font ridotto finché il cognome non entra nella barra —
+            // richiesto esplicitamente dal titolare, vedi adattaFontATesto.
+            const testoAdattato = adattaFontATesto(pdf, cognome, larghezzaBarra - 2, 6, 4);
+            pdf.text(testoAdattato, xStart + larghezzaBarra / 2, y + altezzaRiga - 2, { align: 'center' });
+          });
+
+          y += altezzaRiga;
+        });
+      });
+
+      pdf.setFont('helvetica', 'normal');
+      pdf.setFontSize(7);
+      pdf.setTextColor(150);
+      pdf.text(`Esportato il ${new Date().toLocaleString('it-IT')}`, margine, ph - 4);
+
+      pdf.save(`planning_${slugMese(giorniMese[0])}.pdf`);
+    } catch (err) {
+      setErroreExport(err.message || 'Errore nell\'esportazione del planning');
+    } finally {
+      setEsportando(null);
+    }
+  }
+
+  // ── Export elenco prenotazioni (PDF, 14/08/2026) ──────────────────────────
+  // Rispetta i filtri attivi in VistaElenco (via filtriElencoRef), ma non la
+  // paginazione a schermo: riparte da pagina 1 con per_pagina al massimo
+  // consentito dal backend (200, vedi prenotazioniController.lista) per
+  // esportare il set filtrato più ampio possibile in una sola chiamata.
+  async function esportaElencoPdf() {
+    setErroreExport(null);
+    setEsportando('elenco');
+    try {
+      const f = filtriElencoRef.current;
+      const parametri = new URLSearchParams({ pagina: '1', per_pagina: '200' });
+      if (f.ricerca) parametri.set('ricerca', f.ricerca);
+      if (f.data_da) parametri.set('data_da', f.data_da);
+      if (f.data_a) parametri.set('data_a', f.data_a);
+      if (f.stato) parametri.set('stato', f.stato);
+      const risposta = await api.get(`/prenotazioni?${parametri.toString()}`);
+      const { risultati, totale } = risposta.data;
+
+      const { jsPDF } = await import('jspdf');
+      const pdf = new jsPDF({ unit: 'mm', format: 'a4', orientation: 'portrait' });
+      const ph = pdf.internal.pageSize.getHeight();
+      const margine = 14;
+      let y = margine;
+
+      const colonne = [
+        { chiave: 'ospite', label: 'Ospite', larghezza: 40 },
+        { chiave: 'camera', label: 'Camera', larghezza: 20 },
+        { chiave: 'arrivo', label: 'Arrivo', larghezza: 24 },
+        { chiave: 'partenza', label: 'Partenza', larghezza: 24 },
+        { chiave: 'ospiti', label: 'Ospiti', larghezza: 16 },
+        { chiave: 'canale', label: 'Canale', larghezza: 28 },
+        { chiave: 'stato', label: 'Stato', larghezza: 28 },
+      ];
+      const larghezzaTabella = colonne.reduce((s, c) => s + c.larghezza, 0);
+
+      function descrizioneFiltri() {
+        const parti = [];
+        if (f.ricerca) parti.push(`ricerca "${f.ricerca}"`);
+        if (f.data_da) parti.push(`arrivo dal ${formatDataBreve(f.data_da)}`);
+        if (f.data_a) parti.push(`al ${formatDataBreve(f.data_a)}`);
+        if (f.stato) parti.push(`stato: ${(STATI_COLORI[f.stato] || {}).label || f.stato}`);
+        return parti.length ? parti.join(' · ') : 'Nessun filtro attivo';
+      }
+
+      function disegnaIntestazione() {
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(13);
+        pdf.setTextColor(27, 58, 92);
+        pdf.text('Hotel del Golfo — Elenco prenotazioni', margine, y);
+        y += 6;
+        pdf.setFont('helvetica', 'normal');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(100);
+        pdf.text(descrizioneFiltri(), margine, y);
+        y += 5;
+        pdf.text(
+          `${totale} risultat${totale === 1 ? 'o' : 'i'}` +
+          `${totale > risultati.length ? ` (esportati i primi ${risultati.length})` : ''}` +
+          ` — esportato il ${new Date().toLocaleString('it-IT')}`,
+          margine, y
+        );
+        y += 7;
+
+        pdf.setFont('helvetica', 'bold');
+        pdf.setFontSize(8.5);
+        pdf.setTextColor(27, 58, 92);
+        let x = margine;
+        colonne.forEach(c => { pdf.text(c.label, x, y); x += c.larghezza; });
+        y += 2;
+        pdf.setDrawColor(27, 58, 92);
+        pdf.line(margine, y, margine + larghezzaTabella, y);
+        y += 5;
+      }
+
+      function nuovaPagina() {
+        pdf.addPage();
+        y = margine;
+        disegnaIntestazione();
+      }
+
+      disegnaIntestazione();
+
+      risultati.forEach((r) => {
+        if (y > ph - margine) nuovaPagina();
+        const colori = STATI_COLORI[r.stato] || STATI_COLORI.opzione;
+        const valori = {
+          ospite: r.ospite_nome ? `${r.ospite_nome} ${r.ospite_cognome}` : '—',
+          camera: r.camera_numero != null ? String(r.camera_numero) : '—',
+          arrivo: formatDataBreve(r.data_arrivo),
+          partenza: formatDataBreve(r.data_partenza),
+          ospiti: String(r.num_ospiti ?? '—'),
+          canale: r.canale_origine || '—',
+          stato: colori.label,
+        };
+        pdf.setFont('helvetica', 'normal');
+        pdf.setTextColor(50);
+        let x = margine;
+        colonne.forEach(c => {
+          const testo = adattaFontATesto(pdf, valori[c.chiave], c.larghezza - 2, 8, 6);
+          pdf.text(testo, x, y);
+          x += c.larghezza;
+        });
+        pdf.setDrawColor(230);
+        pdf.line(margine, y + 2, margine + larghezzaTabella, y + 2);
+        y += 6;
+      });
+
+      pdf.save(`elenco_prenotazioni_${oggi()}.pdf`);
+    } catch (err) {
+      setErroreExport(err.message || 'Errore nell\'esportazione dell\'elenco');
+    } finally {
+      setEsportando(null);
+    }
+  }
+
   return (
     <AppShell titolo="Prenotazioni camere" sottotitolo="Vista griglia / planning">
       <div className="space-y-3">
@@ -2095,15 +2414,53 @@ export default function PaginaPlanningCamere() {
             </div>
           )}
 
-          {puoTrascinare && (
-            <button
-              onClick={() => setFormNuovaPrenotazione({})}
-              className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white"
-              style={{ background: 'var(--hotel-amber)' }}
-            >
-              <Plus size={14} /> Nuova prenotazione
-            </button>
-          )}
+          <div className="flex items-center gap-2">
+            {/* Esporta PDF (14/08/2026) — planning mensile o elenco
+                prenotazioni, indipendente dalla vista attiva (Griglia/
+                Elenco): un titolare in griglia può comunque voler
+                l'elenco stampato e viceversa. Nessuna nuova dipendenza,
+                jsPDF già in uso per il QR del menu. */}
+            <div className="relative">
+              <button
+                type="button"
+                onClick={() => setMenuEsportaAperto(v => !v)}
+                disabled={!!esportando}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border bg-white disabled:opacity-60"
+              >
+                <Download size={14} /> {esportando ? 'Esportazione...' : 'Esporta'}
+              </button>
+              {menuEsportaAperto && (
+                <>
+                  <div className="fixed inset-0 z-10" onClick={() => setMenuEsportaAperto(false)} />
+                  <div className="absolute right-0 mt-1 w-56 bg-white border rounded-lg shadow-lg z-20 py-1">
+                    <button
+                      type="button"
+                      onClick={() => { setMenuEsportaAperto(false); esportaPlanningMensile(); }}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                    >
+                      Planning mensile (PDF)
+                    </button>
+                    <button
+                      type="button"
+                      onClick={() => { setMenuEsportaAperto(false); esportaElencoPdf(); }}
+                      className="w-full text-left px-3 py-2 text-xs hover:bg-gray-50"
+                    >
+                      Elenco prenotazioni (PDF)
+                    </button>
+                  </div>
+                </>
+              )}
+            </div>
+            {puoTrascinare && (
+              <button
+                onClick={() => setFormNuovaPrenotazione({})}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+                style={{ background: 'var(--hotel-amber)' }}
+              >
+                <Plus size={14} /> Nuova prenotazione
+              </button>
+            )}
+          </div>
         </div>
 
         {/* Legenda stati (14/08/2026, seguito: spostata su una riga propria
@@ -2135,8 +2492,16 @@ export default function PaginaPlanningCamere() {
           </div>
         )}
 
+        {/* Export PDF (14/08/2026) — indipendente dalla vista attiva. */}
+        {erroreExport && (
+          <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+               style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+            <AlertTriangle size={14} /> {erroreExport}
+          </div>
+        )}
+
         {vista === 'elenco' && (
-          <VistaElenco onApriPrenotazione={setPrenotazioneApertaId} />
+          <VistaElenco onApriPrenotazione={setPrenotazioneApertaId} onFiltriCambiati={setFiltriElencoRef} />
         )}
 
         {vista === 'griglia' && (loading && righe.length === 0 ? (

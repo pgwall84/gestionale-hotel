@@ -76,11 +76,49 @@ function formattaDataOra(iso) {
   return new Date(iso).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
 }
 
+// Data locale 'YYYY-MM-DD' senza passare da toISOString() (converte in UTC
+// e può far slittare il giorno) — stesso pattern usato altrove nel
+// progetto (vedi planning-camere/page.jsx, oggi()).
+function oggiLocale() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // Bottom sheet registrazione incasso giornaliero — solo admin/titolare
+//
+// Suggerimento automatico (14/08/2026): all'apertura precompila
+// contanti/POS da GET /dashboard/incassi/suggerimento, che somma i
+// pagamenti REALI (tabella `pagamenti`, per metodo) registrati oggi.
+// Copre SOLO la parte camere — i pagamenti del ristorante non passano da
+// quella tabella (chiude ancora sul registratore fisico Hugin RT-K50, non
+// integrato — lo sostituirà A-Cube, modulo 3.1). Resta sempre un
+// suggerimento modificabile, mai un valore imposto: il titolare può
+// correggerlo o cancellarlo come prima di questa modifica.
 function BottomSheetIncasso({ onSalva, onAnnulla, loading }) {
   const [contanti, setContanti] = useState('');
   const [pos, setPos] = useState('');
   const [note, setNote] = useState('');
+  const [suggerimento, setSuggerimento] = useState(null); // { contanti, pos, altri } | null
+  const [caricandoSuggerimento, setCaricandoSuggerimento] = useState(true);
+
+  useEffect(() => {
+    api.get(`/dashboard/incassi/suggerimento?data=${oggiLocale()}`)
+      .then((r) => {
+        setSuggerimento(r.data);
+        // Precompila solo se c'è qualcosa da suggerire — un form vuoto
+        // resta più chiaro di due zeri che sembrano già "confermati".
+        if (r.data.contanti > 0) setContanti(String(r.data.contanti));
+        if (r.data.pos > 0) setPos(String(r.data.pos));
+      })
+      .catch(() => {
+        // Non bloccante: il form resta vuoto e compilabile a mano come
+        // sempre, il suggerimento è solo un aiuto, non un requisito.
+        setSuggerimento(null);
+      })
+      .finally(() => setCaricandoSuggerimento(false));
+  }, []);
+
+  const altriPagamenti = (suggerimento?.altri?.bonifico || 0) + (suggerimento?.altri?.altro || 0);
 
   return (
     <div className="fixed inset-0 z-50 flex items-end justify-center"
@@ -93,6 +131,16 @@ function BottomSheetIncasso({ onSalva, onAnnulla, loading }) {
           <p className="font-bold text-lg" style={{ color: 'var(--foreground)' }}>Registra incasso di oggi</p>
           <button onClick={onAnnulla}><X size={20} style={{ color: 'var(--muted-foreground)' }} /></button>
         </div>
+        {!caricandoSuggerimento && suggerimento && (suggerimento.contanti > 0 || suggerimento.pos > 0) && (
+          <p className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+            Precompilato da pagamenti camera registrati oggi (check-out/depositi) — <strong>il ristorante non è incluso</strong>, aggiungilo tu. Puoi correggere entrambi i campi.
+          </p>
+        )}
+        {!caricandoSuggerimento && altriPagamenti > 0 && (
+          <p className="text-[11px]" style={{ color: 'var(--hotel-amber)' }}>
+            Non incluso nel suggerimento: € {altriPagamenti.toFixed(2)} pagati con bonifico/altro metodo — verifica se vanno sommati a mano.
+          </p>
+        )}
         <input type="number" step="0.01" placeholder="Contanti €" value={contanti} onChange={e => setContanti(e.target.value)}
                className="w-full rounded-xl p-3 text-sm" style={{ fontSize: 16, background: 'var(--input)', color: 'var(--foreground)', border: '1px solid var(--border)' }} />
         <input type="number" step="0.01" placeholder="POS €" value={pos} onChange={e => setPos(e.target.value)}

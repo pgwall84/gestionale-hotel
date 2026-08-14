@@ -550,8 +550,88 @@ Trasversale — CampoData (selettore anno sui calendari, 05/08/2026):
   ricordare la convenzione CLAUDE.md di motivare ogni nuova dipendenza
   nel piano prima di installarla.
 
+Pagina "Report" dedicata (14/08/2026, richiesta dal titolare dopo
+`docs/RICERCA_REPORTISTICA_COMPETITOR.md` — non sviluppare ora). Oggi il
+gestionale non ha nessun report storico di ricavi/occupazione — verificato
+nel codice: `dashboard.js` espone solo un KPI di oggi (`/kpi`), non
+un'aggregazione su periodo. Tutti e 5 i concorrenti confrontati (Mews,
+Cloudbeds, RoomRaccoon, Slope, TeamSystem Hospitality — quest'ultimo già
+pagato oggi) offrono queste 9 categorie come denominatore comune, tutte da
+includere nella nuova pagina `/report`:
+  1. Occupazione su periodo scelto, con confronto storico (oggi solo
+     istantanea di oggi nel widget dashboard).
+  2. ADR/RevPAR — tariffa media giornaliera e ricavo per camera
+     disponibile, metrica standard di settore mai calcolata oggi.
+  3. Mix canali — quanto arriva da diretto/Booking/telefono/ecc. e quanto
+     rende ciascuno (`prenotazioni.canale_origine` già popolato, dato
+     pronto).
+  4. Revenue per centro di profitto — camere separate da ristorante/extra
+     (`pagamenti`, `addebiti_extra`, `comande` già distinti per fonte).
+  5. Forecast — proiezione occupazione/ricavi sui prossimi giorni/mesi in
+     base a quanto già prenotato. Diverso da 6.3 "revenue management
+     automatico" (che ricalcola le tariffe da solo) — qui è solo guardare
+     avanti, non decidere al posto del titolare.
+  6. Report finanziario/P&L semplificato — entrate/uscite/redditività. Si
+     scontra subito col limite di `incassi_giornalieri` (vedi voce
+     dedicata sotto, appena affrontata in parte il 14/08/2026).
+  7. Demografia ospiti — provenienza, ripetizione, stagionalità. Dato già
+     raccolto per obbligo Alloggiati Web (2.5), riusabile senza nuova
+     raccolta.
+  8. Export PDF/Excel con un click — pattern già disponibile dopo l'export
+     PDF del planning camere (14/08/2026, stesso giorno), riusabile come
+     base tecnica.
+  9. Dashboard in tempo reale — il gestionale ce l'ha già per *oggi*
+     (widget Dashboard); il gap è lo storico su periodo arbitrario, non
+     la tempestività del dato singolo.
+  Dettaglio competitor per prodotto, fonti e cosa esiste già nel DB
+  riusabile senza nuovo schema: `docs/RICERCA_REPORTISTICA_COMPETITOR.md`.
+  Nessuna decisione presa su priorità/ordine di sviluppo tra i 9 punti.
+
 Fase 3 (futuro):
-  6.1 HACCP avanzato (temperature, scongelo, cotture)
+  6.1 HACCP avanzato (temperature, scongelo, cotture) — funzionalità
+    identificate da ricerca di mercato/normativa dedicata (14/08/2026),
+    dettaglio completo (competitor, quadro legale, prezzi sensori, fonti)
+    in `docs/RICERCA_HACCP_MERCATO_LEGALE.md`. Non è un obbligo di legge —
+    lo è il piano di autocontrollo, non il software — ma la prassi 2026
+    penalizza la compilazione differita in ispezione. Elenco funzionalità
+    da costruire, ordinato per impatto reale in ispezione ASL5 Spezzino:
+    1. Registro temperature frigo/cella/abbattitore — inserimento manuale
+       rapido (stile "scopetta" già usato in Stato Camere) + predisposto
+       per import automatico da sensore in futuro. Alert se fuori soglia
+       (0-4°C frigo) o se manca la rilevazione del giorno.
+    2. Registro scongelamento/cottura — prodotto, metodo, temperatura al
+       cuore, ora; collegabile a `ricette`/`menu_piatti` già esistenti.
+    3. Checklist pulizie/sanificazione — esiste già `haccp_checklist`; da
+       verificare se copre firma digitale operatore e reminder automatico.
+    4. Tracciabilità lotti e fornitori — collegabile a `fornitori`/
+       `prodotti`/`movimenti_magazzino` già esistenti (modulo 1.7),
+       nessuna nuova anagrafica.
+    5. Scadenze formazione HACCP dipendenti (attestati 5 anni, Liguria) —
+       riusa il pattern già esistente `scadenze`/`documenti_dipendente`
+       (modulo HR 1.1).
+    6. Generazione automatica registri per ispezione — export PDF/Excel
+       filtrabile per periodo, pensato per essere consegnato a un
+       ispettore senza ricostruzione manuale — è il punto che risolve
+       davvero il rischio "compilazione differita" del 2026.
+    7. Conservazione a norma — retention automatica, minimo consigliato
+       ≥3 anni accessibile (nessun numero fisso in legge).
+    Deliberatamente non nell'elenco per ora: integrazione sensori IoT in
+    tempo reale — dipende da quale hardware si sceglierà (vedi sotto),
+    costruirla prima rischia di legarsi a un protocollo specifico che poi
+    cambia.
+    ⚠️ **Sensoristica — NON ancora scelta, serve ricerca mirata quando si
+    riprende questo modulo**: unico prezzo confermato oggi è Hanna
+    Instruments HI144 (data logger da parete singolo punto, 52-80 €+IVA,
+    no abbonamento). Le alternative wireless con app/cloud viste
+    (HaccpOK/Freeasy, Digitron HLX2015, Testo Saveris, Selin Milano
+    RF300, Tecnafoodstore) non pubblicano prezzo online — vanno chieste a
+    preventivo diretto, verificando sempre le condizioni di recesso prima
+    di firmare (HaccpOK ha un pattern di vincolo 24 mesi con penali
+    aggressive, visto nella ricerca). Prima di comprare, decidere quanti
+    punti servono davvero (stima 6-8: frigo cucina, celle, abbattitore) e
+    se conviene hardware one-off senza abbonamento (~400-650€ con HI144)
+    o un sistema wireless con canone ricorrente ma integrazione più
+    diretta nel gestionale.
   6.2 Agente AI interno per titolare e staff
   6.3 Revenue management (RevPAR, suggerimenti tariffari)
 
@@ -751,18 +831,46 @@ convince (troppi passaggi per arrivarci? posizione del pulsante? manca
 un ingresso più diretto tipo "camera → addebita" senza passare dal
 dettaglio prenotazione?) prima di riprogettare qualcosa.
 
-Modulo 1.8/1.6 — incassi_giornalieri da automatizzare (segnalato dal
-titolare 10/08/2026, non ora — dopo il modulo Fondamenta addebiti extra).
-Oggi `incassi_giornalieri` è un inserimento manuale del titolare (una riga
-al giorno, contanti+pos), scollegato da `pagamenti`/`comande`/
-`addebiti_extra` — nessun incrocio automatico tra "cosa dice la cassa
-fisica" e "cosa dice il gestionale". Il titolare vuole automatizzarla.
-Punto da decidere quando si riprende: sostituire l'inserimento manuale con
-un calcolo automatico (rischioso — la cassa fisica include contanti che il
-sistema non vede, es. mance, o discrepanze reali da segnalare), oppure
-pre-compilare i campi da pagamenti+comande e lasciare al titolare solo la
-conferma/correzione (più sicuro, mantiene la riconciliazione come
-controllo). Non implementare senza chiarire quale delle due.
+✅ [FATTO IN PARTE 14/08/2026] Modulo 1.8/1.6 — incassi_giornalieri
+precompilato (solo camere). Segnalato dal titolare 10/08/2026, approfondito
+e sviluppato in parte il 14/08/2026 dopo la ricerca competitor sulla
+reportistica (`docs/RICERCA_REPORTISTICA_COMPETITOR.md`).
+
+Verificato nel codice prima di scegliere l'approccio: `pagamenti` ha
+`metodo` (contanti/pos/bonifico/altro) e `importo`, alimentata dal
+check-out camera (`PannelloCheckOut`) — automatizzabile. Il ristorante NO:
+`comande_righe` non salva mai un prezzo (calcolato a runtime da
+`menu_piatti.prezzo`, mai persistito) e non ha nessun campo metodo di
+pagamento, perché chiude ancora sul registratore fisico Hugin RT-K50, non
+integrato col gestionale (lo sostituirà A-Cube, modulo 3.1, non ancora
+iniziato). Quindi la scelta tra "sostituire" e "precompilare+conferma"
+(le due opzioni lasciate aperte il 10/08) è stata decisa dal vincolo
+tecnico stesso, non da una preferenza: **precompilare, mai sostituire** —
+un calcolo automatico completo oggi darebbe sempre un numero sbagliato
+per difetto (manca tutto il ristorante), quindi il controllo umano alla
+conferma resta necessario per definizione, non per prudenza.
+
+Fatto: `GET /api/dashboard/incassi/suggerimento?data=YYYY-MM-DD`
+(`dashboardController.js`, stessi permessi di `registraIncasso` —
+admin/titolare) somma `pagamenti` per metodo nel giorno richiesto
+(`stato='completato'`), restituisce `{ contanti, pos, altri: {bonifico,
+altro} }`. `BottomSheetIncasso` (home/page.jsx) lo interroga
+all'apertura e precompila i campi contanti/POS solo se c'è un valore da
+suggerire (un form con due zeri sembrerebbe già confermato) — resta
+sempre modificabile/cancellabile. Se ci sono pagamenti bonifico/altro nel
+giorno, un avviso ambra li segnala esplicitamente invece di ometterli in
+silenzio ("non incluso nel suggerimento: €X — verifica se va sommato a
+mano"). Nessuna nuova migration, nessuna nuova colonna.
+
+**Resta esplicitamente non fatto**: la parte ristorante resta manuale al
+100% come prima — non diventerà automatizzabile finché `comande` non
+persiste un totale con metodo di pagamento (cambio più ampio al flusso di
+chiusura conto, non fatto qui) oppure finché A-Cube (3.1) non sostituisce
+Hugin come fonte reale. Non riproporre "automatizziamo anche il
+ristorante" senza prima uno di questi due prerequisiti. Verificato solo
+con `tsc --noEmit`/`node -c` (0 errori) — **non ancora visto in UI dal
+titolare**, in particolare se il suggerimento risulta effettivamente utile
+nell'uso reale o se disturba più di quanto aiuti.
 
 Modulo 1.6 — rivisitazione flusso pagamento/chiusura conti ristorante
 (segnalato dal titolare 10/08/2026, non ora). Il titolare non è sicuro che
@@ -812,6 +920,53 @@ Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
    cameriere in apertura tavolo) — non fatto ora, nessuna richiesta
    esplicita in questo senso, solo la constatazione che il dato attuale è
    un'approssimazione onesta ma non lo stesso numero.
+
+✅ [FATTO 14/08/2026] Planning camere — export PDF stampabile. Pulsante
+  "Esporta" nel toolbar (prima di "Nuova prenotazione", visibile a tutti i
+  ruoli con accesso alla pagina, non solo a chi trascina), apre un piccolo
+  menu con due opzioni indipendenti dalla vista attiva:
+  - **Planning mensile**: sempre il mese di riferimento della vista
+    corrente (non il range 7/14gg eventualmente selezionato), fetch
+    dedicato su `/prenotazioni/griglia` per l'intero mese, A4 orizzontale,
+    una riga per camera (raggruppate per piano come a schermo) e una
+    colonna per giorno. Ogni soggiorno è disegnato come un'unica barra
+    (stessa geometria di `calcolaBarra` usata a schermo), non una cella
+    ripetuta per ogni giorno. Formato deciso col titolare: cognome dentro
+    la barra, font ridotto automaticamente finché non entra nello spazio
+    disponibile (`adattaFontATesto`, 7pt→4pt), troncamento con "..." solo
+    come rete di sicurezza oltre il font minimo (non richiesto
+    esplicitamente, evita testo sovrapposto sui cognomi più lunghi).
+  - **Elenco prenotazioni**: rispetta i filtri attivi in `VistaElenco`
+    (ricerca/date/stato) tramite un callback `onFiltriCambiati` che
+    aggiorna un ref nel componente padre — nessun sollevamento di stato,
+    `VistaElenco` resta proprietaria dei propri filtri. Non la
+    paginazione a schermo: riparte da pagina 1 con `per_pagina=200` (il
+    massimo consentito dal backend) per esportare il set filtrato più
+    ampio possibile in un'unica chiamata.
+  Nessuna nuova dipendenza: `jspdf` già in uso per il QR del menu
+  (`frontend/app/menu/page.jsx`), stesso pattern `const { jsPDF } = await
+  import('jspdf')` + disegno manuale (nessuna libreria di tabelle tipo
+  autotable). Nessuna modifica backend — entrambi gli export riusano
+  endpoint già esistenti (`/prenotazioni/griglia`, `/prenotazioni`).
+  Verificato solo con `tsc --noEmit` (0 errori) dal sandbox — **il
+  rendering reale dei due PDF (leggibilità colonne giorno, comportamento
+  su più pagine se le camere aumentano) non è stato ancora visto dal
+  titolare**, da controllare al primo giro in locale.
+
+  ✅ **Confermato dal titolare come export di base** (14/08/2026), con
+  richiesta esplicita di segnare possibili ottimizzazioni future (non ora,
+  non specificate nel dettaglio — da chiarire quando si riprende):
+  - Planning mensile: oggi l'export prende sempre e solo il mese
+    correntemente visualizzato a schermo (`ancora`) — nessun selettore
+    mese/anno indipendente nel menu Esporta. Per esportare un mese diverso
+    da quello aperto, oggi bisogna prima navigarci sopra a schermo.
+    Eventualmente anche un filtro per piano/gruppo di camere (oggi sempre
+    tutte).
+  - Elenco prenotazioni: già rispetta i filtri di `VistaElenco`
+    (ricerca/date/stato) — un'ottimizzazione qui sarebbe forse la scelta
+    delle colonne da includere, o un limite diverso dal fisso 200.
+  Nessuna delle due è stata richiesta in modo specifico — prima domanda da
+  fare quando si riprende: cosa esattamente manca nell'uso reale.
 
 Planning camere — icona gruppo sulla barra (14/08/2026, rinviabile su
 indicazione esplicita del titolare). I gruppi (`gruppi_prenotazione`)

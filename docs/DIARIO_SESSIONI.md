@@ -3788,3 +3788,84 @@ di pagamento parziale (il form resta visibile, prima non c'era comunque
 nessun segnale) sia nel caso che azzera il saldo (box dedicato che
 sostituisce per qualche secondo quello che sta per sparire). Verificato
 solo con `tsc --noEmit` (0 errori) — non ancora visto in UI.
+
+**Seguito — ricerca HACCP + export PDF planning**. Su richiesta del
+titolare, indagine di mercato/normativa sul modulo futuro 6.1 (HACCP
+avanzato): competitor italiani (HaccpOK 25€/mese o 240€/anno con vincolo
+24 mesi sulla promo sensore — penali di recesso aggressive, FoodTag,
+ePackPro, Blumatica e altri minori), quadro normativo (Reg. CE 852/2004,
+D.Lgs. 193/2007, Liguria D.G.R. 476/2017, ASL5 Spezzino come autorità
+competente reale — non una generica Liguria, SCIA via SUAP), formazione
+(attestati 5 anni, 8h/16h corso base/produzione, rinnovo 4h), sensoristica
+(unico prezzo confermato: Hanna Instruments HI144, 52-80€+IVA, gli altri
+solo a preventivo). Confermato che il software HACCP non è un obbligo di
+legge — lo è il piano di autocontrollo — ma la prassi 2026 penalizza la
+compilazione differita in ispezione. Tutto il dettaglio in
+`docs/RICERCA_HACCP_MERCATO_LEGALE.md`; le 7 funzionalità individuate
+(registro temperature, registro cottura/scongelo, tracciabilità lotti,
+scadenze formazione, export automatico per ispezione, retention ≥3 anni,
+integrazione sensori rimandata) registrate in `docs/EVOLUTIVE.md` sotto
+6.1, sensoristica esplicitamente segnata come "da scegliere con ricerca
+mirata quando si riprende", non ora.
+
+Subito dopo, seconda evolutiva chiesta e sviluppata nella stessa sessione:
+export PDF dal planning camere. Pulsante "Esporta" nel toolbar (prima di
+"Nuova prenotazione"), due opzioni via un piccolo menu — planning mensile
+e elenco prenotazioni, vedi dettaglio tecnico completo in
+`docs/EVOLUTIVE.md` (voce "Planning camere — export PDF stampabile").
+Punto di attenzione sollevato prima di sviluppare, poi confermato dal
+titolare: l'elenco è banale da esportare (già una tabella), il planning
+mensile no — 20 camere × 30-31 giorni non entra leggibile in A4 orizzontale
+a font fisso. Il titolare ha scelto lui il formato esatto (tabella
+riassuntiva, non screenshot della griglia; font del cognome che si riduce
+finché non entra, non una griglia troncata). Nessuna dipendenza nuova
+(`jspdf`, già in uso per il QR del menu), nessun endpoint backend nuovo
+(riusa `/prenotazioni/griglia` e `/prenotazioni`). Verificato solo con
+`tsc --noEmit` (0 errori) — **la resa reale dei due PDF non è ancora stata
+vista dal titolare**, da controllare al primo giro in locale (in
+particolare: leggibilità colonne giorno su un mese da 31 giorni,
+comportamento su più pagine se le camere aumentano in futuro). Il
+titolare ha poi confermato l'export come base valida, segnando due
+possibili ottimizzazioni future (selettore mese indipendente, colonne
+export elenco) in `docs/EVOLUTIVE.md`, non sviluppate ora.
+
+**Seguito — reportistica competitor + incassi_giornalieri**. Su richiesta
+del titolare, ricerca su cosa offrono i concorrenti (Mews, Cloudbeds,
+RoomRaccoon, Slope, TeamSystem Hospitality — quest'ultimo il termine di
+paragone più importante perché già pagato oggi) in fatto di reportistica
+per il proprietario. Punto di partenza scomodo verificato nel codice, non
+assunto: `dashboard.js` oggi espone solo un KPI istantaneo di oggi, zero
+aggregazione storica su periodo (occupazione/ADR/RevPAR/mix canali).
+Tutto il dettaglio, i 5 competitor confrontati e le 9 categorie ricorrenti
+in `docs/RICERCA_REPORTISTICA_COMPETITOR.md`; le 9 categorie registrate
+come evolutiva per una futura pagina `/report` dedicata (dopo un
+chiarimento: il titolare aveva scritto "5 punti" riferendosi ai 5
+concorrenti confrontati, non a un sottoinsieme delle 9 categorie).
+
+Tra le 9, la n.6 (report finanziario/P&L) portava dritti a un'evolutiva
+già aperta il 10/08 su `incassi_giornalieri` (manuale, scollegata dal
+resto). Approfondita su richiesta esplicita del titolare ("forse è ora di
+renderlo automatico e collegato"): verificato nel codice — non assunto —
+che `pagamenti` (metodo+importo, alimentata dal check-out camera) È
+automatizzabile, ma `comande_righe` no: nessun prezzo mai persistito
+(calcolato a runtime da `menu_piatti.prezzo`) e nessun metodo di
+pagamento, perché il ristorante chiude ancora sul registratore fisico
+Hugin RT-K50, non integrato (lo sostituirà A-Cube, modulo 3.1). Questo ha
+risolto da solo il bivio lasciato aperto il 10/08 ("sostituire" vs
+"precompilare+conferma"): un calcolo automatico oggi sarebbe sempre
+sbagliato per difetto (manca tutto il ristorante), quindi la scelta
+obbligata è precompilare, mai sostituire.
+
+Fatto: nuovo endpoint `GET /api/dashboard/incassi/suggerimento?data=...`
+(`dashboardController.js`, stessi permessi di `registraIncasso`) somma
+`pagamenti` per metodo nel giorno; `BottomSheetIncasso` (home/page.jsx) lo
+interroga all'apertura e precompila contanti/POS solo se c'è un valore da
+suggerire, con un avviso esplicito se ci sono pagamenti bonifico/altro non
+inclusi nel suggerimento (mai omessi in silenzio). Nessuna migration,
+nessuna nuova colonna. Dettaglio completo, incluso cosa resta
+esplicitamente non automatizzabile (il ristorante, finché non cambia
+`comande` o arriva A-Cube): `docs/EVOLUTIVE.md`, voce "incassi_giornalieri
+precompilato (solo camere)". Verificato solo con `tsc --noEmit`/`node -c`
+(0 errori) — **non ancora visto in UI dal titolare**, in particolare se il
+suggerimento è davvero utile nell'uso reale o disturba più di quanto
+aiuti.
