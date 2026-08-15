@@ -523,11 +523,22 @@ Modulo 5.1 — riordino menu/sidebar (segnalato dal titolare 03/08/2026, non
   hanno più voci da raggruppare (es. dopo i due punti sotto).
   Nota emersa nella stessa conversazione: esiste già oggi un'ambiguità di
   naming, non introdotta da questa sessione — la sidebar ha due voci
-  entrambe chiamate "Prenotazioni": una in OSPITALITÀ → `/planning-camere`
-  (griglia camere) e una in RISTORANTE → `/prenotazioni` (prenotazioni
-  tavoli), e la bottom-nav mobile di receptionist/portiere_notte punta
-  "Prenotaz." a `/prenotazioni` (ristorante), non al planning camere. Utile
-  chiarire quando si affronta il riordino.
+  entrambe chiamate "Prenotazioni": una in OSPITALITÀ (oggi rinominata
+  CLIENTI E PRENOTAZIONI) → `/planning-camere` (griglia camere) e una in
+  RISTORANTE → `/prenotazioni` (prenotazioni tavoli). Nota storica sulla
+  bottom-nav mobile: da verificare, in `Sidebar.tsx` oggi (15/08/2026)
+  `VOCI_MOBILE` per receptionist/portiere_notte punta "Prenotaz." a
+  `/planning-camere`, non a `/prenotazioni` — probabilmente corretto in una
+  sessione successiva al 03/08 non documentata qui, non riproporre come
+  problema aperto senza riverificare.
+
+  ✅ **RISOLTA la parte naming (15/08/2026)**: voce RISTORANTE →
+  `/prenotazioni` rinominata da "Prenotazioni" a "Prenota Tavolo" in
+  `Sidebar.tsx` (SEZIONI_MENU, sezione RISTORANTE). Nessun'altra pagina
+  mostrava il testo "Prenotazioni" per questa rotta (AppShell/Topbar di
+  `frontend/app/prenotazioni/page.jsx` non passa un `titolo`, quindi la
+  sidebar era l'unico punto da correggere). Resta aperto solo il resto del
+  riordino sidebar (7 voci in CLIENTI E PRENOTAZIONI), non richiesto ora.
 
 Modulo 5.1 — pagina "Prenotazioni" dedicata in forma di tabella (idea
   futura del titolare, 03/08/2026, non sviluppare ora). Oggi l'unico modo
@@ -639,30 +650,257 @@ Fase 3 (futuro):
     lo è il piano di autocontrollo, non il software — ma la prassi 2026
     penalizza la compilazione differita in ispezione. Elenco funzionalità
     da costruire, ordinato per impatto reale in ispezione ASL5 Spezzino:
-    1. Registro temperature frigo/cella/abbattitore — inserimento manuale
-       rapido (stile "scopetta" già usato in Stato Camere) + predisposto
-       per import automatico da sensore in futuro. Alert se fuori soglia
-       (0-4°C frigo) o se manca la rilevazione del giorno.
-    2. Registro scongelamento/cottura — prodotto, metodo, temperatura al
-       cuore, ora; collegabile a `ricette`/`menu_piatti` già esistenti.
-    3. Checklist pulizie/sanificazione — esiste già `haccp_checklist`; da
-       verificare se copre firma digitale operatore e reminder automatico.
-    4. Tracciabilità lotti e fornitori — collegabile a `fornitori`/
-       `prodotti`/`movimenti_magazzino` già esistenti (modulo 1.7),
-       nessuna nuova anagrafica.
-    5. Scadenze formazione HACCP dipendenti (attestati 5 anni, Liguria) —
-       riusa il pattern già esistente `scadenze`/`documenti_dipendente`
-       (modulo HR 1.1).
-    6. Generazione automatica registri per ispezione — export PDF/Excel
-       filtrabile per periodo, pensato per essere consegnato a un
-       ispettore senza ricostruzione manuale — è il punto che risolve
-       davvero il rischio "compilazione differita" del 2026.
-    7. Conservazione a norma — retention automatica, minimo consigliato
-       ≥3 anni accessibile (nessun numero fisso in legge).
+    1. ✅ [RICOSTRUITO 16/08/2026 su registri_HACCP_A1_A8.xlsx + CSV soglie
+       del titolare — sostituisce la versione del 15/08] Registro
+       temperature — da lista fissa di 4 stringhe a vera anagrafica
+       apparecchiature: nuova tabella `apparecchiature_haccp` (migration
+       041, CRUD in `configurazioneHaccpController.js`/`routes/
+       configurazioneHaccp.js`, pagina `/impostazioni/haccp`), seedata coi
+       12 apparecchi reali del titolare (3 frigo, 3 freezer, abbattitore,
+       cappa, piano cottura, forno, lavastoviglie, zona rifiuti — editabile
+       da UI). `registro_temperature` ora referenzia `apparecchiatura_id`
+       (migration 042; `punto_controllo` resta come colonna storica per le
+       righe di test già inserite, non droppata, il codice non la scrive
+       più). **Soglie CONFERMATE dal titolare il 16/08/2026** (CSV
+       allegato): frigo ≤ +4°C, freezer ≤ −18°C — `SOGLIE_TEMPERATURA` in
+       `registroHaccpController.js` ora popolata per tipo (non più per
+       singolo apparecchio), `fuoriSoglia()` attiva per frigo/freezer.
+       **Abbattitore deliberatamente escluso** dal confronto min/max: il
+       suo limite critico è un tempo di discesa (+65°C→+10°C in ≤2h), non
+       un range statico — resta registrabile ma senza giudizio fuori-soglia
+       finché non si costruisce un controllo a tempo dedicato (fuori scope,
+       segnalato non improvvisato). Alert dashboard
+       `alertRegistroTemperature()` aggiornato di conseguenza, stesso
+       pattern testabile (override `oraCorrente`/`data`). Test riscritti in
+       `tests/api/registro-haccp.test.js` con apparecchiature dedicate
+       (prefisso ZZZ_TEST_), non più dipendenti dal seed reale. **Eseguiti
+       contro Postgres reale il 16/08/2026: 35/35 verdi** (dopo un secondo
+       bug di isolamento trovato dal titolare — il blocco "Impostazioni
+       HACCP" valorizzava `configurazione_moduli_haccp.aggiornato_da` con
+       l'utente di test senza azzerarlo, facendo fallire `pulisciDatiTest()`
+       sulla FK in `afterAll`; fix: `UPDATE ... SET aggiornato_da = NULL`
+       prima della pulizia utenti).
+    2. ✅ [COSTRUITO 16/08/2026] Registro scongelamento/cottura — nuova
+       tabella `registro_cottura` (migration 040), collegata a
+       `menu_piatti(id)` con `ON DELETE SET NULL` (confermato dal titolare:
+       `ricette` non è più in uso, il menu attivo è `menu_piatti`), campo
+       piatto opzionale — non blocca la compilazione se il prodotto non è
+       a menu. Stesso controller/route/tab del punto 1 (secondo tab della
+       pagina `/registro-haccp`). Test in `tests/api/registro-haccp.test.js`
+       (CRUD, permessi per ruolo, storico, collegamento al piatto menu,
+       alert dashboard con override orario) — **eseguiti contro Postgres
+       reale il 16/08/2026, 23/23 verdi**. Trovato e corretto un bug di
+       isolamento tra test (il test storico lasciava una rilevazione senza
+       ripulirla, inquinando il conteggio dei punti mancanti nel blocco
+       `alertRegistroTemperature`) — fix: `beforeAll` dedicato che pulisce
+       `registro_temperature` per la data di test prima di quel blocco.
+    3. ✅ [FATTO IN PARTE 15/08/2026] Checklist pulizie/sanificazione —
+       audit fatto su `haccp_checklist` prima di sviluppare alla cieca (la
+       tabella/pagina esistevano già dalla Fase 1). Trovati 2 gap reali,
+       non 0 come lasciava supporre la voce originale: (a) l'API
+       restituiva già `nome`/`cognome` di chi ha salvato ma il frontend
+       non li mostrava mai — aggiunta riga "Compilata da: Nome Cognome"
+       in `frontend/app/checklist/page.jsx` (nessun backend nuovo, dato
+       già disponibile); attenzione: attribuisce l'INTERA checklist del
+       giorno a chi preme "Salva" una volta, non riga per riga — non è
+       una vera firma per singola voce, solo attribuzione a livello di
+       giornata; (b) nessun reminder se la checklist non viene compilata
+       — aggiunta `alertChecklistHaccp()` in `dashboardController.js`
+       (estratta come funzione a sé per essere testabile in isolamento
+       dall'ora reale, stesso pattern già usato per `alertInviiAlloggiati`
+       Fase C del 14/08), soglie orarie **15→ambra, 22→rosso** (ipotesi
+       non confermata dal titolare, va bene finché non si dimostra sbagliata
+       nell'uso reale — sono due costanti, non un redesign). 5 test nuovi
+       in `tests/api/dashboard.test.js` (mattina/pomeriggio/sera/già
+       compilata/nessun override), verificati con `node -c` + `npx esbuild
+       --jsx=automatic` sui due file `.jsx` toccati — **non ancora
+       eseguiti contro Postgres reale né visti in UI dal titolare**.
+    4. ✅ [VERIFICATO+CHIUSO 16/08/2026] Tracciabilità lotti e fornitori —
+       audit: `movimenti_magazzino` (modulo 1.7) aveva già `fornitore_id`,
+       `ddt_numero`, `data_scadenza` per ogni carico — nessuna nuova
+       anagrafica serviva. Mancava solo un modo per farli emergere insieme
+       agli altri registri in vista ispezione: risolto dal punto 6 sotto
+       (foglio "Tracciabilità fornitori" nell'export).
+    5. ✅ [VERIFICATO 15/08/2026, non serviva sviluppo] Scadenze formazione
+       HACCP dipendenti — audit fatto prima di aprire una sessione di
+       sviluppo: la tabella `scadenze` (migration 002) è già generica
+       (`tipo` testo libero, "corso_haccp" già citato come esempio nel
+       commento SQL originale), la UI Personale▸Scadenze la gestisce e la
+       Dashboard mostra già in automatico ogni scadenza entro 30 giorni
+       sotto "HR · Scadenze" — zero righe di backend mancanti. Unico
+       rischio reale: il campo "Tipo" era testo libero senza suggerimenti,
+       quindi la stessa formazione avrebbe potuto finire salvata con
+       grafie diverse tra un dipendente e l'altro, rompendo il futuro
+       filtro per il registro export ispezione (punto 6 sotto). Corretto
+       con una `<datalist>` di suggerimento (Corso HACCP, Visita medica,
+       Corso antincendio, Contratto) su `frontend/app/personale/page.jsx`
+       — il testo libero resta, non blocca inserimenti diversi.
+    6. ✅ [COSTRUITO 16/08/2026] Generazione automatica registri per
+       ispezione — pulsanti "Esporta Excel"/"Esporta PDF" dentro
+       `/registro-haccp`, filtrabili per periodo, riservati al titolare.
+       Un unico pacchetto: checklist pulizie, temperature, scongelamento/
+       cottura, tracciabilità fornitori (DDT/scadenza, punto 4), formazione
+       HACCP dello staff (punto 5). Backend: `datiIspezione()` in
+       `registroHaccpController.js` aggrega le query già esistenti (nessuna
+       nuova tabella), export Excel con libreria `xlsx` già in uso nel
+       progetto (stesso pattern di `timbratureController.exportExcel`).
+       Frontend: PDF costruito lato client con `jsPDF` (stesso pattern già
+       in uso in planning-camere/menu, nessuna libreria PDF lato server).
+       **Non ancora eseguito contro Postgres reale** — solo `node -c` +
+       `npx esbuild`, come per il resto della sessione 3/4.
+    7. ✅ [VERIFICATO 16/08/2026, nessun codice necessario] Conservazione a
+       norma — controllato che nessun job/cron nel backend cancelli mai
+       automaticamente righe da `haccp_checklist`, `registro_temperature`,
+       `registro_cottura` o `movimenti_magazzino`: il requisito "conservare
+       ≥3 anni" è già rispettato di fatto, i dati restano finché qualcuno
+       non li cancella a mano dall'interfaccia. Se in futuro verrà
+       introdotta una pulizia automatica di vecchi dati, va escluso
+       esplicitamente questo gruppo di tabelle.
+    ⚠️ **RIPIANIFICATO 16/08/2026**: il titolare ha fornito due documenti
+    (`docs/HACCP/haccp - requisiti e leggi.md`, normativa CE 852/2004 +
+    178/2002 + Regione Liguria per un hotel a Lerici) e un template esatto
+    (`docs/HACCP/registri_HACCP_A1_A8.xlsx`, 8 fogli con lo schema di campi
+    ufficiale per ogni registro) più un CSV con le soglie di temperatura
+    confermate. Confronto con i 7 punti sopra: coprono bene A.2/A.3 (in
+    parte) ma A.1 (ricevimento merci) non aveva mai il controllo vero
+    all'arrivo, A.4 (buffet) zero copertura, A.5/A.6/A.7 più deboli del
+    template, A.8 (infestanti) mai pianificato. Nuovo piano in 4 sessioni
+    per costruire tutti gli 8 registri A.1-A.8 secondo lo schema esatto del
+    template, con pagina unica "Registri HACCP" a tab e export per singolo
+    controllo + omnicomprensivo. A.1/A.2/A.3/A.5/A.7/A.8 obbligatori per il
+    titolare, A.4/A.6 costruiti ma con on/off da `/impostazioni/haccp`
+    (`configurazione_moduli_haccp`, migration 041) in attesa di verifica sul
+    piano HACCP reale dell'hotel. Sessione 1 (anagrafica apparecchiature +
+    redesign registro temperature) fatta lo stesso giorno, vedi punto 1
+    sopra.
+    ✅ **Sessione 2 (16/08/2026) — A.1 Ricevimento merci + A.4 Buffet**:
+    nuove tabelle `registro_ricevimento_merci` e `registro_buffet`
+    (migration 043), CRUD in `registroHaccpController.js`, route in
+    `routes/registroHaccp.js`, due nuovi tab nella pagina `/registro-haccp`
+    (`Truck`/`UtensilsCrossed`). A.1 sempre attivo (obbligatorio); "esito"
+    (conforme/non conforme) resta una valutazione manuale dell'operatore —
+    il template non distingue refrigerato da congelato con un campo
+    dedicato, quindi niente fuori-soglia automatico calcolato dalla sola
+    temperatura, stesso principio già usato per la cottura (nessuna soglia
+    inventata dove lo schema non la supporta in modo pulito). A.4 è un
+    modulo "in forse": soglie **confermate dal titolare** (CSV) freddo
+    ≤ +5°C / caldo ≥ +60°C, calcolate come frigo/freezer (`fuoriSogliaBuffet`
+    in `registroHaccpController.js`, non salvate in tabella). Corretto un
+    buco di permessi di Sessione 1: `GET /impostazioni/haccp/moduli` era
+    riservato al solo titolare (`soloTitolare` globale sulla route), ma il
+    tab A.4 nel frontend deve poterlo leggere per chiunque abbia accesso
+    alla sezione haccp per decidere se mostrarsi — ora `richiedeSezione
+    ('haccp')` solo su quella GET, `soloTitolare` resta su tutto il resto
+    (anagrafica apparecchiature, PUT moduli). Doppio controllo lato server
+    su `creaBuffet`: 403 se il modulo è spento, non solo tab nascosto lato
+    UI. Test nuovi in `tests/api/registro-haccp.test.js` (CRUD, permessi,
+    validazione, fuori-soglia, 403 a modulo spento con ripristino stato) —
+    ✅ **Eseguiti contro Postgres reale: tutti verdi (confermato dal
+    titolare).** Export Excel/PDF per questi due registri rimandato apposta
+    alla sessione 4 (dove si rifà l'intero export ispezione sul formato
+    esatto del template, non ha senso costruirlo due volte).
+    ✅ **Sessione 3 (16/08/2026) — A.6 Manutenzioni programmate + A.7
+    Formazione + A.8 Infestanti**: nuove tabelle `registro_manutenzioni`,
+    `registro_formazione`, `registro_infestanti` (migration 044), CRUD in
+    `registroHaccpController.js`, route in `routes/registroHaccp.js`, tre
+    nuovi tab in `/registro-haccp` (Manutenzioni/Formazione/Infestanti).
+    A.6 riusa l'anagrafica `apparecchiature_haccp` condivisa con A.2 (nessuna
+    seconda anagrafica "attrezzatura" testuale) — nuovo endpoint `GET
+    /registro-haccp/apparecchiature` (tutti i tipi attivi, non filtrato su
+    frigo/freezer/abbattitore come `/temperature`) per popolare il select
+    del form, leggibile da chiunque abbia la sezione haccp. A.6 è modulo "in
+    forse" (`manutenzioni_programmate`): stesso doppio controllo di A.4 (tab
+    nascosto se spento + 403 lato server su `creaManutenzione`). A.7/A.8
+    sempre attivi (obbligatori). Campi "ditta_operatore"/"firma_responsabile"
+    (A.6, A.8) e "nome_cognome" (A.7) restano testo libero e non FK verso
+    `users`/apparecchiature esterne: possono riferirsi a ditte esterne o
+    personale non ancora censito nel gestionale, stesso principio già usato
+    per fornitore/prodotto in A.1. "attestato"/"firma_partecipante" (A.7)
+    sono flag booleani, non documenti — nessuna gestione allegati in questa
+    sessione. Test nuovi in `tests/api/registro-haccp.test.js` (CRUD,
+    permessi, validazione, 403 a modulo A.6 spento con ripristino stato) —
+    ✅ **Eseguiti contro Postgres reale: 70/70 verdi (confermato dal
+    titolare).**
+    ✅ **Sessione 4 (16/08/2026) — pagina unica a 8 tab + export esatto
+    template + arricchimento A.3/A.5**: `/registro-haccp` ora ha un tab per
+    ognuno degli 8 registri (aggiunto il tab Pulizie, riusa GLI STESSI
+    endpoint `/hr/haccp` della pagina storica `/checklist` — nessuna
+    tabella nuova, `/checklist` resta raggiungibile com'era, due UI
+    temporaneamente sullo stesso backend). Migration 045: arricchiti A.3
+    (`registro_cottura` + `lotto_partita`/`limite_critico`/
+    `tempo_cottura_min`/`azione_correttiva`) e A.5 (`haccp_checklist` +
+    `ora`/`prodotto_utilizzato`/`dosaggio`/`tempo_contatto_min`/
+    `firma_responsabile`) per allinearli al template — solo ALTER additivi,
+    nessuna riga esistente rotta. "limite_critico" di A.3 resta testo
+    libero compilato dall'operatore (stesso principio già usato altrove:
+    manca un campo categoria per calcolarlo automaticamente).
+    **Export completamente rifatto**: l'export "ispezione" ad-hoc della
+    sessione precedente (intestazioni italiane inventate, solo 5 registri su
+    8, formazione presa dalle scadenze invece che dal registro A.7 vero) è
+    stato eliminato e sostituito da `backend/controllers/
+    esportazioneHaccpController.js` — una configurazione `REGISTRI` unica
+    (nome foglio, intestazioni ESATTE lette dal template con openpyxl,
+    query) usata sia per l'export di un singolo registro
+    (`GET /registro-haccp/export/:registro/excel|dati`, Excel un foglio o
+    dati JSON per il PDF lato client) sia per l'omnicomprensivo
+    (`GET /registro-haccp/export/omnicomprensivo/excel|dati`, 8 fogli in un
+    file, stesso ordine A.1→A.8). Riservato al titolare, come lo storico.
+    A.2 dell'export filtra solo frigo/freezer (l'abbattitore non ha soglia
+    statica, non appartiene al foglio "Temp_frigo_freezer"); A.3 filtra solo
+    tipo='cottura' (lo scongelamento non ha un limite critico da valutare).
+    La vecchia "Tracciabilità fornitori" (da `movimenti_magazzino`) non è
+    più un foglio dell'omnicomprensivo: non fa parte degli 8 registri del
+    template, i dati restano comunque disponibili da Magazzino — nessuna
+    perdita, solo non più duplicati qui. Frontend: nuovo blocco unico
+    "Export per ispezione" con selettore registro + Excel/PDF singolo, più
+    due pulsanti "tutti gli 8 registri". Il PDF (jsPDF, nessuna libreria
+    lato server) è generico: disegna qualunque {label, headers, righe} come
+    testo `campo: valore` per riga, riusato identico per singolo registro e
+    omnicomprensivo — non 8 layout scritti a mano.
+    Test nuovi in `tests/api/registro-haccp.test.js`: un caso per registro
+    (`test.each`) che verifica intestazioni ESATTE + valori della riga di
+    fixture, permessi, 404 su chiave registro inesistente, content-type
+    Excel, ordine A.1→A.8 dell'omnicomprensivo, guardia di regressione
+    sull'ordine delle rotte (`/export/omnicomprensivo/*` deve essere
+    registrata prima di `/export/:registro/*` in `routes/registroHaccp.js`,
+    altrimenti Express la instraderebbe come se "omnicomprensivo" fosse il
+    nome di un registro). **Eseguiti contro Postgres reale: tutti verdi
+    (confermato dal titolare).**
+    Modulo 6.1 (A.1-A.8) COMPLETO secondo lo schema del template fornito dal
+    titolare — codice+test verificati, ma **mai visto in UI dal titolare**:
+    nessuna delle 4 sessioni è stata controllata a schermo finora, solo
+    tramite API/test automatici. Resta in attesa di: (a) conferma A.4/A.6
+    restano attivi o vengono spenti dopo verifica sul piano HACCP reale
+    dell'hotel (`/impostazioni/haccp`); (b) integrazione sensori IoT,
+    deliberatamente fuori scope finché non si sceglie l'hardware (vedi
+    sotto).
+    ✅ **Navigazione unificata (16/08/2026, segnalato dal titolare)**: la
+    sessione 4 aveva lasciato in sidebar due voci HACCP separate ("HACCP" →
+    `/checklist`, "Registro HACCP" → `/registro-haccp`) nonostante A.5
+    (pulizie) fosse ormai un tab dentro `/registro-haccp` — duplicazione
+    inutile, corretta in `frontend/components/layout/Sidebar.tsx`: rimossa
+    la voce desktop `/checklist`, l'icona rapida mobile del ruolo cuoco
+    aggiornata da `/checklist` a `/registro-haccp`, unica voce rimasta
+    rinominata "HACCP" (prima "Registro HACCP", ridondante ora che è l'unica).
+    Aggiornato anche il link dell'alert dashboard "Checklist HACCP non
+    ancora compilata" (`alertChecklistHaccp` in `dashboardController.js`) da
+    `/checklist` a `/registro-haccp`, per coerenza.
+    ✅ **`/checklist` cancellata (16/08/2026, richiesta esplicita del
+    titolare)**: la pagina `frontend/app/checklist/page.jsx` era rimasta
+    come URL orfano dopo l'unificazione sopra — il titolare ha chiesto di
+    eliminarla del tutto invece di lasciarla raggiungibile digitando
+    l'indirizzo. Spostata (non cancellabile direttamente da qui) in
+    `_to_delete/checklist_<timestamp>/` nella cartella del progetto sul suo
+    PC; va cancellata manualmente quella sottocartella quando vuole. Il
+    BACKEND non è stato toccato: `haccpController.js`, `routes/hr.js`
+    (`/hr/haccp`, `/hr/haccp/storico`) e `tests/api/hr.test.js` restano
+    tutti come sono, perché sono lo stesso backend che ora serve il tab
+    Pulizie dentro `/registro-haccp` — cancellarli avrebbe rotto quel tab.
     Deliberatamente non nell'elenco per ora: integrazione sensori IoT in
     tempo reale — dipende da quale hardware si sceglierà (vedi sotto),
     costruirla prima rischia di legarsi a un protocollo specifico che poi
-    cambia.
+    cambia. Gli endpoint POST dei registri sono comunque già utilizzabili
+    da un gateway sensori quando arriverà, nessuna rilavorazione prevista.
     ⚠️ **Sensoristica — NON ancora scelta, serve ricerca mirata quando si
     riprende questo modulo**: unico prezzo confermato oggi è Hanna
     Instruments HI144 (data logger da parete singolo punto, 52-80 €+IVA,
@@ -1073,10 +1311,11 @@ Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
   import('jspdf')` + disegno manuale (nessuna libreria di tabelle tipo
   autotable). Nessuna modifica backend — entrambi gli export riusano
   endpoint già esistenti (`/prenotazioni/griglia`, `/prenotazioni`).
-  Verificato solo con `tsc --noEmit` (0 errori) dal sandbox — **il
-  rendering reale dei due PDF (leggibilità colonne giorno, comportamento
-  su più pagine se le camere aumentano) non è stato ancora visto dal
-  titolare**, da controllare al primo giro in locale.
+  Verificato solo con `tsc --noEmit` (0 errori) dal sandbox. ✅ **Accettato
+  dal titolare così com'è (15/08/2026)**: "per il momento mi accontento di
+  quello che vedo" — non un collaudo formale riga per riga, ma nessuna
+  richiesta di ulteriore verifica a breve. Non riproporre come "da
+  verificare" finché non emerge un problema concreto nell'uso reale.
 
   ✅ **Confermato dal titolare come export di base** (14/08/2026), con
   richiesta esplicita di segnare possibili ottimizzazioni future (non ora,
@@ -1102,8 +1341,9 @@ quando `soggiorno.gruppo_id` è valorizzato, più una riga nel tooltip
 barra (non funzionava più correttamente con due figli, icona+testo) e
 spostato sullo `<span>` del cognome con `min-w-0` (necessario perché un
 figlio flex non si restringe sotto la sua larghezza di contenuto senza
-`min-width:0` esplicito). Verificato con `tsc --noEmit`, non ancora visto
-in UI dal titolare su una prenotazione di gruppo reale.
+`min-width:0` esplicito). Verificato con `tsc --noEmit`. ✅ **Confermato dal
+titolare in UI (15/08/2026)**: "esiste e c'è, è ok" — visto su una
+prenotazione di gruppo reale, nessun problema segnalato.
 
 Planning camere — gestione "prenotazioni non assegnate" (14/08/2026, da
 costruire insieme al modulo 2.3 — channel manager WuBook, non prima).
@@ -1169,8 +1409,9 @@ POST /prenotazioni con gruppo_id già valorizzato, mai
 sull'aggregazione dei pagamenti di gruppo (gruppiController.dettaglio()
 sommava solo pagamenti.gruppo_id, escludendo i pagamenti "solo questa
 camera" con prenotazione_id — corretto), nuova pagina /gruppi (elenco con
-statistiche aggregate, voce sidebar sotto CLIENTI E PRENOTAZIONI). Non
-ancora vista in UI dal titolare — dettaglio completo in
+statistiche aggregate, voce sidebar sotto CLIENTI E PRENOTAZIONI). ✅
+**Confermato dal titolare in UI (15/08/2026)**: "fatto e funziona" —
+dettaglio completo in
 DIARIO_SESSIONI.md, voce "Seguito: chiuso il gap ModalDettaglioGruppo...".
 
 Limiti noti della pagina /gruppi e di GET /api/gruppi (15/08/2026):

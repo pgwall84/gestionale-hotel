@@ -4405,9 +4405,11 @@ Verificato con `tsc --noEmit` (stavolta un controllo vero: `Sidebar.tsx` è
 un `.tsx` reale, non un `.jsx` come `planning-camere` — 0 errori),
 `npx esbuild` su `planning-camere/page.jsx` e sulla nuova `gruppi/page.jsx`
 (sintassi/JSX validi) e `node -c` su tutti i controller/route backend
-toccati. **Nessuna di queste modifiche è stata ancora vista in UI dal
-titolare**, in particolare: il nuovo pulsante "Aggiungi camera" dentro
-`ModalDettaglioGruppo`, la pagina `/gruppi` (oggi vuota, non testabile
-finché non esiste almeno un gruppo reale), e la correzione del totale
-pagamenti (verificabile solo pagando "solo questa camera" su un gruppo con
-più camere e controllando che la card si aggiorni).
+toccati. **Aggiornamento stesso giorno — confermato dal titolare in locale: tutto
+torna.** Include il fix della X (vedi voce successiva) verificato riaprendo
+Francesco Bianchi (camera 1 e 2, 25-26 agosto): X sparita solo sulla
+camera "primo". Confermato anche il caso a 3 camere attive (`Math.min` sugli id regge).
+Non testato esplicitamente lo svuotamento fino all'ultima camera rimasta
+(quello lo blocca comunque il backend con 400, indipendentemente da quale
+sia "primo" — vedi `soggiornoController.annulla`), da tenere presente come
+prossimo scenario se emergesse un dubbio.

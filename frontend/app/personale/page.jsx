@@ -1296,10 +1296,23 @@ function TabScadenze({ utenti }) {
           </div>
           <div>
             <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Tipo *</label>
-            <input type="text" required placeholder="Es: visita medica" value={form.tipo}
+            {/* Datalist di suggerimento (15/08/2026) — il campo resta testo
+                libero (non blocca inserimenti diversi), ma propone valori
+                coerenti così lo stesso tipo di scadenza non finisce salvato
+                con grafie diverse (es. "Corso HACCP" vs "corso haccp") —
+                utile fin da ora per il futuro registro export ispezione
+                HACCP (modulo 6.1, punto 6 di docs/EVOLUTIVE.md). */}
+            <input type="text" required placeholder="Es: Visita medica" value={form.tipo}
                    onChange={e => setForm({ ...form, tipo: e.target.value })}
+                   list="tipi-scadenza-suggeriti"
                    className="w-full px-2 rounded-lg text-sm outline-none"
                    style={{ height: '36px', border: '0.5px solid var(--border)', background: 'var(--card)' }} />
+            <datalist id="tipi-scadenza-suggeriti">
+              <option value="Corso HACCP" />
+              <option value="Visita medica" />
+              <option value="Corso antincendio" />
+              <option value="Contratto" />
+            </datalist>
           </div>
           <div>
             <label className="text-[11px] font-medium mb-1 block" style={{ color: 'var(--muted-foreground)' }}>Scadenza *</label>

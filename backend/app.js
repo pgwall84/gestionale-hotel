@@ -37,6 +37,8 @@ const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
 const ross1000Routes           = require('./routes/ross1000');
 const manutenzioneRoutes       = require('./routes/manutenzione');
 const catalogoAddebitiRoutes   = require('./routes/catalogoAddebiti');
+const registroHaccpRoutes      = require('./routes/registroHaccp');
+const configurazioneHaccpRoutes = require('./routes/configurazioneHaccp');
 const { lista: auditLista }            = require('./controllers/auditController');
 const { verificaToken, soloTitolare }  = require('./middleware/auth');
 
@@ -116,6 +118,8 @@ app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
 app.use('/api/manutenzione',         manutenzioneRoutes);
 app.use('/api/impostazioni/catalogo-addebiti', catalogoAddebitiRoutes);
+app.use('/api/registro-haccp',       registroHaccpRoutes);
+app.use('/api/impostazioni/haccp',   configurazioneHaccpRoutes);
 app.get('/api/audit', verificaToken, soloTitolare, auditLista);
 
 app.use('/uploads', express.static(require('path').join(__dirname, 'uploads')));

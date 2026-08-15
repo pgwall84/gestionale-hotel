@@ -45,7 +45,10 @@ async function lista(req, res) {
 }
 
 // POST /api/haccp — salva/aggiorna l'intera checklist del giorno
-// Riceve un array di { attrezzatura, completata, note }
+// Riceve un array di { attrezzatura, completata, note, ora, prodotto_utilizzato,
+// dosaggio, tempo_contatto_min, firma_responsabile } — gli ultimi 5 campi
+// aggiunti in sessione 4 (migration 045) per allinearsi al template A.5,
+// tutti opzionali per non rompere il flusso rapido "spunta e salva" esistente.
 async function salva(req, res) {
   const { data, voci } = req.body;
   const dataChecklist = data || new Date().toISOString().split('T')[0];
@@ -61,9 +64,13 @@ async function salva(req, res) {
 
     for (const voce of voci) {
       await pool.query(
-        `INSERT INTO haccp_checklist (attrezzatura, user_id, data, completata, note)
-         VALUES ($1, $2, $3, $4, $5)`,
-        [voce.attrezzatura, req.utente.id, dataChecklist, voce.completata || false, voce.note || null]
+        `INSERT INTO haccp_checklist
+           (attrezzatura, user_id, data, completata, note, ora, prodotto_utilizzato,
+            dosaggio, tempo_contatto_min, firma_responsabile)
+         VALUES ($1, $2, $3, $4, $5, $6, $7, $8, $9, $10)`,
+        [voce.attrezzatura, req.utente.id, dataChecklist, voce.completata || false, voce.note || null,
+         voce.ora || null, voce.prodotto_utilizzato || null, voce.dosaggio || null,
+         voce.tempo_contatto_min || null, voce.firma_responsabile || null]
       );
     }
 
@@ -79,7 +86,8 @@ async function storico(req, res) {
   const { da, a } = req.query;
   try {
     const result = await pool.query(`
-      SELECT h.data, h.attrezzatura, h.completata, h.note, u.nome, u.cognome
+      SELECT h.data, h.attrezzatura, h.completata, h.note, h.ora, h.prodotto_utilizzato,
+             h.dosaggio, h.tempo_contatto_min, h.firma_responsabile, u.nome, u.cognome
       FROM haccp_checklist h LEFT JOIN users u ON u.id = h.user_id
       WHERE h.data BETWEEN $1 AND $2
       ORDER BY h.data DESC, h.attrezzatura

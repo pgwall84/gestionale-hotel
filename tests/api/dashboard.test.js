@@ -6,7 +6,7 @@ const request = require('supertest');
 const app     = require('../../backend/app');
 const { authHeader } = require('../helpers/auth');
 const { getPool, chiudiPool } = require('../helpers/db');
-const { alertInviiAlloggiati } = require('../../backend/controllers/dashboardController');
+const { alertInviiAlloggiati, alertChecklistHaccp } = require('../../backend/controllers/dashboardController');
 
 const DATA_TEST        = '2099-11-23';
 const DATA_ANNO_SCORSO = '2098-11-23'; // stesso giorno/mese di DATA_TEST, anno-1 — coerente con dashboardController.js:116
@@ -259,6 +259,56 @@ describe('alertInviiAlloggiati (Fase C)', () => {
     // chiamata "di produzione" (nessun filtro) non generi errori dopo
     // l'estrazione della funzione.
     const alerts = await alertInviiAlloggiati();
+    expect(Array.isArray(alerts)).toBe(true);
+  });
+});
+
+// ─── alertChecklistHaccp — checklist HACCP non compilata (modulo 6.1 punto 3, 15/08/2026) ──
+// Usa DATA_TEST (2099, in alto) per non toccare haccp_checklist reale — a
+// differenza di alertInviiAlloggiati sopra, questa query filtra su `data`
+// (parametro), non su CURRENT_DATE, quindi la data fittizia funziona qui.
+// oraCorrente è sempre passato esplicitamente ai test: la soglia dipende
+// dall'ora reale quando NON viene passato, che renderebbe questi test
+// non deterministici (falliscono o passano secondo l'ora in cui girano) —
+// vedi commento in testa alla funzione in dashboardController.js.
+describe('alertChecklistHaccp (modulo 6.1 punto 3)', () => {
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM haccp_checklist WHERE data = $1', [DATA_TEST]);
+  });
+
+  test('nessuna checklist, ora 10 (mattina) → nessun alert', async () => {
+    const alerts = await alertChecklistHaccp({ data: DATA_TEST, oraCorrente: 10 });
+    expect(alerts).toEqual([]);
+  });
+
+  test('nessuna checklist, ora 16 (pomeriggio) → alert ambra', async () => {
+    const alerts = await alertChecklistHaccp({ data: DATA_TEST, oraCorrente: 16 });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].type).toBe('amber');
+    expect(alerts[0].category).toBe('HACCP');
+    expect(alerts[0].link).toBe('/registro-haccp');
+  });
+
+  test('nessuna checklist, ora 23 (sera tardi) → alert rosso', async () => {
+    const alerts = await alertChecklistHaccp({ data: DATA_TEST, oraCorrente: 23 });
+    expect(alerts).toHaveLength(1);
+    expect(alerts[0].type).toBe('red');
+  });
+
+  test('checklist già compilata → NESSUN alert anche a ora 23', async () => {
+    const db = getPool();
+    await db.query(
+      `INSERT INTO haccp_checklist (attrezzatura, user_id, data, completata) VALUES ('Frigorifero cucina', 1, $1, true)`,
+      [DATA_TEST]
+    );
+
+    const alerts = await alertChecklistHaccp({ data: DATA_TEST, oraCorrente: 23 });
+    expect(alerts).toEqual([]);
+  });
+
+  test('senza override oraCorrente, la funzione resta utilizzabile da alert() in produzione (nessuna eccezione)', async () => {
+    const alerts = await alertChecklistHaccp();
     expect(Array.isArray(alerts)).toBe(true);
   });
 });

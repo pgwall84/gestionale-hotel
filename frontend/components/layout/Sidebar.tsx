@@ -37,9 +37,9 @@ import { useEffect, useMemo, useState } from 'react';
 import {
   LayoutDashboard, Users, Package, UtensilsCrossed,
   CalendarDays, BookOpen, Car, Archive, Settings,
-  Clock, LogOut, LogIn, ChefHat, ClipboardList, BedDouble,
+  Clock, LogOut, LogIn, ChefHat, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench, Receipt, KeyRound, Search, Home,
+  Wrench, Receipt, KeyRound, Search, Home, Thermometer,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -109,7 +109,13 @@ const SEZIONI_MENU = [
       // widget di controlli da realizzare (vedi docs/EVOLUTIVE.md, voce
       // "Modulo HACCP avanzato"), caricherà qui — non un cambio di posto a
       // sé, ma la stessa idea del widget "Adempimenti" già in Dashboard.
-      { href: '/checklist', icona: ClipboardList, testo: 'HACCP', ruoli: [...AT,'cuoco'] },
+      // UNIFICATA (sessione 4, 16/08/2026): la vecchia voce "/checklist"
+      // (pulizie/sanificazione) è stata rimossa da qui — quel registro
+      // (A.5) ora è un tab dentro /registro-haccp insieme agli altri 7
+      // (A.1-A.8), niente più due voci separate per lo stesso dominio.
+      // /checklist resta raggiungibile via URL diretto (nessuna pagina
+      // cancellata) ma non compare più in navigazione.
+      { href: '/registro-haccp', icona: Thermometer, testo: 'HACCP', ruoli: [...AT,'cuoco'] },
     ],
   },
   {
@@ -119,7 +125,11 @@ const SEZIONI_MENU = [
     voci: [
       { href: '/sala',         icona: UtensilsCrossed, testo: 'Sala / Comande', ruoli: [...AT,'cameriere','portiere_notte'] },
       { href: '/cucina',       icona: ChefHat,         testo: 'Cucina',          ruoli: [...AT,'cuoco','portiere_notte'] },
-      { href: '/prenotazioni', icona: CalendarDays,    testo: 'Prenotazioni',    ruoli: [...AT,'receptionist','portiere_notte'] },
+      // Rinominata da "Prenotazioni" a "Prenota Tavolo" (15/08/2026, richiesta
+      // esplicita del titolare) per togliere l'ambiguità con l'altra voce
+      // "Prenotazioni" in CLIENTI E PRENOTAZIONI (/planning-camere, camere) —
+      // segnalata come nota aperta in docs/EVOLUTIVE.md, ora risolta qui.
+      { href: '/prenotazioni', icona: CalendarDays,    testo: 'Prenota Tavolo',  ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/menu',         icona: BookOpen,        testo: 'Menu',            ruoli: [...AT,'cuoco','portiere_notte'] },
       { href: '/magazzino',    icona: Package,         testo: 'Magazzino',       ruoli: [...AT,'cuoco','receptionist','portiere_notte'] },
     ],
@@ -165,6 +175,7 @@ const SEZIONI_MENU = [
       { href: '/impostazioni/alloggiati', icona: ShieldCheck, testo: 'Alloggiati Web', ruoli: AT },
       { href: '/impostazioni/email', icona: Mail, testo: 'Testi email', ruoli: AT },
       { href: '/impostazioni/catalogo-addebiti', icona: Receipt, testo: 'Catalogo addebiti', ruoli: AT },
+      { href: '/impostazioni/haccp', icona: Thermometer, testo: 'HACCP', ruoli: AT },
     ],
   },
 ];
@@ -206,7 +217,10 @@ const VOCI_MOBILE: Record<string, { href: string; icona: React.ElementType; test
     { href: '/timbratura', icona: Clock,          testo: 'Timbratura' },
     { href: '/cucina',     icona: ChefHat,        testo: 'Cucina' },
     { href: '/magazzino',  icona: Package,        testo: 'Magazz.' },
-    { href: '/checklist',  icona: ClipboardList,  testo: 'HACCP' },
+    // Puntava a /checklist (solo pulizie A.5) — aggiornato a /registro-haccp
+    // (sessione 4, 16/08/2026), che ora copre tutti gli 8 registri A.1-A.8,
+    // A.5 incluso come tab.
+    { href: '/registro-haccp', icona: Thermometer, testo: 'HACCP' },
   ],
   portiere_notte: [
     { href: '/timbratura',      icona: Clock,           testo: 'Timbratura' },

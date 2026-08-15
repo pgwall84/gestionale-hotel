@@ -1,5 +1,6 @@
 const pool = require('../config/db');
 const { LABEL_LUOGO } = require('./manutenzioneController');
+const { fuoriSoglia } = require('./registroHaccpController');
 
 // Alloggiati Web: invii scaduti o ancora in coda (Fase C, 14/08/2026).
 // Diverso dall'alert "documento incompleto" (quello è readiness PRIMA
@@ -60,6 +61,110 @@ async function alertInviiAlloggiati({ soggiornoIds } = {}) {
   });
 }
 
+// HACCP: checklist pulizie/sanificazione non ancora compilata oggi
+// (15/08/2026, modulo 6.1 punto 3 — audit fatto sul codice esistente prima
+// di scrivere: la checklist e lo storico esistevano già, mancavano solo
+// l'attribuzione visibile in UI (fix separato in frontend/app/checklist/
+// page.jsx, dato già restituito da GET /hr/haccp) e questo alert. Soglie
+// orarie (15/22) sono un'ipotesi ragionevole non confermata dal titolare —
+// facili da ritoccare, sono solo le due costanti sotto.
+//
+// Estratta come funzione a sé (stesso motivo di alertInviiAlloggiati sopra):
+// la soglia dipende dall'ora corrente, non testabile in modo deterministico
+// se calcolata solo da NOW() dentro alert(). oraCorrente, se passato dal
+// test, sovrascrive l'ora reale — alert() in produzione la chiama sempre
+// senza override, comportamento identico a un calcolo inline.
+async function alertChecklistHaccp({ data, oraCorrente } = {}) {
+  const dataQuery = data || new Date().toISOString().slice(0, 10);
+  const result = await pool.query(`
+    SELECT COUNT(*) AS tot,
+           EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/Rome') AS ora_reale
+    FROM haccp_checklist WHERE data = $1
+  `, [dataQuery]);
+
+  const tot = Number(result.rows[0].tot);
+  const ora = oraCorrente !== undefined ? oraCorrente : Number(result.rows[0].ora_reale);
+
+  if (tot > 0) return [];
+  if (ora >= 22) {
+    return [{
+      type: 'red',
+      text: 'Checklist HACCP di oggi non ancora compilata',
+      category: 'HACCP',
+      link: '/registro-haccp',
+    }];
+  }
+  if (ora >= 15) {
+    return [{
+      type: 'amber',
+      text: 'Checklist HACCP di oggi non ancora compilata',
+      category: 'HACCP',
+      link: '/registro-haccp',
+    }];
+  }
+  return [];
+}
+
+// Registro temperature: apparecchiature attive non ancora rilevate oggi +
+// rilevazioni fuori soglia (modulo 6.1 punto 1, ricostruito 16/08/2026 su
+// anagrafica apparecchiature_haccp — non più una lista fissa di stringhe).
+// Stesso pattern/soglie orarie di alertChecklistHaccp sopra per la parte
+// "non rilevato". La parte "fuori soglia" usa fuoriSoglia() di
+// registroHaccpController.js, tipo per tipo (frigo/freezer confermati dal
+// titolare 16/08; abbattitore resta senza giudizio statico, vedi commento lì).
+async function alertRegistroTemperature({ data, oraCorrente } = {}) {
+  const dataQuery = data || new Date().toISOString().slice(0, 10);
+  const [apparecchiatureRes, orarioRes, lettureRes] = await Promise.all([
+    pool.query(
+      `SELECT id, nome, tipo FROM apparecchiature_haccp
+       WHERE attivo = true AND tipo IN ('frigo', 'freezer', 'abbattitore')`
+    ),
+    pool.query(`SELECT EXTRACT(HOUR FROM NOW() AT TIME ZONE 'Europe/Rome') AS ora_reale`),
+    pool.query(
+      `SELECT t.apparecchiatura_id, t.valore, a.nome AS apparecchio_nome, a.tipo AS apparecchio_tipo
+       FROM registro_temperature t
+       JOIN apparecchiature_haccp a ON a.id = t.apparecchiatura_id
+       WHERE t.data = $1`,
+      [dataQuery]
+    ),
+  ]);
+
+  const ora = oraCorrente !== undefined ? oraCorrente : Number(orarioRes.rows[0].ora_reale);
+  const letture = lettureRes.rows;
+
+  const alerts = [];
+
+  // Fuori soglia — rosso sempre, indipendentemente dall'ora (un valore
+  // pericoloso non diventa meno urgente aspettando sera).
+  for (const r of letture) {
+    if (fuoriSoglia(r.apparecchio_tipo, r.valore) === true) {
+      alerts.push({
+        type: 'red',
+        text: `${r.apparecchio_nome} fuori soglia (${parseFloat(r.valore)}°C)`,
+        category: 'HACCP · Temperature',
+        link: '/registro-haccp',
+      });
+    }
+  }
+
+  // Apparecchiature non ancora rilevate oggi — stessa soglia oraria 15/22 di
+  // alertChecklistHaccp.
+  if (ora >= 15) {
+    const rilevateOggi = new Set(letture.map(r => r.apparecchiatura_id));
+    const mancanti = apparecchiatureRes.rows.filter(a => !rilevateOggi.has(a.id));
+    for (const app of mancanti) {
+      alerts.push({
+        type: ora >= 22 ? 'red' : 'amber',
+        text: `${app.nome} — nessuna rilevazione temperatura oggi`,
+        category: 'HACCP · Temperature',
+        link: '/registro-haccp',
+      });
+    }
+  }
+
+  return alerts;
+}
+
 // GET /api/dashboard/alert
 // Aggrega alert reali da più moduli
 async function alert(req, res) {
@@ -85,6 +190,12 @@ async function alert(req, res) {
         link: '/ztl',
       });
     }
+
+    // ── HACCP: checklist pulizie/sanificazione non ancora compilata oggi ──────
+    alerts.push(...(await alertChecklistHaccp()));
+
+    // ── HACCP: registro temperature — mancanti/fuori soglia ───────────────────
+    alerts.push(...(await alertRegistroTemperature()));
 
     // ── Menu: nessun piatto disponibile oggi ──────────────────────────────────
     const menuCheck = await pool.query(`
@@ -649,4 +760,4 @@ async function suggerimentoIncasso(req, res) {
   }
 }
 
-module.exports = { alert, kpi, registraIncasso, suggerimentoIncasso, alertInviiAlloggiati, gruppiWidget };
+module.exports = { alert, kpi, registraIncasso, suggerimentoIncasso, alertInviiAlloggiati, alertChecklistHaccp, alertRegistroTemperature, gruppiWidget };
