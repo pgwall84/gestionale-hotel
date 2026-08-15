@@ -19,6 +19,17 @@
 // esplicita del titolare: teniamola come già era) — continua a leggere
 // SEZIONI_MENU per il pannello "Menu", quindi eredita automaticamente il
 // nuovo raggruppamento, ma le 4 icone rapide (VOCI_MOBILE) restano invariate.
+//
+// Ritocco 15/08/2026 (richiesta esplicita del titolare): eliminato il
+// gruppo PRINCIPALE (Dashboard/Timbratura/Personale) — Timbratura e
+// Personale spostate in STRUTTURA, HACCP spostata da STRUTTURA ad
+// ADEMPIMENTI (stesso tema "scadenze/controlli"). Dashboard non è più
+// dentro nessun gruppo: restava già raggiungibile in un click dall'icona
+// Home dedicata in cima alla rail desktop (aggiunta il 14/08) — aggiunta
+// qui l'equivalente sulla bottom nav mobile, altrimenti i ruoli le cui 4
+// icone rapide non includono /home (receptionist, cameriere, cuoco,
+// portiere_notte) restavano senza alcuna via per tornare in Dashboard da
+// telefono, dato che il pannello "Menu" mobile elenca solo i gruppi.
 
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -44,16 +55,6 @@ const TUTTI = ['admin','titolare','receptionist','cameriere','cuoco','portiere_n
 // altra parte del componente va toccata (rail, pannello, ricerca, bottom
 // sheet mobile leggono tutti da qui).
 const SEZIONI_MENU = [
-  {
-    label: 'PRINCIPALE',
-    railLabel: 'Principale',
-    iconaGruppo: LayoutDashboard,
-    voci: [
-      { href: '/home',       icona: LayoutDashboard, testo: 'Dashboard',  ruoli: TUTTI },
-      { href: '/timbratura', icona: Clock,            testo: 'Timbratura', ruoli: TUTTI },
-      { href: '/personale',  icona: Users,            testo: 'Personale',  ruoli: TUTTI },
-    ],
-  },
   {
     // Ex OSPITALITÀ (era 9 voci in un solo gruppo) — divisa in due:
     // questo copre cliente/prenotazione, il prossimo camere/tariffe.
@@ -99,6 +100,13 @@ const SEZIONI_MENU = [
       { href: '/ztl',      icona: Car,          testo: 'ZTL Targhe',   ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/alloggiati-web', icona: ShieldCheck, testo: 'Alloggiati Web', ruoli: AT },
       { href: '/impostazioni/ross1000', icona: FileCode, testo: 'Statistiche Liguria', ruoli: AT },
+      // Spostata qui da STRUTTURA (15/08/2026, richiesta esplicita del
+      // titolare): stesso tema "scadenze/controlli obbligatori" delle altre
+      // voci del gruppo. In futuro, quando il modulo HACCP avrà un vero
+      // widget di controlli da realizzare (vedi docs/EVOLUTIVE.md, voce
+      // "Modulo HACCP avanzato"), caricherà qui — non un cambio di posto a
+      // sé, ma la stessa idea del widget "Adempimenti" già in Dashboard.
+      { href: '/checklist', icona: ClipboardList, testo: 'HACCP', ruoli: [...AT,'cuoco'] },
     ],
   },
   {
@@ -121,7 +129,13 @@ const SEZIONI_MENU = [
     railLabel: 'Struttura',
     iconaGruppo: Wrench,
     voci: [
-      { href: '/checklist',icona: ClipboardList, testo: 'HACCP',        ruoli: [...AT,'cuoco'] },
+      // Timbratura e Personale spostate qui da PRINCIPALE (15/08/2026,
+      // richiesta esplicita del titolare — gruppo PRINCIPALE eliminato:
+      // la Dashboard resta comunque raggiungibile in un click dall'icona
+      // dedicata in cima alla rail desktop, vedi più sotto nel componente,
+      // e dalla nuova icona equivalente in cima alla bottom nav mobile).
+      { href: '/timbratura', icona: Clock, testo: 'Timbratura', ruoli: TUTTI },
+      { href: '/personale',  icona: Users, testo: 'Personale',  ruoli: TUTTI },
       { href: '/archivio', icona: Archive,       testo: 'Archivio',     ruoli: [...AT,'receptionist'] },
       { href: '/manutenzione', icona: Wrench, testo: 'Manutenzione', ruoli: TUTTI },
     ],
@@ -456,6 +470,24 @@ export default function Sidebar() {
         className="md:hidden fixed bottom-0 left-0 right-0 z-50 flex items-center justify-around px-1 py-2 border-t"
         style={{ background: 'var(--sidebar-bg)', borderColor: 'var(--sidebar-border)' }}
       >
+        {/* Scorciatoia diretta alla Dashboard (15/08/2026) — equivalente
+            mobile dell'icona Home dedicata sulla rail desktop, aggiunta
+            insieme all'eliminazione del gruppo PRINCIPALE: senza questa,
+            i ruoli le cui 4 icone rapide (VOCI_MOBILE) non includono già
+            /home (receptionist, cameriere, cuoco, portiere_notte) non
+            avrebbero più alcun modo di raggiungere la Dashboard da
+            telefono, perché il pannello "Menu" sotto elenca solo i gruppi
+            di SEZIONI_MENU e Dashboard non ne fa più parte. Non tocca
+            VOCI_MOBILE (provvisorie, revisione a parte già in sospeso). */}
+        <Link
+          href="/home"
+          className="flex flex-col items-center gap-0.5 px-3 py-1 rounded-lg"
+          style={{ color: pathname === '/home' ? 'var(--sidebar-text-active)' : 'var(--sidebar-text)' }}
+        >
+          <Home size={20} strokeWidth={pathname === '/home' ? 2 : 1.5} />
+          <span className="text-[10px]">Home</span>
+        </Link>
+
         {(VOCI_MOBILE[u.ruolo] ?? VOCI_MOBILE['dipendente']).map((voce) => {
           const Icona = voce.icona;
           const attiva = pathname === voce.href || (voce.href !== '/home' && pathname.startsWith(voce.href));

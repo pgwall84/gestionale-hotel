@@ -129,6 +129,134 @@ async function inserisciManuale(req, res) {
   }
 }
 
+// Upsert di una singola riga in ztl_prenotazioni, per camera_numero+data_arrivo
+// (vincolo unico già esistente). Estratta da importExcel il 15/08/2026 per
+// essere riusata anche da sincronizzaDaPlanning (switch temporaneo modalità
+// import, vedi configurazione_ztl) — stessa logica, sorgente diversa.
+// Non tocca MAI una riga già 'inviata'/'conclusa' (già inviata al Comune o
+// ospite partito): in quel caso segnala solo un conflitto se le date sono
+// cambiate, non sovrascrive.
+async function upsertPrenotazioneZtl({ camera, ospite, arrivo, partenza, source, userId }) {
+  const esistente = await pool.query(
+    'SELECT id, targa, stato, data_partenza FROM ztl_prenotazioni WHERE camera_numero = $1 AND data_arrivo = $2',
+    [camera, arrivo]
+  );
+
+  if (esistente.rows.length) {
+    const ex = esistente.rows[0];
+    if (ex.data_partenza !== partenza && ex.stato === 'inviata') {
+      return { esito: 'conflitto', conflitto: { camera, ospite, arrivo, partenzaVecchia: ex.data_partenza, partenzaNuova: partenza, targa: ex.targa } };
+    }
+    if (!ex.targa || ex.data_partenza !== partenza) {
+      await pool.query(`
+        UPDATE ztl_prenotazioni SET
+          ospite_nome   = COALESCE($1, ospite_nome),
+          data_partenza = $2,
+          import_source = $3
+        WHERE id = $4 AND stato NOT IN ('inviata','conclusa')
+      `, [ospite, partenza, source, ex.id]);
+      return { esito: 'aggiornata' };
+    }
+    return { esito: 'saltata' };
+  }
+
+  await pool.query(`
+    INSERT INTO ztl_prenotazioni
+      (camera_numero, ospite_nome, data_arrivo, data_partenza, stato, import_source, created_by)
+    VALUES ($1, $2, $3, $4, 'mancante', $5, $6)
+  `, [camera, ospite, arrivo, partenza, source, userId]);
+  return { esito: 'nuova' };
+}
+
+// GET /api/ztl/configurazione — modalità attiva (excel_ts | planning_interno).
+// Switch TEMPORANEO (15/08/2026, vedi migration 038): oggi le prenotazioni
+// reali restano su TeamSystem, quindi il default è excel_ts. Accessibile a
+// chiunque abbia accesso a ZTL — solo lettura, nessun dato sensibile.
+async function getConfigurazione(req, res) {
+  try {
+    const r = await pool.query('SELECT modalita, updated_at FROM configurazione_ztl WHERE id = 1');
+    res.json(r.rows[0] || { modalita: 'excel_ts' });
+  } catch (err) {
+    console.error('Errore lettura configurazione ZTL:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// PATCH /api/ztl/configurazione — cambia modalità. Solo titolare/admin
+// (soloTitolare), stessa soglia di Import TS/Export VigiPass.
+async function impostaConfigurazione(req, res) {
+  const { modalita } = req.body;
+  if (!['excel_ts', 'planning_interno'].includes(modalita)) {
+    return res.status(400).json({ errore: "modalita deve essere 'excel_ts' o 'planning_interno'." });
+  }
+  try {
+    const r = await pool.query(
+      `UPDATE configurazione_ztl SET modalita = $1, updated_at = NOW(), updated_by = $2 WHERE id = 1 RETURNING modalita, updated_at`,
+      [modalita, req.utente.id]
+    );
+    res.json(r.rows[0]);
+  } catch (err) {
+    console.error('Errore aggiornamento configurazione ZTL:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// POST /api/ztl/sincronizza-planning — popola ztl_prenotazioni da soggiorni
+// interni, alternativa all'import Excel TS quando configurazione_ztl.modalita
+// = 'planning_interno'. Finestra: da oggi a +30 giorni (arrivi), più chi è
+// già in casa — copre lo stesso orizzonte utile dell'import TS senza tirare
+// dentro prenotazioni lontanissime nel tempo. Un solo ospite per soggiorno
+// (il titolare del soggiorno, ospite_id) anche se il nucleo familiare ne ha
+// altri collegati — stessa semplificazione già usata altrove (es. alert
+// Dashboard) perché ztl_prenotazioni ha un solo nome per camera.
+// Solo titolare/admin.
+async function sincronizzaDaPlanning(req, res) {
+  try {
+    const soggiorni = await pool.query(`
+      SELECT c.numero::text AS camera_numero,
+             (o.cognome || ' ' || o.nome) AS ospite_nome,
+             s.data_arrivo, s.data_partenza
+      FROM soggiorni s
+      JOIN camere c ON c.id = s.camera_id
+      JOIN ospiti o ON o.id = s.ospite_id
+      WHERE s.cancellato = false
+        AND s.data_partenza >= CURRENT_DATE
+        AND s.data_arrivo <= CURRENT_DATE + INTERVAL '30 days'
+      ORDER BY s.data_arrivo
+    `);
+
+    // Stessi nomi di campo di importExcel (camereConflitto/errori) — le due
+    // risposte sono intercambiabili per un eventuale componente di riepilogo
+    // condiviso in UI, invece di due forme diverse per lo stesso concetto.
+    const risultati = { nuove: 0, aggiornate: 0, saltate: 0, errori: [], camereConflitto: [] };
+    for (const riga of soggiorni.rows) {
+      const camera = String(riga.camera_numero || '').trim().replace(/^0+/, '');
+      if (!camera) { risultati.saltate++; continue; }
+      try {
+        const esito = await upsertPrenotazioneZtl({
+          camera,
+          ospite: riga.ospite_nome,
+          arrivo: riga.data_arrivo,
+          partenza: riga.data_partenza,
+          source: 'planning_interno',
+          userId: req.utente.id,
+        });
+        if (esito.esito === 'conflitto') risultati.camereConflitto.push(esito.conflitto);
+        else if (esito.esito === 'nuova') risultati.nuove++;
+        else if (esito.esito === 'aggiornata') risultati.aggiornate++;
+        else risultati.saltate++;
+      } catch (e) {
+        risultati.errori.push(`Camera ${camera}: ${e.message}`);
+      }
+    }
+
+    res.json({ risultati });
+  } catch (err) {
+    console.error('Errore sincronizzazione ZTL da planning:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
 // POST /api/ztl/import — import Excel da TeamSystem Hospitality
 // Colonne attese (flessibili): Camera/Stanza/Room, Ospite/Guest/Cognome, Arrivo/CheckIn, Partenza/CheckOut
 async function importExcel(req, res) {
@@ -186,39 +314,13 @@ async function importExcel(req, res) {
       }
 
       try {
-        // Verifica se esiste già con targa già inviata
-        const esistente = await pool.query(
-          'SELECT id, targa, stato, data_partenza FROM ztl_prenotazioni WHERE camera_numero = $1 AND data_arrivo = $2',
-          [camera, arrivo]
-        );
-
-        if (esistente.rows.length) {
-          const ex = esistente.rows[0];
-          // Se le date di partenza sono cambiate e la targa è già inviata → segnala conflitto
-          if (ex.data_partenza !== partenza && ex.stato === 'inviata') {
-            risultati.camereConflitto.push({ camera, ospite, arrivo, partenzaVecchia: ex.data_partenza, partenzaNuova: partenza, targa: ex.targa });
-          }
-          // Aggiorna solo se non ha targa o se le date sono cambiate
-          if (!ex.targa || ex.data_partenza !== partenza) {
-            await pool.query(`
-              UPDATE ztl_prenotazioni SET
-                ospite_nome   = COALESCE($1, ospite_nome),
-                data_partenza = $2,
-                import_source = 'excel_ts'
-              WHERE id = $3 AND stato NOT IN ('inviata','conclusa')
-            `, [ospite, partenza, ex.id]);
-            risultati.aggiornate++;
-          } else {
-            risultati.saltate++;
-          }
-        } else {
-          await pool.query(`
-            INSERT INTO ztl_prenotazioni
-              (camera_numero, ospite_nome, data_arrivo, data_partenza, stato, import_source, created_by)
-            VALUES ($1, $2, $3, $4, 'mancante', 'excel_ts', $5)
-          `, [camera, ospite, arrivo, partenza, req.utente.id]);
-          risultati.nuove++;
-        }
+        const esito = await upsertPrenotazioneZtl({
+          camera, ospite, arrivo, partenza, source: 'excel_ts', userId: req.utente.id,
+        });
+        if (esito.esito === 'conflitto') risultati.camereConflitto.push(esito.conflitto);
+        else if (esito.esito === 'nuova') risultati.nuove++;
+        else if (esito.esito === 'aggiornata') risultati.aggiornate++;
+        else risultati.saltate++;
       } catch (e) {
         risultati.errori.push(`Camera ${camera}: ${e.message}`);
       }
@@ -293,4 +395,7 @@ async function elimina(req, res) {
   }
 }
 
-module.exports = { lista, alert, salvaTarga, segnaInviata, segnaNonNecessaria, inserisciManuale, importExcel, esportaVigiPass, elimina };
+module.exports = {
+  lista, alert, salvaTarga, segnaInviata, segnaNonNecessaria, inserisciManuale, importExcel, esportaVigiPass, elimina,
+  getConfigurazione, impostaConfigurazione, sincronizzaDaPlanning,
+};

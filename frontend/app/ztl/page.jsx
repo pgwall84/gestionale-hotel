@@ -323,6 +323,14 @@ export default function PaginaZTL() {
   const [importRisultati, setImportRisultati] = useState(null);
   const importRef = useRef(null);
 
+  // Switch temporaneo modalità import (15/08/2026, vedi migration 038 e
+  // docs/EVOLUTIVE.md) — 'excel_ts' finché le prenotazioni reali restano su
+  // TeamSystem, 'planning_interno' quando la migrazione sarà completata.
+  // Da rimuovere insieme a Import TS quando quel giorno arriverà.
+  const [modalitaZtl, setModalitaZtl] = useState(null); // null finché non caricata
+  const [cambiandoModalita, setCambiandoModalita] = useState(false);
+  const [sincronizzando, setSincronizzando] = useState(false);
+
   // Form manuale (titolare)
   const [mostraFormManuale, setMostraFormManuale] = useState(false);
   const [formManuale, setFormManuale] = useState({ camera_numero: '', ospite_nome: '', data_arrivo: '', data_partenza: '' });
@@ -336,6 +344,14 @@ export default function PaginaZTL() {
   }, [filtro]);
 
   useEffect(() => { carica(); }, [carica]);
+
+  // Modalità import (switch temporaneo) — letta da tutti (sola lettura),
+  // cambiabile solo da titolare/admin (vedi bottone più sotto).
+  useEffect(() => {
+    api.get('/ztl/configurazione')
+      .then(r => setModalitaZtl(r.data.modalita))
+      .catch(() => setModalitaZtl('excel_ts')); // fallback prudente: comportamento di oggi
+  }, []);
 
   // ── OCR flow ──
   async function handleFoto(e) {
@@ -413,6 +429,38 @@ export default function PaginaZTL() {
     } finally {
       setImportLoading(false);
       e.target.value = '';
+    }
+  }
+
+  // ── Sincronizza da Planning (switch temporaneo, modalità planning_interno) ──
+  async function handleSincronizza() {
+    setSincronizzando(true);
+    try {
+      const r = await api.post('/ztl/sincronizza-planning', {});
+      setImportRisultati(r.data.risultati); // stesso riepilogo/modale dell'import Excel
+      carica();
+    } catch (err) {
+      alert(err.message || 'Errore sincronizzazione da Planning');
+    } finally {
+      setSincronizzando(false);
+    }
+  }
+
+  // ── Switch modalità (temporaneo, vedi commento sullo state più sopra) ──
+  async function cambiaModalita() {
+    const nuova = modalitaZtl === 'excel_ts' ? 'planning_interno' : 'excel_ts';
+    const messaggioConferma = nuova === 'planning_interno'
+      ? 'Passare a "Sincronizza da Planning"? Da questo momento ZTL leggerà le prenotazioni dal Planning camere del gestionale invece che dall\'Excel di TeamSystem — usalo solo se le prenotazioni reali sono già create qui dentro.'
+      : 'Tornare a "Import TS"? ZTL leggerà di nuovo solo dall\'Excel esportato da TeamSystem.';
+    if (!window.confirm(messaggioConferma)) return;
+    setCambiandoModalita(true);
+    try {
+      await api.patch('/ztl/configurazione', { modalita: nuova });
+      setModalitaZtl(nuova);
+    } catch (err) {
+      alert(err.message || 'Errore nel cambio modalità');
+    } finally {
+      setCambiandoModalita(false);
     }
   }
 
@@ -504,23 +552,43 @@ export default function PaginaZTL() {
 
         {/* Azioni titolare */}
         {isTitolare && (
-          <div className="flex gap-1.5 flex-wrap justify-end">
-            <button onClick={() => importRef.current?.click()} disabled={importLoading}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium disabled:opacity-50"
-                    style={{ border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
-              {importLoading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
-              Import TS
-            </button>
-            <button onClick={esportaVigiPass}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
-                    style={{ border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
-              <Download size={11} /> Export VigiPass
-            </button>
-            <button onClick={() => setMostraFormManuale(p => !p)}
-                    className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
-                    style={{ background: 'var(--hotel-navy)', color: 'white' }}>
-              <Plus size={11} /> Aggiungi
-            </button>
+          <div className="flex flex-col items-end gap-1">
+            <div className="flex gap-1.5 flex-wrap justify-end">
+              {modalitaZtl === 'planning_interno' ? (
+                <button onClick={handleSincronizza} disabled={sincronizzando}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium disabled:opacity-50"
+                        style={{ border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
+                  {sincronizzando ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                  Sincronizza da Planning
+                </button>
+              ) : (
+                <button onClick={() => importRef.current?.click()} disabled={importLoading}
+                        className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium disabled:opacity-50"
+                        style={{ border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
+                  {importLoading ? <Loader2 size={11} className="animate-spin" /> : <Upload size={11} />}
+                  Import TS
+                </button>
+              )}
+              <button onClick={esportaVigiPass}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
+                      style={{ border: '1px solid var(--border)', background: 'var(--card)', color: 'var(--foreground)' }}>
+                <Download size={11} /> Export VigiPass
+              </button>
+              <button onClick={() => setMostraFormManuale(p => !p)}
+                      className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
+                      style={{ background: 'var(--hotel-navy)', color: 'white' }}>
+                <Plus size={11} /> Aggiungi
+              </button>
+            </div>
+            {/* Switch temporaneo — vedi commento sullo state modalitaZtl più
+                sopra: da rimuovere insieme a Import TS a migrazione completata. */}
+            {modalitaZtl && (
+              <button onClick={cambiaModalita} disabled={cambiandoModalita}
+                      className="text-[10px] underline disabled:opacity-50"
+                      style={{ color: 'var(--muted-foreground)' }}>
+                Modalità: {modalitaZtl === 'planning_interno' ? 'Planning interno' : 'Import TS'} (temporaneo — cambia)
+              </button>
+            )}
           </div>
         )}
       </div>
@@ -590,7 +658,9 @@ export default function PaginaZTL() {
           </p>
           {isTitolare && !filtro && (
             <p className="text-[12px] mt-2" style={{ color: 'var(--muted-foreground)' }}>
-              Importa il planning da TeamSystem con il pulsante "Import TS"
+              {modalitaZtl === 'planning_interno'
+                ? 'Sincronizza dal Planning camere con il pulsante "Sincronizza da Planning"'
+                : 'Importa il planning da TeamSystem con il pulsante "Import TS"'}
             </p>
           )}
         </div>

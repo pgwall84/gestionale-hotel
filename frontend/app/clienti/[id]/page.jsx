@@ -18,7 +18,7 @@ import SelettoreCodiceAlloggiati from '@/components/ui/SelettoreCodiceAlloggiati
 import SelettoreProvincia from '@/components/ui/SelettoreProvincia';
 import ScannerDocumento from '@/components/ui/ScannerDocumento';
 import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
-import { ArrowLeft, Eye, Users, X, Search } from 'lucide-react';
+import { ArrowLeft, Eye, Users, X, Search, Star, ShieldAlert, Tag as TagIcon } from 'lucide-react';
 
 const RUOLI_LETTURA = ['admin', 'titolare', 'receptionist', 'portiere_notte'];
 const RUOLI_SCRITTURA = ['admin', 'titolare', 'receptionist'];
@@ -70,6 +70,15 @@ export default function PaginaDettaglioCliente() {
   const [email, setEmail] = useState('');
   const [telefono, setTelefono] = useState('');
   const [note, setNote] = useState('');
+
+  // CRM ospiti (14/08/2026): allergie/blacklist_motivo modificabili solo
+  // dentro il form "Modifica" esistente (come note); VIP/blacklist/tag
+  // sono azioni istantanee (stesso pattern di toggleConsenso sotto) —
+  // non serve un "Salva" separato per un flag o un chip.
+  const [allergie, setAllergie] = useState('');
+  const [blacklistMotivo, setBlacklistMotivo] = useState('');
+  const [nuovoTag, setNuovoTag] = useState('');
+  const [tagDisponibili, setTagDisponibili] = useState([]);
 
   // Documento/nazionalità (modulo 2.5) — testo + codice abbinato (vedi
   // commento in testa a SelettoreCodiceAlloggiati.jsx).
@@ -131,6 +140,8 @@ export default function PaginaDettaglioCliente() {
       setEmail(res.data.email || '');
       setTelefono(res.data.telefono || '');
       setNote(res.data.note || '');
+      setAllergie(res.data.allergie || '');
+      setBlacklistMotivo(res.data.blacklist_motivo || '');
       setStatoNascitaTesto(res.data.stato_nascita_testo || '');
       setStatoNascitaCodice(res.data.stato_nascita_codice || null);
       setComuneNascitaTesto(res.data.comune_nascita_testo || '');
@@ -172,6 +183,12 @@ export default function PaginaDettaglioCliente() {
   useEffect(() => {
     if (utente && RUOLI_LETTURA.includes(utente.ruolo)) caricaCliente();
   }, [utente, caricaCliente]);
+
+  // Tag disponibili per l'autocomplete (CRM ospiti, 14/08/2026).
+  useEffect(() => {
+    if (!utente || !RUOLI_LETTURA.includes(utente.ruolo)) return;
+    api.get('/ospiti/tag').then(res => setTagDisponibili(res.data)).catch(() => {});
+  }, [utente]);
 
   // Ricerca cliente da collegare al nucleo familiare (debounce leggero)
   useEffect(() => {
@@ -255,6 +272,7 @@ export default function PaginaDettaglioCliente() {
         stato_residenza_codice: statoResidenzaCodice,
         comune_residenza_testo: comuneResidenzaTesto || null,
         comune_residenza_codice: comuneResidenzaCodice,
+        allergie: allergie || null,
       });
       setModifica(false);
       setDocumentoNumero('');
@@ -274,6 +292,66 @@ export default function PaginaDettaglioCliente() {
       caricaCliente();
     } catch (err) {
       setErrore(err.message || 'Errore nell\'aggiornamento del consenso.');
+    }
+  }
+
+  // VIP/blacklist/tag (CRM ospiti, 14/08/2026) — azioni istantanee, stesso
+  // pattern di toggleConsenso sopra: nessun "Salva" separato per un flag o
+  // un chip, coerente con come il resto della pagina gestisce i booleani.
+  async function toggleVip() {
+    setErrore('');
+    try {
+      await api.patch(`/ospiti/${id}`, { vip: !cliente.vip });
+      caricaCliente();
+    } catch (err) {
+      setErrore(err.message || "Errore nell'aggiornamento VIP.");
+    }
+  }
+
+  async function toggleBlacklist() {
+    setErrore('');
+    try {
+      await api.patch(`/ospiti/${id}`, { blacklist: !cliente.blacklist });
+      caricaCliente();
+    } catch (err) {
+      setErrore(err.message || "Errore nell'aggiornamento blacklist.");
+    }
+  }
+
+  // Motivo blacklist: salvato al blur (non un flag/chip istantaneo come gli
+  // altri campi CRM, ma testo libero — evita un PATCH ad ogni tasto).
+  // Non salva se il campo non è cambiato rispetto a quanto già caricato.
+  async function salvaBlacklistMotivo() {
+    if (blacklistMotivo === (cliente.blacklist_motivo || '')) return;
+    setErrore('');
+    try {
+      await api.patch(`/ospiti/${id}`, { blacklist_motivo: blacklistMotivo || null });
+      caricaCliente();
+    } catch (err) {
+      setErrore(err.message || 'Errore nel salvataggio del motivo blacklist.');
+    }
+  }
+
+  async function aggiungiTag() {
+    const valore = nuovoTag.trim();
+    if (!valore || (cliente.tag || []).includes(valore)) { setNuovoTag(''); return; }
+    setErrore('');
+    try {
+      await api.patch(`/ospiti/${id}`, { tag: [...(cliente.tag || []), valore] });
+      setNuovoTag('');
+      caricaCliente();
+    } catch (err) {
+      setErrore(err.message || "Errore nell'aggiunta del tag.");
+    }
+  }
+
+  async function rimuoviTag(tagDaRimuovere) {
+    setErrore('');
+    try {
+      await api.patch(`/ospiti/${id}`, { tag: (cliente.tag || []).filter(t => t !== tagDaRimuovere) });
+      caricaCliente();
+    } catch (err) {
+      setErrore(err.message || 'Errore nella rimozione del tag.');
     }
   }
 
@@ -305,9 +383,11 @@ export default function PaginaDettaglioCliente() {
     );
   }
 
-  const totaleSpeso = (cliente.storico_soggiorni || [])
-    .filter(s => !s.cancellato)
-    .reduce((tot, s) => tot + (Number(s.tariffa_totale) || 0), 0);
+  // Calcolato dal backend (camera + addebiti extra, esclusi soggiorni
+  // cancellati) — vedi TOTALE_SPESO in anagraficaOspitiController.js.
+  // Prima del 14/08/2026 era un reduce() qui che sommava solo
+  // tariffa_totale, ignorando gli addebiti extra: numero più basso del reale.
+  const totaleSpeso = Number(cliente.totale_speso || 0);
 
   const colonneSoggiorni = [
     { header: 'Camera', accessor: s => s.camera_numero || s.camera_nome },
@@ -354,6 +434,7 @@ export default function PaginaDettaglioCliente() {
               <p><span style={{ color: 'var(--muted-foreground)' }}>Email:</span> {cliente.email || '—'}</p>
               <p><span style={{ color: 'var(--muted-foreground)' }}>Telefono:</span> {cliente.telefono || '—'}</p>
               <p><span style={{ color: 'var(--muted-foreground)' }}>Note:</span> {cliente.note || '—'}</p>
+              <p><span style={{ color: 'var(--muted-foreground)' }}>Allergie/preferenze:</span> {cliente.allergie || '—'}</p>
             </div>
           ) : (
             <div className="space-y-2">
@@ -370,6 +451,9 @@ export default function PaginaDettaglioCliente() {
                 <input placeholder="Telefono" value={telefono} onChange={e => setTelefono(e.target.value)} className="px-3 rounded-lg text-sm outline-none" style={inputStyle} />
               </div>
               <input placeholder="Note" value={note} onChange={e => setNote(e.target.value)} className="w-full px-3 rounded-lg text-sm outline-none" style={inputStyle} />
+              <textarea placeholder="Allergie/preferenze alimentari (14/08/2026 — resta collegata al cliente tra un soggiorno e l'altro, a differenza delle note allergie giornaliere in cucina)"
+                        value={allergie} onChange={e => setAllergie(e.target.value)} rows={2}
+                        className="w-full p-3 rounded-lg text-sm outline-none resize-y" style={{ ...inputStyle, height: 'auto' }} />
               <div className="flex gap-2">
                 <button onClick={salvaModifiche} disabled={salvataggio}
                         className="text-xs font-medium px-3 py-1.5 rounded-lg text-white disabled:opacity-60" style={{ background: 'var(--hotel-navy)' }}>
@@ -415,6 +499,74 @@ export default function PaginaDettaglioCliente() {
                 <button onClick={toggleConsenso} className="text-xs font-medium" style={{ color: 'var(--hotel-amber-dark)' }}>
                   {cliente.consenso_marketing ? 'Revoca' : 'Registra consenso'}
                 </button>
+              )}
+            </div>
+          </div>
+
+          {/* CRM ospiti (14/08/2026) — VIP, blacklist, tag: stesso pattern
+              istantaneo di toggleConsenso sopra, nessun "Salva" separato. */}
+          <div>
+            <h3 className="text-sm font-semibold mb-2" style={{ color: 'var(--foreground)' }}>Cliente</h3>
+            <div className="flex flex-wrap items-center gap-2 mb-3">
+              <button onClick={toggleVip} disabled={!puoScrivere}
+                      className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg disabled:opacity-60"
+                      style={{
+                        background: cliente.vip ? 'var(--status-amber-bg, #FDF1DD)' : 'var(--background)',
+                        color: cliente.vip ? 'var(--hotel-amber-dark)' : 'var(--muted-foreground)',
+                        border: '0.5px solid var(--border)',
+                      }}>
+                <Star size={12} fill={cliente.vip ? 'currentColor' : 'none'} /> {cliente.vip ? 'VIP' : 'Segna VIP'}
+              </button>
+              <button onClick={toggleBlacklist} disabled={!puoScrivere}
+                      className="flex items-center gap-1 text-[11px] font-medium px-2 py-1 rounded-lg disabled:opacity-60"
+                      style={{
+                        background: cliente.blacklist ? 'var(--status-red-bg, #FCE8E8)' : 'var(--background)',
+                        color: cliente.blacklist ? 'var(--status-red-text, #B3261E)' : 'var(--muted-foreground)',
+                        border: '0.5px solid var(--border)',
+                      }}>
+                <ShieldAlert size={12} /> {cliente.blacklist ? 'In blacklist' : 'Segna blacklist'}
+              </button>
+            </div>
+
+            {cliente.blacklist && (
+              <div className="mb-3">
+                <label className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Motivo blacklist</label>
+                <textarea value={blacklistMotivo} onChange={e => setBlacklistMotivo(e.target.value)}
+                          onBlur={salvaBlacklistMotivo} disabled={!puoScrivere} rows={2}
+                          placeholder="Es. mancato pagamento, comportamento scorretto..."
+                          className="w-full p-2 rounded-lg text-sm outline-none resize-y disabled:opacity-60" style={{ ...inputStyle, height: 'auto' }} />
+              </div>
+            )}
+
+            <div>
+              <label className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Tag</label>
+              <div className="flex flex-wrap gap-1.5 mt-1 mb-2">
+                {(cliente.tag || []).length === 0 && (
+                  <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Nessun tag</span>
+                )}
+                {(cliente.tag || []).map(t => (
+                  <span key={t} className="flex items-center gap-1 text-[11px] px-2 py-0.5 rounded-full"
+                        style={{ background: 'var(--background)', border: '0.5px solid var(--border)', color: 'var(--foreground)' }}>
+                    <TagIcon size={10} /> {t}
+                    {puoScrivere && (
+                      <button onClick={() => rimuoviTag(t)} aria-label={`Rimuovi tag ${t}`}>
+                        <X size={10} />
+                      </button>
+                    )}
+                  </span>
+                ))}
+              </div>
+              {puoScrivere && (
+                <div className="flex gap-1.5">
+                  <input value={nuovoTag} onChange={e => setNuovoTag(e.target.value)}
+                         onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); aggiungiTag(); } }}
+                         list="tag-disponibili" placeholder="Aggiungi tag..."
+                         className="flex-1 p-1.5 rounded-lg text-xs outline-none" style={inputStyle} />
+                  <datalist id="tag-disponibili">
+                    {tagDisponibili.map(t => <option key={t} value={t} />)}
+                  </datalist>
+                  <button onClick={aggiungiTag} className="text-xs font-medium px-2 py-1 rounded-lg border">Aggiungi</button>
+                </div>
               )}
             </div>
           </div>

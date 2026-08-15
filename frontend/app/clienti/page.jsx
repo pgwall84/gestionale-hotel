@@ -27,7 +27,8 @@ import SelettoreCodiceAlloggiati from '@/components/ui/SelettoreCodiceAlloggiati
 import SelettoreProvincia from '@/components/ui/SelettoreProvincia';
 import ScannerDocumento from '@/components/ui/ScannerDocumento';
 import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
-import { Search, Plus } from 'lucide-react';
+import Link from 'next/link';
+import { Search, Plus, Star, ShieldAlert, AlertTriangle } from 'lucide-react';
 
 // ICAO alpha-3 → testo leggibile, solo per i casi più comuni tra gli ospiti
 // dell'hotel — riempie il campo cittadinanza con un punto di partenza dopo
@@ -43,6 +44,16 @@ const NAZIONALITA_ICAO = {
 
 const RUOLI_LETTURA = ['admin', 'titolare', 'receptionist', 'portiere_notte'];
 const RUOLI_SCRITTURA = ['admin', 'titolare', 'receptionist'];
+// Unione duplicati (CRM ospiti, 14/08/2026) — più stretto della scrittura
+// normale, stesso giro di shared/ruoli.js sezione 'ospiti'.unisci: solo
+// enforcement UX, il backend è la vera fonte di verità sui permessi.
+const RUOLI_UNISCI = ['admin', 'titolare'];
+
+const OPZIONI_ORDINAMENTO = [
+  { valore: 'cognome', label: 'Cognome' },
+  { valore: 'numero_soggiorni', label: 'N. soggiorni' },
+  { valore: 'totale_speso', label: 'Spesa totale' },
+];
 
 const inputStyle = {
   height: '38px',
@@ -62,6 +73,18 @@ export default function PaginaClienti() {
   const [errore, setErrore] = useState('');
   const [formAperto, setFormAperto] = useState(false);
 
+  // Filtri/ordinamento CRM ospiti (14/08/2026) — limit=200 esplicito:
+  // senza filtri l'endpoint /ospiti resta a 20 risultati (comportamento
+  // storico per l'autocomplete altrove), qui serve vedere la lista vera.
+  const [filtroTag, setFiltroTag] = useState('');
+  const [filtroVip, setFiltroVip] = useState(false);
+  const [filtroBlacklist, setFiltroBlacklist] = useState(false);
+  const [ordina, setOrdina] = useState('cognome');
+  const [tagDisponibili, setTagDisponibili] = useState([]);
+  const [duplicatiCount, setDuplicatiCount] = useState(0);
+
+  const puoUnire = utente && RUOLI_UNISCI.includes(utente.ruolo);
+
   useEffect(() => {
     if (!loading && (!utente || !RUOLI_LETTURA.includes(utente.ruolo))) router.replace('/home');
   }, [utente, loading, router]);
@@ -69,14 +92,19 @@ export default function PaginaClienti() {
   const caricaClienti = useCallback(async (termine) => {
     setCaricamento(true);
     try {
-      const res = await api.get(`/ospiti${termine ? `?search=${encodeURIComponent(termine)}` : ''}`);
+      const parametri = new URLSearchParams({ limit: '200', ordina, direzione: ordina === 'cognome' ? 'asc' : 'desc' });
+      if (termine) parametri.set('search', termine);
+      if (filtroTag) parametri.set('tag', filtroTag);
+      if (filtroVip) parametri.set('vip', 'true');
+      if (filtroBlacklist) parametri.set('blacklist', 'true');
+      const res = await api.get(`/ospiti?${parametri.toString()}`);
       setClienti(res.data);
     } catch (err) {
       setErrore(err.message || 'Errore nel caricamento dei clienti.');
     } finally {
       setCaricamento(false);
     }
-  }, []);
+  }, [ordina, filtroTag, filtroVip, filtroBlacklist]);
 
   // Debounce leggero sulla ricerca — evita una chiamata ad ogni tasto premuto.
   useEffect(() => {
@@ -85,13 +113,38 @@ export default function PaginaClienti() {
     return () => clearTimeout(timer);
   }, [search, utente, caricaClienti]);
 
+  // Tag disponibili per l'autocomplete del filtro (una volta sola).
+  useEffect(() => {
+    if (!utente || !RUOLI_LETTURA.includes(utente.ruolo)) return;
+    api.get('/ospiti/tag').then(res => setTagDisponibili(res.data)).catch(() => {});
+  }, [utente]);
+
+  // Banner duplicati sospetti — solo per chi può unirli, non blocca il
+  // resto della pagina se fallisce (non è un dato critico da mostrare subito).
+  useEffect(() => {
+    if (!puoUnire) return;
+    api.get('/ospiti/duplicati-sospetti')
+      .then(res => setDuplicatiCount(res.data.length))
+      .catch(() => setDuplicatiCount(0));
+  }, [puoUnire]);
+
   if (loading || !utente) return null;
 
   const colonne = [
-    { header: 'Cliente', accessor: c => `${c.cognome} ${c.nome}` },
+    {
+      header: 'Cliente',
+      accessor: c => (
+        <span className="flex items-center gap-1.5">
+          {c.vip && <Star size={12} fill="var(--hotel-amber)" style={{ color: 'var(--hotel-amber)' }} />}
+          {c.blacklist && <ShieldAlert size={12} style={{ color: 'var(--status-red-text)' }} />}
+          {c.cognome} {c.nome}
+        </span>
+      ),
+    },
     { header: 'Email', accessor: c => c.email || '—' },
     { header: 'Telefono', accessor: c => c.telefono || '—' },
     { header: 'Soggiorni', accessor: c => c.numero_soggiorni },
+    { header: 'Spesa totale', accessor: c => `€ ${Number(c.totale_speso || 0).toFixed(2)}` },
     {
       header: 'Marketing',
       accessor: c => (
@@ -115,7 +168,18 @@ export default function PaginaClienti() {
         </div>
       )}
 
-      <div className="flex items-center gap-2 mb-4">
+      {puoUnire && duplicatiCount > 0 && (
+        <Link
+          href="/clienti/duplicati"
+          className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-[13px] mb-4"
+          style={{ background: 'var(--status-amber-bg)', color: 'var(--status-amber-text)' }}
+        >
+          <AlertTriangle size={15} />
+          {duplicatiCount} possibil{duplicatiCount === 1 ? 'e' : 'i'} duplicat{duplicatiCount === 1 ? 'o' : 'i'} da rivedere →
+        </Link>
+      )}
+
+      <div className="flex items-center gap-2 mb-2 flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--muted-foreground)' }} />
           <input
@@ -133,6 +197,38 @@ export default function PaginaClienti() {
             <Plus size={13} /> Nuovo cliente
           </button>
         )}
+      </div>
+
+      <div className="flex items-center gap-2 mb-4 flex-wrap">
+        <input
+          list="tag-disponibili"
+          placeholder="Filtra per tag..."
+          value={filtroTag}
+          onChange={e => setFiltroTag(e.target.value)}
+          className="px-3 rounded-lg text-xs outline-none"
+          style={{ ...inputStyle, height: '32px', width: 160 }}
+        />
+        <datalist id="tag-disponibili">
+          {tagDisponibili.map(t => <option key={t} value={t} />)}
+        </datalist>
+        <button
+          onClick={() => setFiltroVip(v => !v)}
+          className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border"
+          style={filtroVip ? { background: 'var(--hotel-amber)', color: '#fff', borderColor: 'var(--hotel-amber)' } : {}}
+        >
+          <Star size={12} /> Solo VIP
+        </button>
+        <button
+          onClick={() => setFiltroBlacklist(v => !v)}
+          className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border"
+          style={filtroBlacklist ? { background: 'var(--status-red-text)', color: '#fff', borderColor: 'var(--status-red-text)' } : {}}
+        >
+          <ShieldAlert size={12} /> Solo blacklist
+        </button>
+        <select value={ordina} onChange={e => setOrdina(e.target.value)}
+                className="text-xs border rounded-lg px-2 py-1.5" style={{ height: '32px' }}>
+          {OPZIONI_ORDINAMENTO.map(o => <option key={o.valore} value={o.valore}>Ordina: {o.label}</option>)}
+        </select>
       </div>
 
       {formAperto && (

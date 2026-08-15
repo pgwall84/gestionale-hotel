@@ -7,6 +7,44 @@ da consultare quando si torna a toccare il modulo in questione, non da
 lavorare proattivamente.
 
 ```
+Modulo 1.4 — ZTL:
+  ✅ [FATTO 15/08/2026] Switch temporaneo modalità import (Excel TS ↔
+  Planning interno). Segnalato dal titolare: il testo fisso "Importa il
+  planning da TeamSystem con il pulsante Import TS" non rifletteva più la
+  situazione — ZTL dipende al 100% dall'export Excel di TeamSystem, zero
+  riferimenti a `soggiorni` in `ztlController.js`, anche se il gestionale
+  ha ormai un proprio modulo Prenotazioni funzionante. Confermato dal
+  titolare: oggi le prenotazioni reali restano su TS (non ancora la
+  migrazione, modulo 2.3), quindi Import TS resta corretto per ora — ma
+  ZTL va preparato per il giorno in cui non lo sarà più, così la migrazione
+  non lo blocca. Migration `038_ztl_configurazione.sql` (tabella a riga
+  singola `configurazione_ztl`, NON storicizzata — è un interruttore
+  operativo temporaneo, non un dato fiscale come `configurazione_tassa_
+  soggiorno`). `ztlController.js`: estratta la logica di upsert comune
+  (`upsertPrenotazioneZtl`, per camera_numero+data_arrivo, mai sovrascrive
+  una riga già 'inviata'/'conclusa') riusata sia da `importExcel` sia dalla
+  nuova `sincronizzaDaPlanning` (legge `soggiorni` non cancellati con
+  arrivo nei prossimi 30 giorni, un solo ospite per soggiorno — stessa
+  semplificazione già in uso altrove per il nucleo familiare). Nuove rotte
+  `GET/PATCH /api/ztl/configurazione` (lettura a chiunque acceda a ZTL,
+  scrittura solo titolare/admin) e `POST /api/ztl/sincronizza-planning`
+  (solo titolare/admin). Frontend `/ztl`: bottone "Import TS" o
+  "Sincronizza da Planning" a seconda della modalità attiva, stesso modale
+  di riepilogo risultati per entrambi (stessa forma di risposta:
+  nuove/aggiornate/saltate/camereConflitto/errori), piccolo switch in
+  fondo alle azioni titolare con conferma esplicita e testo "temporaneo"
+  per non perderne il motivo tra qualche mese. Verificato con `node -c` e
+  `tsc --noEmit` — non ancora verificato in UI dal titolare (né la
+  modalità Excel, che non dovrebbe essere cambiata dal refactor
+  dell'upsert condiviso, né la nuova modalità Planning interno).
+
+  **RIMOZIONE FUTURA (post-migrazione, quando TS non serve più)**: togliere
+  il bottone "Import TS", lo switch, `POST /api/ztl/import`, il parsing
+  Excel (dipendenza `xlsx` in `ztlController.js`) e la tabella
+  `configurazione_ztl` — tenere solo `sincronizzaDaPlanning` (o renderla
+  automatica, es. ad ogni apertura pagina o via job). Annotato qui apposta
+  per non doverlo re-scoprire quel giorno.
+
 Modulo 1.6 — Ristorante (gap noti, da completare prima del go-live):
   Eliminazione configurazione sala: bloccare se ha tavoli associati,
   consentire solo se vuota. (eliminaConfigurazione non implementata)
@@ -665,12 +703,93 @@ esplicitamente "cosa manca" oltre agli aspetti funzionali di lancio.
     campagna email manuale come oggi "Offerte"): si appoggia
     all'infrastruttura Resend già in produzione (modulo 5.3), solo nuova
     logica di trigger — nessuna nuova dipendenza a pagamento.
-  - CRM ospiti con preferenze/tag (piano alto, allergie ricorrenti,
-    occasioni speciali): oggi `ospiti` ha solo consenso marketing, nessun
-    campo per preferenze riutilizzabili. Propedeutico a personalizzare
-    upsell e comunicazioni — basso costo (solo schema + UI), alto valore
-    per una struttura di dimensioni piccole dove il rapporto ospite è
-    diretto.
+  - ✅ [FATTO 14-15/08/2026] CRM ospiti con preferenze/tag — i 7 gap
+    emersi da `docs/RICERCA_ANAGRAFICA_CLIENTI_COMPETITOR.md` (confronto
+    Mews/Cloudbeds/RoomRaccoon/Slope) implementati come un'unica voce, su
+    decisione esplicita del titolare — non 7 sviluppi separati. Migration
+    `037_crm_ospiti.sql` (colonne `vip`, `blacklist`, `blacklist_motivo`,
+    `allergie`, `tag TEXT[]` con indice GIN, `duplicato_di`); endpoint
+    `GET /api/ospiti` esteso con filtri `tag/vip/blacklist/consenso_marketing/
+    allergia/ordina/direzione/limit` (fino a 200, whitelist colonne
+    ordinamento contro SQL injection sugli identificatori); nuovo
+    `GET /api/ospiti/tag` (suggerimenti), `GET /api/ospiti/duplicati-sospetti`
+    (gruppi per nome+cognome+data di nascita uguali, richiede data di nascita
+    per evitare falsi positivi solo sul nome) e `POST /api/ospiti/:id/unisci`
+    (permesso dedicato `ospiti.unisci`, solo admin/titolare — **mai una
+    cancellazione**: il record "perdente" resta nel DB con `duplicato_di`
+    valorizzato, tutte le FK — soggiorni, soggiorno_ospiti, offerte email,
+    pre check-in — riassegnate in transazione, scelta deliberata perché
+    l'identità ospite è legata a dati legali/Alloggiati Web dove una perdita
+    silenziosa di storico sarebbe un rischio serio). `totale_speso` ora
+    calcolato lato backend (soggiorni + addebiti_extra, prima un `reduce()`
+    frontend che ignorava gli addebiti extra — bug reale corretto in questo
+    giro). Frontend: `/clienti` con filtri tag/VIP/blacklist/ordinamento e
+    banner duplicati sospetti; `/clienti/:id` con toggle VIP/blacklist,
+    motivo blacklist, allergie collegate al cliente (non solo
+    `ospiti_giornalieri`, azzerata ogni giorno), tag con autocomplete;
+    nuova pagina `/clienti/duplicati` con scelta manuale del "vincitore" per
+    gruppo e conferma esplicita prima di unire; alert compleanno (prossimi 7
+    giorni) in Dashboard, calcolato interamente in SQL con
+    `generate_series` per evitare la solita insidia UTC/fuso sull'attraversamento
+    capodanno; Marketing▸Offerte con una terza modalità "Segmento" (filtro
+    tag/VIP, riusa `GET /ospiti` esteso, nessuna modifica al backend delle
+    offerte — popola la stessa lista `selezionati` della ricerca manuale).
+    Verificato con `tsc --noEmit` (frontend) e `node -c` (backend) puliti su
+    tutti i file toccati. **Verificato manualmente dal titolare in locale
+    (15/08/2026), esito positivo su tutti i punti** — inclusi due bug reali
+    trovati e corretti durante la verifica: migration 037 non applicata
+    (Clienti e lista Dashboard alert davano errore, la seconda perché
+    `alert()` raccoglie tutto in un unico try/catch e la query compleanni
+    falliva su colonna mancante, portando giù anche gli alert Alloggiati
+    Web che non c'entravano), e ricerca in `/clienti` che non trovava nulla
+    cercando "nome cognome" insieme (fix: ricerca per parole invece di un
+    solo ILIKE sull'intera stringa, vedi `docs/DIARIO_SESSIONI.md`).
+    **Batteria di test scritta ed eseguita il 15/08/2026** — estesa
+    `tests/api/anagrafica-ospiti.test.js` (stesso file del resto del modulo
+    2.1, non un file a parte) con ricerca per parole, filtri tag/vip,
+    `totale_speso`, `GET /ospiti/tag`, `GET /ospiti/duplicati-sospetti`,
+    `POST /ospiti/:id/unisci` incluso il caso a 3 candidati nello stesso
+    gruppo, permessi per ruolo, e i casi limite booleano/array
+    (`blacklist=false` esplicito, `tag=[]` esplicito vs omesso).
+    **54/54 verdi in locale**, confermato dal titolare — un solo fallimento
+    al primo giro (asserzione `length===1` di un test preesistente non
+    aggiornata per le nuove fixture CRM, che condividono il prefisso di
+    cognome usato nella ricerca), diagnosticato dal titolare/tab Code e
+    corretto stringendo il termine di ricerca invece di allentare
+    l'asserzione — vedi `docs/DIARIO_SESSIONI.md`. Modulo CRM ospiti
+    considerato chiuso: costruito, verificato manualmente, coperto da test
+    automatici verdi. I 7 punti originari, per riferimento:
+    1. Rilevamento/merge duplicati ospiti — oggi la ricerca in `/clienti`
+       è solo `nome ILIKE / cognome ILIKE`
+       (`anagraficaOspitiController.js`), nessun controllo automatico.
+       **Il più urgente dei 7**: il modulo 2.3 (WuBook/OTA) creerà ospiti
+       automaticamente da prenotazioni esterne — lo stesso cliente
+       prenotato una volta diretto e una volta da un canale OTA rischia
+       di diventare più schede distinte senza che nessuno se ne accorga.
+       Meglio risolverlo prima che 2.3 parta, non dopo che il database ha
+       già duplicati silenziosi.
+    2. Totale speso per cliente esposto da un endpoint (oggi solo un
+       `reduce()` lato frontend nella scheda singola, non ordinabile/
+       filtrabile in lista — "chi sono i miei 10 clienti migliori" oggi
+       richiede di aprire ogni scheda a mano).
+    3. Tag/etichette libere sul cliente (oggi esiste solo un'"etichetta"
+       sul nucleo familiare, concetto diverso — per gruppi di ospiti
+       dello stesso soggiorno, non riusabile come tag su un singolo
+       cliente nel tempo).
+    4. Flag VIP/blacklist visibile in reception all'apertura scheda —
+       nessun campo dedicato oggi.
+    5. Allergie/preferenze alimentari collegate all'anagrafica cliente,
+       non solo a `ospiti_giornalieri.note_allergie` (tabella dei coperti
+       del giorno corrente, azzerata ogni giorno) — un ospite abituale
+       con un'allergia nota deve rifarla presente ogni volta.
+    6. Promemoria compleanno — `data_nascita` è già raccolta (obbligo
+       Alloggiati Web), il dato c'è, semplicemente non viene ancora
+       usato per altro.
+    7. Segmentazione dinamica per Marketing▸Offerte (5.3) oltre a "tutti
+       col consenso" o selezione manuale — es. per periodo di soggiorno,
+       spesa, allergia. Dipende dai punti 2 e 5: senza spesa/preferenze
+       strutturate non c'è nulla su cui segmentare, va quindi sviluppato
+       dopo quei due, non in parallelo.
 
   PRIORITÀ MEDIA (valore reale, ma richiede integrazioni esterne o
   costo/complessità maggiore):

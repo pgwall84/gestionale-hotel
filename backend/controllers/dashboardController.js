@@ -233,6 +233,37 @@ async function alert(req, res) {
       });
     }
 
+    // ── CRM ospiti: compleanni nei prossimi 7 giorni (14/08/2026) ─────────────
+    // Punto 6 dell'evolutiva CRM ospiti — solo segnalazione in dashboard per
+    // ora, l'invio email automatico resta da valutare (dipende dai testi da
+    // scrivere, deciso esplicitamente col titolare). Confronto mese/giorno
+    // calcolato interamente in SQL con generate_series, non in JS: evita di
+    // dover gestire a mano l'attraversamento capodanno (dicembre→gennaio) e
+    // il rischio toISOString/UTC già presente altrove nel progetto (vedi
+    // CLAUDE.md — convenzione date). data_nascita duplicati esclusi
+    // (duplicato_di IS NULL), stesso filtro di default di lista().
+    const compleanni = await pool.query(`
+      SELECT o.id, o.nome, o.cognome, (gs.giorno - CURRENT_DATE) AS giorni_mancanti
+      FROM ospiti o
+      JOIN LATERAL generate_series(CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days', INTERVAL '1 day') AS gs(giorno) ON true
+      WHERE o.duplicato_di IS NULL
+        AND o.data_nascita IS NOT NULL
+        AND EXTRACT(MONTH FROM o.data_nascita) = EXTRACT(MONTH FROM gs.giorno)
+        AND EXTRACT(DAY FROM o.data_nascita) = EXTRACT(DAY FROM gs.giorno)
+      ORDER BY giorni_mancanti ASC
+      LIMIT 5
+    `);
+    for (const c of compleanni.rows) {
+      const giorni = Number(c.giorni_mancanti);
+      const quando = giorni === 0 ? 'oggi' : `tra ${giorni} ${giorni === 1 ? 'giorno' : 'giorni'}`;
+      alerts.push({
+        type: 'amber',
+        text: `Compleanno di ${c.cognome} ${c.nome} — ${quando}`,
+        category: 'Clienti · Compleanni',
+        link: `/clienti/${c.id}`,
+      });
+    }
+
     // ── Manutenzione: segnalazioni aperte o in lavorazione ────────────────────
     // Modulo nuovo (06/08/2026) — priorità alta in rosso, il resto in ambra,
     // stesso criterio già usato sopra per le scadenze HR.

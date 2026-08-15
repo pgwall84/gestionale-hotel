@@ -3869,3 +3869,207 @@ precompilato (solo camere)". Verificato solo con `tsc --noEmit`/`node -c`
 (0 errori) — **non ancora visto in UI dal titolare**, in particolare se il
 suggerimento è davvero utile nell'uso reale o disturba più di quanto
 aiuti.
+
+### CRM ospiti — 7 punti competitivi, sviluppati come voce unica (14-15/08/2026)
+
+Stessa sessione del giorno prima: fatta anche una ricerca di mercato
+sull'anagrafica clienti (`docs/RICERCA_ANAGRAFICA_CLIENTI_COMPETITOR.md`,
+confronto Mews/Cloudbeds/RoomRaccoon/Slope, verificata contro lo schema
+`ospiti` reale via subagent — non assunta). 7 gap trovati: nessun
+rilevamento duplicati, `totale speso` mai esposto da un endpoint (solo un
+`reduce()` frontend), nessun tag, nessun VIP/blacklist, allergie solo
+giornaliere (`ospiti_giornalieri`, azzerate ogni giorno — non collegate
+all'identità cliente), nessun promemoria compleanno nonostante
+`data_nascita` già raccolta, nessuna segmentazione dinamica per
+Marketing▸Offerte. Il titolare ha chiesto di unificarli in un'unica voce
+evolutiva e poi di svilupparli tutti insieme, non uno per uno — due
+chiarimenti raccolti prima di partire: rilevamento duplicati = solo
+segnalazione, mai unione automatica (rischio troppo alto, l'identità
+ospite è legata a dati legali/Alloggiati Web); promemoria compleanno =
+solo lista in dashboard per ora, l'automatismo email rimandato (dipende
+dai testi da scrivere).
+
+PIANO scritto e confermato dal titolare, eseguito in 6 fasi:
+
+- **A — Backend**: migration `037_crm_ospiti.sql` (`vip`, `blacklist`,
+  `blacklist_motivo`, `allergie`, `tag TEXT[]` con indice GIN,
+  `duplicato_di` con indice parziale). `anagraficaOspitiController.js`:
+  `lista()` riscritta con filtri `tag/vip/blacklist/consenso_marketing/
+  allergia/ordina/direzione/limit` (whitelist colonne ordinamento contro
+  SQL injection sugli identificatori, non parametrizzabili normalmente);
+  nuovo `totale_speso` calcolato sempre lato server (subquery
+  `soggiorni.tariffa_totale + addebiti_extra.importo`) — **bug reale
+  corretto**: il vecchio calcolo era solo un `reduce()` frontend che
+  ignorava gli addebiti extra, sottostimava la spesa reale; nuovo
+  `tagSuggeriti()`, `duplicatiSospetti()` (raggruppa per nome+cognome+data
+  di nascita uguali, richiede data di nascita per evitare falsi positivi
+  sul solo nome) e `unisci()` (transazione completa: riassegna
+  `soggiorni`, `soggiorno_ospiti` — gestendo il vincolo UNIQUE quando il
+  vincitore ha già una riga per lo stesso soggiorno —, `offerte_email_
+  destinatari`, `pre_checkin_ospiti.applicato_ospite_id`; marca il
+  perdente con `duplicato_di`, **mai una DELETE**; audit log obbligatorio).
+  Route `/tag` e `/duplicati-sospetti` dichiarate prima di `/:id` (altrimenti
+  Express le confonde con un id letterale). Nuovo permesso `ospiti.unisci`
+  in `shared/ruoli.js`, solo admin/titolare — più stretto della scrittura
+  normale, niente receptionist: un'unione sbagliata sposta lo storico
+  documenti di una persona sotto un'altra.
+- **B — Frontend `/clienti`**: colonna "Spesa totale", badge VIP/blacklist
+  inline, filtri tag (con datalist)/VIP/blacklist, ordinamento, banner
+  duplicati sospetti (link a `/clienti/duplicati`, non blocca la pagina se
+  la chiamata fallisce). `/clienti/:id`: toggle VIP/blacklist istantanei
+  (stesso pattern già in uso per `consenso_marketing`, nessun "Salva"
+  separato per un flag), motivo blacklist salvato al blur (non un
+  flag/chip istantaneo — testo libero, evita un PATCH ad ogni tasto), tag
+  con aggiungi/rimuovi e autocomplete, allergie collegate al cliente
+  (campo distinto dalle note allergie giornaliere in cucina, spiegato nel
+  placeholder), `totale_speso` letto direttamente dal backend invece del
+  vecchio `reduce()`.
+- **C — Duplicati sospetti**: nuova pagina `/clienti/duplicati` (solo
+  admin/titolare). Per ogni gruppo: candidato "vincitore" suggerito di
+  default (più soggiorni registrati, a parità id più basso — identità più
+  consolidata), scelta libera con radio button, conferma esplicita a due
+  passaggi prima di unire (mai un click solo). Gruppi con più di 2
+  candidati: chiamate `unisci` in sequenza sullo stesso vincitore, non in
+  parallelo (toccano le stesse righe `soggiorni`/`soggiorno_ospiti`,
+  meglio non sovrapporle).
+- **D — Alert compleanno**: nuovo blocco in `dashboardController.alert()`
+  (stesso endpoint piatto usato da tutti i ruoli, non nel più recente
+  `gruppiWidget()` solo admin/titolare — coerente con com'è mostrato oggi
+  agli altri alert tipo scadenze/ZTL). Attraversamento capodanno
+  (dicembre→gennaio) calcolato **interamente in SQL** con
+  `generate_series(CURRENT_DATE, CURRENT_DATE + 7 days)` confrontato per
+  mese/giorno estratti da `data_nascita` — deliberatamente non un calcolo
+  JS con `toISOString()`, l'insidia UTC/fuso già trovata più volte altrove
+  nel progetto (vedi CLAUDE.md, convenzione date). Esclude
+  `duplicato_di IS NOT NULL`, stesso filtro di default di `lista()`.
+- **E — Segmentazione in Offerte**: `/marketing/offerte` passa da un
+  toggle binario "specifici/tutti" a tre modalità aggiungendo "Segmento"
+  (filtro tag + VIP, riusa lo stesso `GET /ospiti` esteso del punto A).
+  Nessuna modifica al backend delle offerte: il segmento popola la stessa
+  lista `selezionati` già usata dalla ricerca manuale, `invia()` continua
+  a mandare un array di id — solo chi ha consenso marketing **ed** email
+  valida viene aggiunto (chi ha consenso ma non ha email non riceverebbe
+  comunque nulla, meglio escluderlo già in fase di ricerca che scoprirlo
+  dopo l'invio).
+
+Verificato con `tsc --noEmit` (frontend, pulito dopo ogni fase) e
+`node -c` (backend, tutti i file toccati) — 0 errori in entrambi. **Nessuna
+batteria di test automatici scritta per questo modulo in questa sessione**
+(a differenza di altri moduli recenti con un `tests/api/*.test.js`
+dedicato) **e non ancora verificato end-to-end dal titolare in locale**:
+prossimo passo prima di considerare il modulo definitivamente chiuso.
+Dettaglio completo, incluso il testo originale dei 7 punti: `docs/EVOLUTIVE.md`,
+voce "CRM ospiti con preferenze/tag".
+
+**Verifica in locale, stesso giorno (15/08/2026)**: dopo aver applicato la
+migration 037 (dimenticata a fine sessione precedente — segnalata dal
+titolare come "errore interno" su Clienti e lista Dashboard alert svuotata,
+quest'ultima perché `dashboardController.alert()` raccoglie tutti gli
+alert in un unico try/catch e la query compleanni falliva su
+`o.duplicato_di` mancante, portando giù anche gli alert Alloggiati Web che
+non c'entravano nulla) e un riavvio del dev server (routing Next.js non
+aggiornato per la cartella nuova `/clienti/duplicati` con server già
+acceso), creato `backend/scripts/creaDuplicatiTest.js` (due schede
+cliente fittizie stesso nome/cognome/data di nascita, contatti diversi,
+idempotente con `--elimina`) per testare l'unione senza aspettare un
+duplicato vero — confermato funzionante dal titolare.
+
+Segnalato poi un secondo bug reale: la ricerca in `/clienti` (e ovunque
+`GET /ospiti?search=` sia riusato — autocomplete "Nuova prenotazione",
+selezione manuale in Offerte) trovava nome o cognome separatamente ma non
+"Mario Rossi" insieme, perché il filtro era un solo `ILIKE` sull'intera
+stringa digitata contro nome e contro cognome, e nessuna delle due colonne
+contiene entrambe le parole. Corretto in `anagraficaOspitiController.lista()`
+splittando la ricerca in parole: ogni parola deve comparire in nome O
+cognome (AND tra le parole, OR tra le due colonne per ciascuna) — un solo
+punto di modifica, beneficia automaticamente tutti i chiamanti di quella
+funzione. Verificato con `node -c`, non ancora riverificato in UI dal
+titolare dopo il fix.
+
+**Batteria di test + chiusura modulo, stesso giorno**: estesa
+`tests/api/anagrafica-ospiti.test.js` con la copertura mancante (ricerca
+per parole, filtri tag/vip, `totale_speso`, `/ospiti/tag`,
+`/ospiti/duplicati-sospetti`, `unisci` incluso il caso a 3 candidati nello
+stesso gruppo, permessi per ruolo, casi limite booleano/array). Non
+eseguibile dal sandbox (nessuna rotta verso il Postgres del titolare) —
+lanciata dal titolare/tab Code: primo giro 53/54, un fallimento reale ma
+non di regressione, diagnosticato con precisione dal titolare/tab Code: il
+test preesistente "portiere_notte → 200" cercava per solo cognome e si
+aspettava esattamente 1 risultato, ma le nuove fixture CRM aggiunte nel
+`beforeAll` (`${COGNOME_TEST}_Crm`, tre `${COGNOME_TEST}_Dup`) condividono
+quel prefisso di cognome, portando il conteggio a 5 — bug del test, non
+del codice. Corretto stringendo il termine di ricerca a "Mario
+${COGNOME_TEST}" (nome+cognome insieme, sfrutta la ricerca per parole
+appena aggiunta: solo l'ospite originale ha nome "Mario") invece di
+allentare l'asserzione a `find()`, per non perdere il senso del test
+("trova esattamente uno", non solo "lo trova"). **Confermato dal
+titolare: 54/54 verdi.** Modulo CRM ospiti chiuso: costruito, verificato
+manualmente in locale, coperto da test automatici verdi. Dettaglio
+tecnico completo: `docs/EVOLUTIVE.md`, voce "CRM ospiti con
+preferenze/tag".
+
+### ZTL — switch temporaneo Import TS / Planning interno (15/08/2026)
+
+Segnalazione del titolare durante la stessa sessione: il testo fisso
+"Importa il planning da TeamSystem con il pulsante Import TS" nello stato
+vuoto di `/ztl` sembrava non aggiornato. Verificato nel codice, non
+assunto: `ztlController.js` non ha mai un riferimento a `soggiorni` — ZTL
+dipende ancora al 100% dall'Excel di TeamSystem, anche se nel frattempo il
+gestionale ha un proprio modulo Prenotazioni funzionante e in uso.
+Chiarito col titolare prima di proporre un fix: oggi le prenotazioni reali
+restano su TS (la migrazione, modulo 2.3, non è ancora fatta), quindi il
+testo è corretto così com'è per ora — ma il titolare ha chiesto di
+preparare comunque ZTL al giorno della migrazione, con uno switch
+temporaneo tra le due modalità, da rimuovere insieme all'import TS quando
+non servirà più. PIANO scritto e confermato prima di toccare codice
+(CLAUDE.md Sezione 10).
+
+Fatto: migration `038_ztl_configurazione.sql` (tabella a riga singola,
+deliberatamente non storicizzata — è un interruttore operativo, non un
+dato fiscale). In `ztlController.js` estratta `upsertPrenotazioneZtl()`
+dalla logica già scritta per `importExcel` (upsert per camera_numero+
+data_arrivo, mai sovrascrive una riga già 'inviata'/'conclusa' — solo
+segnala un conflitto) e riusata anche dalla nuova `sincronizzaDaPlanning()`
+(legge `soggiorni` con arrivo nei prossimi 30 giorni). Nota tecnica: il
+refactor ha corretto un'imprecisione cosmetica preesistente in
+`importExcel` — quando una riga era in conflitto (targa già inviata + date
+cambiate), il codice originale contava la riga sia come "conflitto" sia
+come "aggiornata" anche se l'UPDATE non toccava nulla per via del filtro
+`stato NOT IN ('inviata','conclusa')` nella WHERE; ora viene contata solo
+come conflitto — nessun cambiamento nei dati scritti, solo nel conteggio
+riportato. Nuove rotte `GET/PATCH /api/ztl/configurazione` e
+`POST /api/ztl/sincronizza-planning` (scrittura solo titolare/admin,
+stessa soglia di Import TS/Export VigiPass). Frontend: bottone dinamico
+(Import TS oppure Sincronizza da Planning a seconda della modalità),
+stesso modale di riepilogo risultati per entrambi i percorsi, switch con
+conferma esplicita ed etichetta "temporaneo" in coda alle azioni titolare.
+Verificato con `node -c`/`tsc --noEmit` — non ancora verificato in UI dal
+titolare. Piano di rimozione futura (bottone, switch, import Excel,
+tabella configurazione_ztl) già annotato in `docs/EVOLUTIVE.md` per non
+doverlo ricostruire da zero il giorno della migrazione.
+
+### Menu — eliminato gruppo PRINCIPALE, HACCP in ADEMPIMENTI (15/08/2026)
+
+Richiesta esplicita del titolare, stessa sessione: gruppo PRINCIPALE
+(Dashboard/Timbratura/Personale) eliminato da `Sidebar.tsx` — Timbratura e
+Personale spostate in STRUTTURA, HACCP spostata da STRUTTURA ad
+ADEMPIMENTI (stesso tema "scadenze/controlli obbligatori" delle altre voci
+del gruppo; quando il modulo HACCP avrà un vero widget di controlli, per
+ora solo ricerca fatta — `docs/RICERCA_HACCP_MERCATO_LEGALE.md` — caricherà
+lì). Verificato prima di eliminare che "PRINCIPALE" non fosse referenziato
+altrove nel frontend (solo in `Sidebar.tsx`).
+
+Trovato un gap non esplicitamente richiesto ma necessario per non creare
+una regressione silenziosa: la Dashboard non è più dentro nessun gruppo di
+`SEZIONI_MENU`, e sulla rail desktop questo va bene — esiste già dal 14/08
+un'icona Home dedicata indipendente dai gruppi — ma sulla bottom nav
+mobile NON esisteva un equivalente. Le 4 icone rapide per ruolo
+(`VOCI_MOBILE`, provvisorie, invariate) includono `/home` solo per
+admin/titolare/dipendente: receptionist, cameriere, cuoco e portiere_notte
+sarebbero rimasti senza alcun modo di tornare in Dashboard da telefono,
+perché il pannello "Menu" mobile elenca solo i gruppi di `SEZIONI_MENU` e
+Dashboard non ne fa più parte. Aggiunta un'icona Home persistente in testa
+alla bottom nav mobile, stessa logica di quella desktop — non tocca
+`VOCI_MOBILE` (la revisione di quelle resta un punto a parte, già in
+sospeso). Verificato con `tsc --noEmit`, non ancora visto in UI dal
+titolare, in particolare su mobile.

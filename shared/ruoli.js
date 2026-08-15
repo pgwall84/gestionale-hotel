@@ -80,6 +80,11 @@ const PERMESSI_SEZIONI = {
     lettura:          [A, T, R, P],
     scrittura:        [A, T, R],
     svela_documento:  [A, T, R],
+    // Unione duplicati (CRM ospiti, 14/08/2026) — deliberatamente più
+    // stretta di scrittura: un'unione sbagliata sposta lo storico
+    // documenti/Alloggiati Web di una persona sotto un'altra, niente
+    // receptionist qui a differenza degli altri campi del cliente.
+    unisci:           [A, T],
   },
 
   // Soggiorni + Soggiorno_ospiti (Fase 2) — sezione unica (non due) perché
