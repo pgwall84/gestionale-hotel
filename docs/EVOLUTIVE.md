@@ -45,9 +45,15 @@ Modulo 1.4 — ZTL:
   automatica, es. ad ogni apertura pagina o via job). Annotato qui apposta
   per non doverlo re-scoprire quel giorno.
 
-Modulo 1.6 — Ristorante (gap noti, da completare prima del go-live):
-  Eliminazione configurazione sala: bloccare se ha tavoli associati,
-  consentire solo se vuota. (eliminaConfigurazione non implementata)
+Modulo 1.6 — Ristorante:
+  ✅ **Questa voce era STALE, corretta il 15/08/2026** — segnalata di nuovo
+  al titolare come "da fare" durante un riepilogo evolutive, verificato nel
+  codice prima di ripeterla: `salaController.eliminaConfig` era già
+  completo dalla sessione del 06/08/2026 (blocca su Standard/is_default,
+  su configurazione attiva, e su tavoli ancora associati — messaggio
+  chiaro invece del 500 generico da violazione FK). Questa voce non era
+  mai stata aggiornata dopo quel fix. Nessun codice toccato oggi, solo
+  la voce corretta per non ripresentarla una terza volta.
 
 Modulo 1.7 — Magazzino:
   ✅ [FATTO 06/08/2026] Storico prezzi per prodotto (GET
@@ -1087,14 +1093,17 @@ Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
   Nessuna delle due è stata richiesta in modo specifico — prima domanda da
   fare quando si riprende: cosa esattamente manca nell'uso reale.
 
-Planning camere — icona gruppo sulla barra (14/08/2026, rinviabile su
-indicazione esplicita del titolare). I gruppi (`gruppi_prenotazione`)
-esistono nel sistema ma non sono visibili a colpo d'occhio guardando la
-griglia — oggi si scoprono solo aprendo il pannello dettaglio di ogni
-singola barra. Da riprendere con una piccola icona/badge sulla `Barra`
-quando `prenotazione.gruppo_id` è valorizzato — nessuna nuova chiamata,
-il dato andrebbe solo aggiunto alla query di `/griglia` (oggi non seleziona
-`gruppo_id`).
+✅ [FATTO 15/08/2026] Planning camere — icona gruppo sulla barra. Aggiunto
+`p.gruppo_id` al SELECT di `GET /api/prenotazioni/griglia`
+(`prenotazioniController.js`, nessun nuovo parametro/endpoint) e una
+piccola icona `Users` (lucide, 10px) prima del cognome nella `Barra`
+quando `soggiorno.gruppo_id` è valorizzato, più una riga nel tooltip
+("Fa parte di un gruppo"). Rimosso `truncate` dal contenitore flex della
+barra (non funzionava più correttamente con due figli, icona+testo) e
+spostato sullo `<span>` del cognome con `min-w-0` (necessario perché un
+figlio flex non si restringe sotto la sua larghezza di contenuto senza
+`min-width:0` esplicito). Verificato con `tsc --noEmit`, non ancora visto
+in UI dal titolare su una prenotazione di gruppo reale.
 
 Planning camere — gestione "prenotazioni non assegnate" (14/08/2026, da
 costruire insieme al modulo 2.3 — channel manager WuBook, non prima).
@@ -1127,4 +1136,60 @@ sapere i movimenti camere, la receptionist trarrebbe più valore da
 arrivi/check-in che da coperti). Non è la priorità di questa sessione
 (centrata su admin/titolare) — da riprendere se il titolare vuole
 dashboard più mirate per questi ruoli.
+
+Tooling — nessun controllo statico reale sui file .jsx (15/08/2026,
+scoperto da un bug reale in produzione: `risposta is not defined` in
+planning-camere/page.jsx, mai catturato da `tsc --noEmit` nonostante fosse
+stato lanciato ed esito pulito). Causa: `tsconfig.json` include solo
+`**/*.ts`/`**/*.tsx` — `allowJs: true` permette ai file TS di importare JS,
+non estende il type-checking ai `.jsx`. Il progetto non ha ESLint
+configurato (nessuno script `lint`, nessun file di configurazione) — la
+regola che avrebbe preso questo bug specifico è `no-undef`, tipicamente
+ESLint. Tutte le voci precedenti in questo file e in DIARIO_SESSIONI.md
+con "verificato con tsc --noEmit" su file `.jsx` vanno lette come verifica
+di sintassi/JSX, non di variabili referenziate correttamente — la verifica
+reale su quei file resta solo quella manuale/visiva. Da valutare
+l'aggiunta di ESLint (nuova dipendenza, da discutere col titolare prima —
+CLAUDE.md Sezione 2 richiede di descrivere il motivo prima di installare).
+Aggiornamento stesso giorno: da questa sessione la verifica sintattica dei
+file `.jsx` usa anche `npx esbuild --jsx=automatic` (nessuna nuova
+dipendenza permanente, `npx` scarica ed esegue al volo) — conferma parsing
+e JSX validi cosa che `tsc` non fa per `.jsx`, ma **non è un sostituto di
+ESLint/no-undef**: esbuild non fa risoluzione di scope tra identificatori,
+quindi un bug come `risposta is not defined` non verrebbe comunque preso
+da solo. La difesa reale contro questa classe di bug resta l'audit manuale
+(grep di tutte le `await api.*` senza variabile assegnata, poi verifica
+incrociata di ogni uso di `.data`/`.body` a valle).
+
+[FATTO 15/08/2026] Modulo Prenotazioni — ModalDettaglioGruppo senza
+"aggiungi camera". Costruita la sezione "+ Aggiungi camera" dentro
+ModalDettaglioGruppo (stesso pattern di WizardGruppo.aggiungiCameraGruppo,
+POST /prenotazioni con gruppo_id già valorizzato, mai
+/prenotazioni/:id/soggiorni). Nella stessa sessione: fix di un bug reale
+sull'aggregazione dei pagamenti di gruppo (gruppiController.dettaglio()
+sommava solo pagamenti.gruppo_id, escludendo i pagamenti "solo questa
+camera" con prenotazione_id — corretto), nuova pagina /gruppi (elenco con
+statistiche aggregate, voce sidebar sotto CLIENTI E PRENOTAZIONI). Non
+ancora vista in UI dal titolare — dettaglio completo in
+DIARIO_SESSIONI.md, voce "Seguito: chiuso il gap ModalDettaglioGruppo...".
+
+Limiti noti della pagina /gruppi e di GET /api/gruppi (15/08/2026):
+`gruppiController.lista()` resta a `LIMIT 30` senza paginazione — va bene
+per l'autocomplete di ModalAssegnaGruppo e per il volume atteso di un
+hotel di 20 camere, ma se in futuro i gruppi storici superassero questa
+soglia la pagina ne mostrerebbe solo i 30 più recenti senza avvisare.
+`pagamentiController.listaPerGruppo` (GET /gruppi/:id/pagamenti) resta
+volutamente diversa: mostra solo i pagamenti con gruppo_id valorizzato,
+non quelli per singola camera — oggi non è usata da nessuna UI, ma se in
+futuro serve uno storico pagamenti completo per un gruppo va corretta con
+la stessa query di dettaglio().
+
+WizardGruppo — referente→ospite auto-link impreciso per organizzazioni/
+doppi cognomi (15/08/2026). Lo split automatico "ultima parola = cognome"
+del nome del referente (usato per creare/riusare l'ospite intestatario
+senza richiederlo due volte) funziona bene per "Mario Rossi" ma produce un
+cognome sbagliato per nomi con più parole (es. "Maria De Santis" →
+cognome "Santis", nome "Maria De") o per ragioni sociali. Non bloccante
+(il campo resta sempre modificabile dopo la creazione), ma da tenere
+presente se un gruppo viene creato con un referente dal nome composito.
 ```

@@ -14,6 +14,7 @@ const addebiti = require('../controllers/addebitiExtraController');
 router.use(verificaToken);
 
 router.patch('/:id',                     richiedeAzione('soggiorni', 'scrittura'), ctrl.aggiorna);
+router.patch('/:id/annulla',             richiedeAzione('soggiorni', 'scrittura'), ctrl.annulla);
 router.get('/:id/ospiti',                richiedeAzione('soggiorni', 'lettura'),   ctrl.listaOspiti);
 router.post('/:id/ospiti',               richiedeAzione('soggiorni', 'scrittura'), ctrl.aggiungiOspite);
 router.delete('/:id/ospiti/:ospiteId',   richiedeAzione('soggiorni', 'scrittura'), ctrl.rimuoviOspite);

@@ -117,9 +117,20 @@ online via WuBook arriveranno da webhook in modulo 2.3, gestiti diversamente).
 
 | Metodo | Path | Permessi | Descrizione |
 |---|---|---|---|
+| GET | `/api/gruppi` | A,T,R,P | Ricerca (`search=` su nome/referente, `ILIKE`, `LIMIT 30`) — 15/08/2026 |
 | GET | `/api/gruppi/:id` | A,T,R,P | Dettaglio + prenotazioni collegate + totali aggregati (addebiti e pagamenti, nessun saldo netto precalcolato) |
 | POST | `/api/gruppi` | A,T,R | Crea gruppo |
 | PATCH | `/api/gruppi/:id` | A,T,R | Aggiorna referente/nome |
+
+`PATCH /api/prenotazioni/:id` accetta anche `gruppo_id` (undefined-safe:
+assente nel body → invariato, `null` esplicito → sgancia dal gruppo) —
+usato da UI/gruppi (Sezione "UI Prenotazioni di gruppo" sotto), non
+duplicato in un endpoint a parte.
+
+`PATCH /api/soggiorni/:id/annulla` (A,T,R) — annulla un solo soggiorno di
+una prenotazione multi-camera, bloccato con `400` se è l'ultimo attivo
+(in quel caso va annullata l'intera prenotazione). Aggiunto 15/08/2026,
+serve al form "famiglia su più camere" (sotto).
 
 ### A.7 — Tipi camera (modulo 2.2)
 
@@ -555,11 +566,34 @@ Due punti d'ingresso, stesso componente: pulsante accanto al selettore vista
 pre-compilati). Campi: camera, ospite (autocomplete `GET /api/ospiti?search=`
 + mini-form "+ Nuovo ospite" con solo nome/cognome), date arrivo/partenza
 (validazione partenza > arrivo lato form), numero ospiti, tariffa totale,
-canale origine (default `diretta`), note. Gruppo omesso da questo form
-rapido — l'assegnazione a un gruppo si fa come azione separata. Su `409`
-(camera occupata) il form resta aperto con messaggio, l'utente corregge e
-riprova — non perde i dati inseriti. Su successo: refetch griglia, nuova
-barra `opzione` (ambra) visibile subito.
+canale origine (default `diretta`), note. Su `409` (camera occupata) il
+form resta aperto con messaggio, l'utente corregge e riprova — non perde i
+dati inseriti. Su successo: **non chiude più subito** (15/08/2026) — resta
+aperto in modalità "famiglia su più camere" (stesso intestatario, loop
+"aggiungi un'altra camera" su `POST /api/prenotazioni/:id/soggiorni`,
+rimozione via `PATCH /api/soggiorni/:id/annulla`); refetch griglia avviene
+solo alla chiusura ("Fine"), nuove barre `opzione` (ambra) visibili subito
+dopo.
+
+### UI Prenotazioni di gruppo (15/08/2026)
+
+Gruppo non più "omesso" dal form rapido come diceva la versione precedente
+di questa nota — ora ha un flusso proprio, distinto dalla famiglia su più
+camere sopra (prenotazioni SEPARATE con `gruppo_id` condiviso, non
+soggiorni della stessa prenotazione): pulsante "Nuovo gruppo" in toolbar
+apre `WizardGruppo` (dati gruppo → loop "aggiungi camera", ogni camera è
+una `POST /api/prenotazioni` con `gruppo_id` e ospite proprio). Da un
+pannello dettaglio già aperto, sezione "Gruppo" con `ModalAssegnaGruppo`
+(ricerca su `GET /api/gruppi?search=` + mini "+ nuovo gruppo") per il caso
+la stessa comitiva prenoti in un secondo momento. `ModalDettaglioGruppo`:
+elenco camere con stato e "Sgancia" (`PATCH gruppo_id: null`), due totali
+separati (addebiti/pagato), form pagamento con selettore esplicito "tutto
+il gruppo" / "solo questa camera" — instrada verso
+`POST /api/gruppi/:id/pagamenti` o `POST /api/prenotazioni/:id/pagamenti`,
+scelta della reception caso per caso, non un vincolo del software. Gli
+addebiti extra (bar/ristorante) restano sempre per-camera in entrambi i
+casi, mai al gruppo o alla famiglia — architettura invariata
+(`addebiti_extra.soggiorno_id`).
 
 ### Tariffe (`/tariffe`) e Pacchetti (`/pacchetti`) — modulo 2.2
 

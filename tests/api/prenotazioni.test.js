@@ -405,6 +405,48 @@ describe('PATCH /api/prenotazioni/:id', () => {
     expect(res.body.note).toBe('Nota aggiornata');
     expect(res.body.canale_origine).toBe('diretta');
   });
+
+  // 15/08/2026 — gruppo_id gestito undefined-safe (CASE, non COALESCE):
+  // deve poter essere impostato E poi rimosso esplicitamente con null,
+  // senza che un PATCH successivo che non lo tocca lo azzeri per sbaglio.
+  test('gruppo_id: assegnazione, invarianza su PATCH successivo senza il campo, rimozione con null esplicito', async () => {
+    const db = getPool();
+    const gruppo = await db.query(
+      `INSERT INTO gruppi_prenotazione (nome) VALUES ($1) RETURNING id`,
+      [`Gruppo Test PATCH${SUFFISSO}`]
+    );
+    const gruppoId = gruppo.rows[0].id;
+
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-06-20', data_partenza: '2099-06-25' },
+    });
+
+    const assegna = await request(app)
+      .patch(`/api/prenotazioni/${creata.body.id}`)
+      .set(authHeader.admin())
+      .send({ gruppo_id: gruppoId });
+    expect(assegna.status).toBe(200);
+    expect(assegna.body.gruppo_id).toBe(gruppoId);
+
+    // PATCH successivo che non menziona gruppo_id: deve restare invariato,
+    // non azzerarsi (il campo undefined non deve mai fare CASE → null).
+    const soloNote = await request(app)
+      .patch(`/api/prenotazioni/${creata.body.id}`)
+      .set(authHeader.admin())
+      .send({ note: 'altra nota' });
+    expect(soloNote.status).toBe(200);
+    expect(soloNote.body.gruppo_id).toBe(gruppoId);
+
+    // Sganciamento esplicito con null.
+    const sgancia = await request(app)
+      .patch(`/api/prenotazioni/${creata.body.id}`)
+      .set(authHeader.admin())
+      .send({ gruppo_id: null });
+    expect(sgancia.status).toBe(200);
+    expect(sgancia.body.gruppo_id).toBeNull();
+
+    await db.query('DELETE FROM gruppi_prenotazione WHERE id = $1', [gruppoId]);
+  });
 });
 
 // ─── PATCH /api/prenotazioni/:id/stato ────────────────────────────────────────

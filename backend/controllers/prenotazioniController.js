@@ -43,7 +43,7 @@ async function griglia(req, res) {
       `SELECT c.id AS camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
               c.tipo_camera_id,
               s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
-              p.id AS prenotazione_id, p.stato AS prenotazione_stato,
+              p.id AS prenotazione_id, p.stato AS prenotazione_stato, p.gruppo_id,
               o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
        FROM camere c
        LEFT JOIN soggiorni s ON s.camera_id = c.id AND s.cancellato = false
@@ -59,6 +59,44 @@ async function griglia(req, res) {
     res.json(result.rows);
   } catch (err) {
     console.error('griglia prenotazioni error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// GET /api/prenotazioni/disponibilita?data_arrivo=&data_partenza=&escludi_soggiorno_id=
+// Camere libere/occupate per un intervallo di date libero (non vincolato al
+// range visibile della griglia, a differenza di /griglia) — serve ai form
+// "aggiungi camera" per colorare le camere disponibili invece di lasciare
+// scoprire il conflitto solo al salvataggio (15/08/2026). Stesso overlap
+// `daterange(...) && daterange(...)` di griglia(), ma collassato a un solo
+// booleano per camera invece che per singolo soggiorno. escludi_soggiorno_id
+// (opzionale) serve a chi sposta un soggiorno esistente: la sua stessa
+// camera/data non deve risultare "occupata da se stessa".
+// Accessibile a: admin, titolare, receptionist, portiere_notte (lettura) —
+// stessi permessi di /griglia.
+async function disponibilita(req, res) {
+  const { data_arrivo, data_partenza, escludi_soggiorno_id } = req.query;
+  if (!data_arrivo || !data_partenza) {
+    return res.status(400).json({ error: 'data_arrivo e data_partenza sono obbligatori.' });
+  }
+  try {
+    const result = await pool.query(
+      `SELECT c.id AS camera_id, c.numero, c.nome, c.piano,
+              EXISTS (
+                SELECT 1 FROM soggiorni s
+                WHERE s.camera_id = c.id AND s.cancellato = false
+                  AND daterange(s.data_arrivo, s.data_partenza, '[)') && daterange($1, $2, '[)')
+                  AND ($3::int IS NULL OR s.id != $3)
+              ) AS occupata
+       FROM camere c
+       WHERE c.attivo = true
+       ORDER BY c.piano NULLS LAST,
+                CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END`,
+      [data_arrivo, data_partenza, escludi_soggiorno_id || null]
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('disponibilita prenotazioni error:', err);
     res.status(500).json({ error: 'Errore interno' });
   }
 }
@@ -152,8 +190,15 @@ async function lista(req, res) {
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 async function dettaglio(req, res) {
   try {
+    // LEFT JOIN gruppi_prenotazione solo per il nome (gruppo_id da solo non
+    // basta al pannello dettaglio per mostrare qualcosa di leggibile) —
+    // nessun impatto sulle altre colonne, prenotazione.gruppo_id resta
+    // quello della tabella prenotazioni.
     const prenotazione = await pool.query(
-      'SELECT * FROM prenotazioni WHERE id = $1',
+      `SELECT p.*, g.nome AS gruppo_nome
+       FROM prenotazioni p
+       LEFT JOIN gruppi_prenotazione g ON g.id = p.gruppo_id
+       WHERE p.id = $1`,
       [req.params.id]
     );
     if (!prenotazione.rows.length) {
@@ -436,16 +481,23 @@ async function aggiungiSoggiorno(req, res) {
 // PATCH /api/prenotazioni/:id — modifica solo note/canale_origine, mai lo stato.
 // Accessibile a: admin, titolare, receptionist (scrittura).
 async function aggiorna(req, res) {
-  const { note, canale_origine } = req.body;
+  // gruppo_id gestito in modo undefined-safe (a differenza di note/
+  // canale_origine, che usano COALESCE): deve poter essere impostato
+  // esplicitamente a null per sganciare una prenotazione da un gruppo,
+  // non solo valorizzato. $3 indica se il campo è stato inviato nel body,
+  // $4 è il valore da scrivere solo in quel caso (CASE invece di COALESCE,
+  // che non distinguerebbe "non inviato" da "inviato come null").
+  const { note, canale_origine, gruppo_id } = req.body;
   try {
     const result = await pool.query(
       `UPDATE prenotazioni SET
          note           = COALESCE($1, note),
          canale_origine = COALESCE($2, canale_origine),
+         gruppo_id      = CASE WHEN $3 THEN $4 ELSE gruppo_id END,
          updated_at     = NOW()
-       WHERE id = $3
+       WHERE id = $5
        RETURNING *`,
-      [note ?? null, canale_origine || null, req.params.id]
+      [note ?? null, canale_origine || null, gruppo_id !== undefined, gruppo_id ?? null, req.params.id]
     );
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Prenotazione non trovata' });
@@ -595,4 +647,4 @@ async function inviaPreCheckin(req, res) {
   }
 }
 
-module.exports = { griglia, lista, dettaglio, conto, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };
+module.exports = { griglia, disponibilita, lista, dettaglio, conto, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };

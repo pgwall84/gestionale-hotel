@@ -12,6 +12,7 @@ const pagamentiCtrl = require('../controllers/pagamentiController');
 
 router.use(verificaToken);
 
+router.get('/',                richiedeAzione('gruppi', 'lettura'),      gruppiCtrl.lista);
 router.get('/:id',            richiedeAzione('gruppi', 'lettura'),      gruppiCtrl.dettaglio);
 router.post('/',              richiedeAzione('gruppi', 'scrittura'),    gruppiCtrl.crea);
 router.patch('/:id',          richiedeAzione('gruppi', 'scrittura'),    gruppiCtrl.aggiorna);

@@ -61,10 +61,20 @@ async function dettaglio(req, res) {
       [req.params.id]
     );
 
-    // Totale pagamenti: somma importo dei pagamenti registrati direttamente
-    // sul gruppo (pagamenti.gruppo_id) — non quelli delle singole prenotazioni.
+    // Totale pagamenti (corretto 15/08/2026 — bug reale segnalato dal
+    // titolare prima ancora di testarlo, confermato leggendo il codice):
+    // un pagamento può essere registrato sul gruppo (pagamenti.gruppo_id)
+    // OPPURE su una singola prenotazione del gruppo quando si sceglie
+    // "solo questa camera" in fase di incasso (pagamenti.prenotazione_id,
+    // gruppo_id resta NULL per il vincolo XOR della tabella). La versione
+    // precedente sommava solo il primo caso: pagando "solo questa camera"
+    // il totale "Pagato dal gruppo" non si muoveva, anche se il pagamento
+    // era comunque valido e registrato. Ora la somma copre entrambi.
     const pagamenti = await pool.query(
-      'SELECT COALESCE(SUM(importo), 0) AS totale FROM pagamenti WHERE gruppo_id = $1',
+      `SELECT COALESCE(SUM(importo), 0) AS totale
+       FROM pagamenti
+       WHERE gruppo_id = $1
+          OR prenotazione_id IN (SELECT id FROM prenotazioni WHERE gruppo_id = $1)`,
       [req.params.id]
     );
 
@@ -76,6 +86,71 @@ async function dettaglio(req, res) {
     });
   } catch (err) {
     console.error('dettaglio gruppo error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
+// GET /api/gruppi?search= — ricerca gruppi per nome o referente. Serve per
+// agganciare una prenotazione a un gruppo aperto in precedenza (comitiva
+// che prenota le camere in più chiamate diverse, magari in giorni diversi)
+// — senza questo endpoint l'unico modo di trovare un gruppo esistente
+// sarebbe conoscerne l'id a memoria. Nessuna paginazione vera, solo un
+// LIMIT: il numero di gruppi aperti in contemporanea in un hotel di 20
+// camere resta sempre piccolo.
+// Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
+// Estesa il 15/08/2026 con colonne aggregate (storico_soggiorni,
+// storico_ospiti, camere_occupate_ora, totale_pagamenti) per la nuova
+// pagina /gruppi — questa stessa funzione resta usata anche
+// dall'autocomplete di ModalAssegnaGruppo (?search=), che legge solo
+// id/nome/referente_*: colonne aggiuntive non rompono quel consumatore.
+// LIMIT 30 invariato: ok per l'autocomplete, e per ora anche per la pagina
+// di elenco (il numero di gruppi resta piccolo per un hotel di 20 camere) —
+// da rivedere con una paginazione vera se in futuro superasse questa soglia.
+// totale_pagamenti somma sia i pagamenti registrati sul gruppo sia quelli
+// "solo questa camera" sulle prenotazioni del gruppo — stessa correzione
+// applicata a dettaglio() (vedi commento lì per il bug originale).
+async function lista(req, res) {
+  const { search } = req.query;
+  try {
+    const parametri = [];
+    let condizione = '';
+    if (search && search.trim()) {
+      parametri.push(`%${search.trim()}%`);
+      condizione = 'WHERE g.nome ILIKE $1 OR g.referente_nome ILIKE $1';
+    }
+    const result = await pool.query(
+      `SELECT
+         g.id, g.nome, g.referente_nome, g.referente_telefono, g.referente_email, g.created_at,
+         COALESCE((
+           SELECT COUNT(*) FROM soggiorni s
+           JOIN prenotazioni p ON p.id = s.prenotazione_id
+           WHERE p.gruppo_id = g.id AND s.cancellato = false
+         ), 0) AS storico_soggiorni,
+         COALESCE((
+           SELECT SUM(s.num_ospiti) FROM soggiorni s
+           JOIN prenotazioni p ON p.id = s.prenotazione_id
+           WHERE p.gruppo_id = g.id AND s.cancellato = false
+         ), 0) AS storico_ospiti,
+         COALESCE((
+           SELECT COUNT(*) FROM soggiorni s
+           JOIN prenotazioni p ON p.id = s.prenotazione_id
+           WHERE p.gruppo_id = g.id AND s.cancellato = false
+             AND CURRENT_DATE >= s.data_arrivo AND CURRENT_DATE < s.data_partenza
+         ), 0) AS camere_occupate_ora,
+         COALESCE((
+           SELECT SUM(importo) FROM pagamenti
+           WHERE gruppo_id = g.id
+              OR prenotazione_id IN (SELECT id FROM prenotazioni WHERE gruppo_id = g.id)
+         ), 0) AS totale_pagamenti
+       FROM gruppi_prenotazione g
+       ${condizione}
+       ORDER BY g.created_at DESC
+       LIMIT 30`,
+      parametri
+    );
+    res.json(result.rows);
+  } catch (err) {
+    console.error('lista gruppi error:', err);
     res.status(500).json({ error: 'Errore interno' });
   }
 }
@@ -127,4 +202,4 @@ async function aggiorna(req, res) {
   }
 }
 
-module.exports = { dettaglio, crea, aggiorna };
+module.exports = { dettaglio, crea, aggiorna, lista };

@@ -36,6 +36,7 @@ router.use(verificaToken);
 // conflitto di ordine con /griglia o /:id (pattern diversi).
 router.get('/',             richiedeAzione('prenotazioni', 'lettura'),   ctrl.lista);
 router.get('/griglia',      richiedeAzione('prenotazioni', 'lettura'),   ctrl.griglia);
+router.get('/disponibilita', richiedeAzione('prenotazioni', 'lettura'),  ctrl.disponibilita);
 router.get('/:id',          richiedeAzione('prenotazioni', 'lettura'),   ctrl.dettaglio);
 router.post('/',            richiedeAzione('prenotazioni', 'scrittura'), ctrl.crea);
 router.post('/:id/soggiorni', richiedeAzione('prenotazioni', 'scrittura'), ctrl.aggiungiSoggiorno);

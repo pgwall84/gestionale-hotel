@@ -4073,3 +4073,341 @@ alla bottom nav mobile, stessa logica di quella desktop — non tocca
 `VOCI_MOBILE` (la revisione di quelle resta un punto a parte, già in
 sospeso). Verificato con `tsc --noEmit`, non ancora visto in UI dal
 titolare, in particolare su mobile.
+
+### Due fix minori richiesti dal titolare (15/08/2026)
+
+**Fix 1 — blocco eliminazione configurazione sala con tavoli associati:
+nessun codice scritto, voce EVOLUTIVE.md corretta.** Il titolare ha scelto
+questo fix da un elenco di evolutive aperte che gli avevo appena ripetuto;
+prima di toccare codice ho riletto `salaController.eliminaConfig` per
+capire da dove partire e ho trovato il guard già completo dalla sessione
+del 06/08/2026 (blocca su configurazione Standard/`is_default`, su
+configurazione attiva, e su tavoli ancora associati, con messaggio
+specifico per ciascun caso). La voce in `docs/EVOLUTIVE.md` non era mai
+stata aggiornata dopo quel fix — corretta oggi per non ripresentarla una
+terza volta. Nessuna regressione: il codice era già corretto, solo la
+documentazione era ferma a prima del 06/08.
+
+**Fix 3 — icona gruppo sulla barra prenotazione in planning-camere: ✅
+Fatto.** `p.gruppo_id` aggiunto al SELECT di `GET /api/prenotazioni/griglia`
+(`prenotazioniController.js`, nessuna query né endpoint nuovo). Nel
+frontend, componente `Barra` di `planning-camere/page.jsx`: icona `Users`
+(lucide, 10px) prima del cognome quando `soggiorno.gruppo_id` è
+valorizzato, riga aggiuntiva nel tooltip ("Fa parte di un gruppo").
+Necessario un piccolo aggiustamento CSS collaterale: il `truncate` sul
+contenitore flex della barra non tronca più correttamente il testo con due
+figli (icona + testo) — spostato su uno `<span>` dedicato al cognome con
+`min-w-0` (un figlio flex non si restringe sotto la sua larghezza di
+contenuto senza `min-width:0` esplicito, altrimenti la barra si sarebbe
+allargata oltre la cella o il testo sarebbe traboccato). Verificato con
+`tsc --noEmit`, non ancora visto in UI dal titolare su una prenotazione di
+gruppo reale. Dettaglio tecnico completo in `docs/EVOLUTIVE.md`.
+
+### Prenotazioni di gruppo complete (15/08/2026, stessa sessione, seguito)
+
+Il titolare, guardando l'icona gruppo appena fatta, ha chiesto: "non c'è
+modo di creare una prenotazione di gruppo" — verificato che fosse vero
+(nessuna UI da nessuna parte, il backend base c'era già dal modulo
+Prenotazioni Fase 2A ma mai collegato). Discussione via mockup (SVG) prima
+di scrivere codice, per allineare il modello mentale del titolare con
+quello del DB: **famiglia su più camere** (stessa prenotazione, stesso
+intestatario) è concettualmente diversa da **comitiva** (prenotazioni
+separate collegate da `gruppo_id`, ospiti diversi per camera) — il
+titolare ha chiesto entrambe.
+
+**Verifiche prima di scrivere codice (hanno cambiato lo scope)**:
+- `aggiungiSoggiorno` (`POST /api/prenotazioni/:id/soggiorni`) esisteva già
+  ma non era mai chiamato da nessun punto del frontend — zero risultati
+  cercandolo in tutta la cartella `frontend`. Correzione di un errore mio:
+  avevo detto al titolare che era "già funzionante", falso.
+- `conto()` e `pagamenti` erano già aggregati per `prenotazione_id` (tutti
+  i soggiorni non cancellati), non per singolo soggiorno — quindi il
+  "conto unico, pagamento unico per famiglia su più camere" chiesto dal
+  titolare **funzionava già**, zero righe scritte per quello.
+- `POST /api/gruppi/:id/pagamenti` e `POST /api/prenotazioni/:id/pagamenti`
+  esistevano già entrambi, indipendenti — la richiesta del titolare di
+  poter scegliere "tutto il gruppo o solo questa camera" in fase di
+  pagamento è risultata un semplice selettore UI, nessuna nuova regola
+  lato server.
+- Nessun modo di annullare una singola camera di una prenotazione famiglia
+  multi-camera senza annullare l'intera prenotazione (`PATCH
+  /api/soggiorni/:id` non tocca mai `cancellato`) — gap reale scoperto
+  disegnando il mockup con il pulsante "rimuovi camera prima di salvare",
+  colmato con un endpoint nuovo.
+
+**Backend**:
+- `prenotazioniController.aggiorna()` esteso con `gruppo_id` — pattern
+  undefined-safe (`CASE WHEN $3 THEN $4 ELSE gruppo_id END`, non
+  `COALESCE`): deve poter essere impostato esplicitamente a `null` per
+  sganciare una prenotazione da un gruppo, non solo valorizzato.
+- `prenotazioniController.dettaglio()`: aggiunto `LEFT JOIN
+  gruppi_prenotazione` per `gruppo_nome` — `gruppo_id` da solo non basta
+  al pannello per mostrare qualcosa di leggibile.
+- Nuovo `soggiorniController.annulla()` — `PATCH /api/soggiorni/:id/annulla`:
+  annulla un solo soggiorno (`cancellato = true`), bloccato con `400` se è
+  l'ultimo soggiorno attivo della prenotazione (in quel caso va annullata
+  l'intera prenotazione, altrimenti resterebbe una prenotazione "fantasma"
+  senza camere). Verifica con `FOR UPDATE` in transazione contro la race di
+  due annullamenti concorrenti sulle ultime due camere.
+- Nuovo `gruppiController.lista()` — `GET /api/gruppi?search=` (nome o
+  referente, `ILIKE`, `LIMIT 30`): mancava del tutto, senza non si può mai
+  agganciare una prenotazione a un gruppo aperto in una chiamata precedente
+  (solo cercarlo per id a memoria, non realistico).
+- Route nuove: `routes/soggiorni.js` (`PATCH /:id/annulla`),
+  `routes/gruppi.js` (`GET /` prima di `GET /:id`). Permessi invariati
+  (sezioni `soggiorni`/`gruppi` di `shared/ruoli.js`, già corrette).
+
+**Frontend** (`planning-camere/page.jsx`, tutto in un unico file per
+coerenza con `PannelloCheckOut`/`VistaElenco` già lì):
+- `FormNuovaPrenotazione`: dopo il primo salvataggio resta aperto in
+  modalità "famiglia su più camere" invece di chiudersi — ospite bloccato
+  sull'intestatario (niente autocomplete), mini-lista camere con `x` che
+  chiama la nuova `annulla` soggiorno (mai sulla prima camera: annullarla
+  vorrebbe dire annullare l'intera prenotazione).
+- Nuovo `WizardGruppo`: step dati gruppo (`POST /api/gruppi`) → loop
+  "aggiungi camera" (ogni camera è una `POST /api/prenotazioni` separata
+  con `gruppo_id` e ospite proprio, autocomplete identico a
+  `FormNuovaPrenotazione`); `x` su una camera annulla quella prenotazione
+  (`PATCH stato → interrotta`, endpoint già esistente).
+- `PannelloDettaglio`: nuova sezione "Gruppo" — badge + "Vedi gruppo" se
+  assegnata, altrimenti bottone "Assegna a un gruppo" (solo per chi può
+  scrivere).
+- Nuovo `ModalAssegnaGruppo`: ricerca gruppi esistenti (debounce su
+  `GET /api/gruppi?search=`) + mini "+ nuovo gruppo" (solo nome) per non
+  dover riaprire il wizard completo solo per agganciare una camera in un
+  secondo momento.
+- Nuovo `ModalDettaglioGruppo`: elenco camere del gruppo con stato
+  (`STATI_COLORI`, stesso badge del pannello singolo) e link "Sgancia"
+  (`PATCH gruppo_id: null`); due totali separati (addebiti/pagato, mai un
+  saldo netto precalcolato, stessa scelta di `RiepilogoEconomico`); nota
+  esplicita che gli extra bar/ristorante restano per-camera; form
+  pagamento con selettore "Applica a: tutto il gruppo / solo camera X" che
+  instrada verso l'uno o l'altro endpoint pagamenti già esistente.
+- Pulsante "Nuovo gruppo" in toolbar accanto a "Nuova prenotazione".
+
+**Test**: estesi `tests/api/prenotazioni.test.js` (`gruppo_id`
+undefined-safe: assegnazione, invarianza su PATCH successivo che non lo
+menziona, sgancio con `null` esplicito), `tests/api/soggiorni.test.js`
+(nuovo describe `PATCH /:id/annulla`: 401/403/404, blocco su unica camera
+attiva, annullo della seconda camera di una famiglia con la prima che
+resta attiva, doppio annullo → 400), `tests/api/gruppi.test.js` (nuovo
+describe `GET /api/gruppi — ricerca`: permessi, match per nome, match per
+referente, nessun match su stringa a caso).
+
+Verificato con `tsc --noEmit` sull'intero frontend (zero errori, non solo
+sul file toccato) e `node -c` su tutti i file backend modificati. **Non
+verificato**: esecuzione reale della suite Jest (il sandbox non raggiunge
+il Postgres del titolare, stesso limite di sempre) e verifica in UI del
+flusso end-to-end (wizard gruppo, assegnazione, pagamento gruppo/camera) —
+da fare dal titolare/tab Code prima di considerare il modulo chiuso.
+
+### Seguito: 88/88 test verdi, poi due bug reali dalla verifica visiva (15/08/2026)
+
+Titolare conferma 88/88 verdi su `prenotazioni`/`soggiorni`/`gruppi.test.js`,
+poi durante la verifica visiva:
+
+**Bug 1 — `risposta is not defined` su "Nuova prenotazione" da cella
+libera, 500/crash silenzioso**. Causa: `invia()` in `FormNuovaPrenotazione`
+chiamava `await api.post('/prenotazioni', {...})` **senza catturare il
+risultato**, ma il codice scritto subito dopo (per la nuova modalità
+"famiglia su più camere") referenziava `risposta.data` — variabile mai
+dichiarata. La POST arrivava comunque a buon fine lato server (la
+prenotazione viene creata PRIMA dell'errore JS), quindi al primo tentativo
+il DB si sporca silenziosamente con una prenotazione reale mai mostrata
+all'utente; al secondo tentativo sulla stessa camera/date, giustamente
+`409 camera occupata` — non un bug separato, conseguenza diretta del primo.
+Corretto aggiungendo `const risposta =` alla riga 1692. **Non serve alcuna
+pulizia manuale del DB**: la prenotazione creata dal primo tentativo è
+valida ed esiste già in stato `opzione` — dopo il fix comparirà come barra
+normale sulla griglia (basta un refresh), annullabile con il pulsante
+"Annulla prenotazione" già esistente se non serve.
+
+**Perché `tsc --noEmit` non l'aveva preso**: verificato `tsconfig.json`
+— `include` lista solo `**/*.ts`/`**/*.tsx`, `.jsx` non ne fa parte
+nonostante `allowJs: true` (quel flag serve solo a permettere che file TS
+importino JS, non estende il type-checking ai `.jsx`). Tutte le sessioni
+precedenti che hanno scritto "verificato con `tsc --noEmit`" su file
+`.jsx` di questo repo (la maggioranza del frontend, incluso tutto
+`planning-camere/page.jsx`) erano quindi una verifica di sintassi/JSX,
+**non un controllo reale delle variabili referenziate** — `no-undef` è
+tipicamente una regola ESLint, e questo progetto non ha ESLint
+configurato (nessuno script `lint`, nessun file di configurazione). Non
+c'è oggi nel sandbox un modo statico affidabile di catturare questa
+classe di bug sui file `.jsx` — resta la verifica visiva/manuale
+l'unico controllo reale finché non si aggiunge ESLint (non fatto qui,
+richiederebbe una nuova dipendenza da discutere prima).
+
+**Bug/evolutiva 2 — ospite obbligatorio per ogni camera nel wizard
+gruppo, senza prevalorizzazione**. Segnalato dal titolare come "non ha
+senso": il form "aggiungi camera" del `WizardGruppo` obbligava a cercare o
+creare un ospite da zero per ogni singola camera, anche quando è quasi
+sempre lo stesso referente o la persona appena inserita per la camera
+precedente. Corretto con `ultimoOspiteUsato` (nuovo state): la prima
+camera precompila il campo di ricerca con il nome del referente (non
+seleziona in automatico — nomi simili sono ambigui, la scelta resta alla
+reception); dalla seconda camera in poi il campo ospite riparte già
+selezionato con l'ultimo usato, con "Cambia" sempre disponibile per una
+persona diversa. Anche il mini-form "+ Nuovo ospite" ora precompila
+nome/cognome spezzando il nome del referente sull'ultima parola
+(suggerimento modificabile, non salvato finché non si conferma).
+`resetFormCamera()` non azzera più ospite/ricerca dopo ogni aggiunta
+riuscita (prima lo faceva, era la causa della frizione lamentata).
+
+Verificato con `tsc --noEmit` (zero errori, stesso limite di verifica
+descritto sopra) e un audit manuale mirato: grep di tutte le chiamate
+`await api.*` senza cattura del risultato in tutto il file, verificando a
+mano che nessuna delle altre fosse seguita da un riferimento a una
+variabile non dichiarata (solo quella di `invia()` lo era). Non ancora
+riprovato in UI dal titolare dopo questi due fix.
+
+### Seguito: "aggiungi camera" su prenotazione esistente + disponibilità camere (15/08/2026)
+
+Terzo giro nella stessa sessione, su due richieste esplicite del titolare
+lasciate aperte dai due fix precedenti.
+
+**Gap reale segnalato: "come faccio ad aggiungere a una prenotazione
+un'altra camera? nessuna sezione me lo permette".** Vero — l'aggiunta di
+una camera alla stessa famiglia esisteva SOLO nella vista immediatamente
+dopo aver creato una nuova prenotazione (`FormNuovaPrenotazione`), mai per
+una prenotazione già esistente aperta da `PannelloDettaglio`. Gap mio, non
+del titolare: costruendo la Fase B (comitive/famiglie) avevo coperto solo
+il momento della creazione. Aggiunta una sezione "+ Aggiungi un'altra
+camera" in `PannelloDettaglio` (visibile solo se `puoScrivere` e la
+prenotazione NON fa parte di un gruppo — per un gruppo la camera in più è
+una prenotazione separata, vedi evolutiva aperta in `EVOLUTIVE.md`), che
+riusa `POST /prenotazioni/:id/soggiorni` con l'`ospite_id` dell'intestatario
+già esistente (ricavato dal primo soggiorno attivo, stesso criterio già
+usato per la card) — nessuna richiesta di reinserire l'ospite. Date
+prevalorizzate sull'ultimo soggiorno attivo, come richiesto esplicitamente
+dal titolare ("questo delle date vale anche per... modifica delle
+famiglie"). Aggiunto anche un pulsante "Annulla questa camera" per
+soggiorno (via `PATCH /soggiorni/:id/annulla`, già esistente), visibile
+solo quando ce n'è più di una attiva — il backend blocca comunque
+l'annullo dell'ultimo soggiorno rimasto. **Bug collaterale trovato e
+corretto nello stesso punto**: il render delle card soggiorno non filtrava
+`cancellato = true` — da quando esiste l'annullo di un singolo soggiorno,
+una camera annullata sarebbe rimasta visibile come scheda fantasma
+permanente; ora `dati.soggiorni?.filter(s => !s.cancellato)`, stesso
+criterio già in uso in `griglia()`/`conto()` lato backend.
+
+**Richiesta: colorare le camere libere/occupate in fase di scelta data.**
+Nuovo endpoint `GET /api/prenotazioni/disponibilita?data_arrivo=&data_
+partenza=&escludi_soggiorno_id=` — un booleano `occupata` per camera,
+stessa logica di overlap già usata da `griglia()` ma collassata a un
+valore invece che per-giorno. Nuovo componente `SelettoreCameraDisponibile`
+(chip colorate verde/rosso invece di un `<select>` con `<option>` colorate
+— scelta deliberata: lo styling del colore di sfondo sulle `<option>` è
+inaffidabile tra browser, in particolare Safari iOS/Android, rilevante
+perché il gestionale gira parecchio su tablet). **Collegato solo al
+`WizardGruppo`** (creazione comitiva), su indicazione esplicita del
+titolare ("mettilo solo in un punto per vedere e poi lo estendiamo") — non
+ancora in `FormNuovaPrenotazione`, `PannelloDettaglio` o
+`ModalDettaglioGruppo`, tutti e tre ancora con un `<select>` semplice.
+
+**Richiesta: referente del gruppo collegato automaticamente alla
+creazione dell'ospite.** Prima, creando un gruppo, alla prima camera si
+richiedeva di nuovo lo stesso nome già dato come referente. Ora
+`creaGruppo()` cerca un ospite esistente con nome+cognome combacianti
+(match esatto case-insensitive); se trovato lo riusa, altrimenti lo crea
+splittando il nome sull'ultima parola come cognome. **Attenzione dichiarata
+al titolare**: questo split è impreciso per nomi con più parole o ragioni
+sociali (es. "Maria De Santis" → cognome "Santis" sbagliato) — non
+bloccante, il campo resta sempre modificabile, ma annotato in
+`EVOLUTIVE.md`.
+
+Verificato con `npx esbuild --jsx=automatic` (parsing/JSX validi — non un
+sostituto di ESLint/no-undef, vedi evolutiva "Tooling" sopra) e `node -c`
+su tutti i controller/route backend toccati (`prenotazioniController.js`,
+`soggiorniController.js`, `gruppiController.js` e relative route). Audit
+manuale mirato sul corpo di `POST /prenotazioni/:id/soggiorni`: il
+controller richiede `soggiorno.ospite_id` esplicito (nessuna inferenza
+server-side) — verificato che `aggiungiCameraEsistente()` lo passi sempre,
+derivandolo dall'intestatario esistente. **Nessuna di queste modifiche è
+stata ancora vista in UI dal titolare** — resta da fare, in particolare il
+flusso "aggiungi camera" su una prenotazione reale e l'annullo di un
+singolo soggiorno. Gap rimasto deliberatamente aperto: `ModalDettaglioGruppo`
+non ha un equivalente "aggiungi camera" per un gruppo già esistente
+(dettaglio in `EVOLUTIVE.md`).
+
+### Seguito: chiuso il gap ModalDettaglioGruppo, bug reale sui pagamenti di gruppo, pagina /gruppi (15/08/2026)
+
+Quarto giro nella stessa sessione. Titolare conferma: nessun errore
+aggiungendo più camere a un gruppo, tutto testato fin qui funziona. Prima
+di proseguire chiede di ricordargli di verificare due punti — su entrambi
+ho potuto rispondere subito leggendo il codice, senza aspettare un test
+live.
+
+**Bug reale confermato e corretto: `totale_pagamenti` del gruppo non
+contava i pagamenti "solo questa camera".** `gruppiController.dettaglio()`
+sommava `SUM(importo) FROM pagamenti WHERE gruppo_id = $1` — ma un
+pagamento registrato scegliendo "solo questa camera" nel selettore di
+`ModalDettaglioGruppo` viene salvato con `prenotazione_id` valorizzato e
+`gruppo_id` NULL (vincolo XOR della tabella, migration 017). Risultato:
+pagare una singola camera di un gruppo non faceva muovere la card "Pagato
+dal gruppo", pur essendo un pagamento valido e registrato — esattamente il
+tipo di bug di aggregazione che il titolare temeva "più facile da non
+notare a occhio". Corretto sommando anche
+`prenotazione_id IN (SELECT id FROM prenotazioni WHERE gruppo_id = $1)`.
+Stesso gap presente (ma non corretto, perché non usata da nessuna UI oggi)
+in `pagamentiController.listaPerGruppo` — lasciata così di proposito, il
+suo commento chiarisce che è "solo i pagamenti sul gruppo, non spezzati
+sulle prenotazioni", una vista diversa e intenzionale.
+
+**Verifica X rimozione camera: bug reale trovato, non nella parte
+verificata prima.** Prima analisi guardava solo `FormNuovaPrenotazione`
+(la sessione ephemeral subito dopo aver creato una prenotazione) — corretta
+lì (`!c.primo`). Ma il titolare l'ha testato riaprendo una prenotazione
+GIÀ SALVATA con due camere (es. Francesco Bianchi, camera 1 e 2, 25-26
+agosto) tramite `PannelloDettaglio` — quella è la sezione costruita nel
+round precedente (task "Aggiungi un'altra camera"), mai passata dalla
+stessa guardia: mostrava la X su entrambe le camere, nessuna protetta.
+Corretto: `primoSoggiornoId` = id più basso tra i soggiorni attivi (non
+l'ordine restituito dalla query, che è per `data_arrivo` — due camere con
+le stesse date sarebbero indistinguibili), X nascosta su quella riga, non
+sulle altre. In `WizardGruppo` `rimuoviCameraGruppo` resta corretto senza
+alcuna guardia `primo` — lì ogni camera è una prenotazione a sé, annullabile
+singolarmente sempre, prima compresa.
+
+**Estensioni richieste dal titolare, tutte fatte:**
+1. Disponibilità colorata (`SelettoreCameraDisponibile`) estesa ai due
+   punti "aggiungi camera famiglia" rimasti con un `<select>` semplice:
+   subform di `FormNuovaPrenotazione` e la nuova sezione di
+   `PannelloDettaglio` (round precedente). Riordinate le date prima della
+   camera in entrambi, stesso motivo già documentato per `WizardGruppo`.
+2. `ModalDettaglioGruppo` — nuova sezione "+ Aggiungi camera" per un
+   gruppo già esistente: stesso pattern di `WizardGruppo.aggiungiCameraGruppo`
+   (ogni camera è `POST /prenotazioni` con `gruppo_id` già valorizzato, MAI
+   `/prenotazioni/:id/soggiorni` — quello resta solo per la famiglia),
+   senza il passaggio "crea gruppo" perché esiste già. Ospite prevalorizzato
+   sul referente del gruppo la prima volta, poi sull'ultimo usato (stesso
+   principio già in `WizardGruppo`). `elencoCamere` ora passato come nuova
+   prop a `ModalDettaglioGruppo` (prima non gli serviva).
+3. Nuova pagina `/gruppi` (voce sidebar sotto CLIENTI E PRENOTAZIONI,
+   permessi da `shared/ruoli.js` sezione `gruppi` già esistente, nessuna
+   migration): tabella con ricerca, colonne nome/referente/camere occupate
+   ora/storico soggiorni/storico ospiti/pagato/data creazione. Click riga
+   naviga a `/planning-camere?gruppo=<id>`, nuovo `useSearchParams` in
+   quella pagina che apre `ModalDettaglioGruppo` direttamente (nessuna
+   prenotazione "corrente" da cui partire in questo caso) — stesso pattern
+   già in uso in `addebiti-extra/page.jsx`. Dato reale, non ipotesi
+   dichiarata al titolare: la tabella nasce vuota, oggi non esistono ancora
+   gruppi reali nel database — è infrastruttura per quando le comitive
+   inizieranno ad accumularsi, non qualcosa che dà valore da subito.
+   Backend: `gruppiController.lista()` esteso con colonne aggregate via
+   subquery (storico soggiorni/ospiti non cancellati, camere con oggi
+   dentro il range di soggiorno per "occupate ora", pagamenti con la stessa
+   correzione del bug sopra) — stessa funzione già usata dall'autocomplete
+   di `ModalAssegnaGruppo`, colonne aggiuntive non lo rompono. `LIMIT 30`
+   invariato, nessuna paginazione: sufficiente per il volume atteso, da
+   rivedere se un giorno non lo fosse più.
+
+Verificato con `tsc --noEmit` (stavolta un controllo vero: `Sidebar.tsx` è
+un `.tsx` reale, non un `.jsx` come `planning-camere` — 0 errori),
+`npx esbuild` su `planning-camere/page.jsx` e sulla nuova `gruppi/page.jsx`
+(sintassi/JSX validi) e `node -c` su tutti i controller/route backend
+toccati. **Nessuna di queste modifiche è stata ancora vista in UI dal
+titolare**, in particolare: il nuovo pulsante "Aggiungi camera" dentro
+`ModalDettaglioGruppo`, la pagina `/gruppi` (oggi vuota, non testabile
+finché non esiste almeno un gruppo reale), e la correzione del totale
+pagamenti (verificabile solo pagando "solo questa camera" su un gruppo con
+più camere e controllando che la card si aggiorni).

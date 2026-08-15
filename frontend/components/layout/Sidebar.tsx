@@ -65,6 +65,9 @@ const SEZIONI_MENU = [
       { href: '/planning-camere', icona: CalendarDays, testo: 'Prenotazioni', ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/arrivi-partenze', icona: LogIn, testo: 'Arrivi/Partenze', ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/clienti', icona: Contact, testo: 'Clienti', ruoli: [...AT,'receptionist','portiere_notte'] },
+      // Gruppi (15/08/2026) — elenco comitive/famiglie multi-camera, stessi
+      // ruoli di shared/ruoli.js sezione 'gruppi'.lettura (A/T/R/P).
+      { href: '/gruppi', icona: Users, testo: 'Gruppi', ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/pre-checkin', icona: Mail, testo: 'Pre check-in', ruoli: [...AT,'receptionist'] },
       { href: '/addebiti-extra', icona: Receipt, testo: 'Addebiti extra', ruoli: [...AT,'receptionist','cameriere'] },
     ],

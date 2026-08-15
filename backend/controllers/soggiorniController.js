@@ -177,4 +177,62 @@ async function rimuoviOspite(req, res) {
   }
 }
 
-module.exports = { aggiorna, listaOspiti, aggiungiOspite, rimuoviOspite };
+// PATCH /api/soggiorni/:id/annulla — annulla una singola camera di una
+// prenotazione multi-camera (famiglia con più camere, stessa prenotazione),
+// senza toccare le altre camere della stessa prenotazione. Non tocca lo
+// stato della prenotazione né le altre camere (a differenza della
+// transizione 'interrotta' su /prenotazioni/:id/stato, che cancella TUTTI
+// i soggiorni della prenotazione — quella resta la via corretta per i
+// gruppi, dove ogni camera è già una prenotazione a sé).
+// Blocca con 400 se è l'unico soggiorno ancora attivo della prenotazione:
+// in quel caso andrebbe annullata l'intera prenotazione, altrimenti
+// resterebbe una prenotazione "fantasma" senza nessuna camera valida.
+// Verifica fatta con FOR UPDATE dentro una transazione per evitare la race
+// di due annullamenti concorrenti sulle ultime due camere rimaste.
+// Accessibile a: admin, titolare, receptionist (scrittura).
+async function annulla(req, res) {
+  const client = await pool.connect();
+  try {
+    await client.query('BEGIN');
+
+    const soggiorno = await client.query(
+      'SELECT id, prenotazione_id, cancellato FROM soggiorni WHERE id = $1 FOR UPDATE',
+      [req.params.id]
+    );
+    if (!soggiorno.rows.length) {
+      await client.query('ROLLBACK');
+      return res.status(404).json({ error: 'Soggiorno non trovato' });
+    }
+    if (soggiorno.rows[0].cancellato) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({ error: 'Il soggiorno è già annullato.' });
+    }
+
+    const attivi = await client.query(
+      'SELECT id FROM soggiorni WHERE prenotazione_id = $1 AND cancellato = false FOR UPDATE',
+      [soggiorno.rows[0].prenotazione_id]
+    );
+    if (attivi.rows.length <= 1) {
+      await client.query('ROLLBACK');
+      return res.status(400).json({
+        error: "È l'unica camera attiva di questa prenotazione — annulla l'intera prenotazione invece di questa singola camera.",
+      });
+    }
+
+    const result = await client.query(
+      'UPDATE soggiorni SET cancellato = true, updated_at = NOW() WHERE id = $1 RETURNING *',
+      [req.params.id]
+    );
+
+    await client.query('COMMIT');
+    res.json(result.rows[0]);
+  } catch (err) {
+    await client.query('ROLLBACK');
+    console.error('annulla soggiorno error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  } finally {
+    client.release();
+  }
+}
+
+module.exports = { aggiorna, listaOspiti, aggiungiOspite, rimuoviOspite, annulla };

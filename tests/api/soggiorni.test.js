@@ -210,6 +210,110 @@ describe('PATCH /api/soggiorni/:id', () => {
   });
 });
 
+// ─── PATCH /api/soggiorni/:id/annulla ─────────────────────────────────────────
+// 15/08/2026 — annulla UNA camera di una prenotazione famiglia multi-camera
+// senza toccare le altre. Nasce dal wizard "aggiungi un'altra camera (stessa
+// famiglia)" in planning-camere: prima di questo endpoint non c'era modo di
+// disfare un errore su una singola camera senza annullare tutta la famiglia.
+
+describe('PATCH /api/soggiorni/:id/annulla', () => {
+  test('senza token → 401', async () => {
+    const res = await request(app).patch('/api/soggiorni/1/annulla').send({});
+    expect(res.status).toBe(401);
+  });
+
+  test('portiere_notte → 403 (sola lettura, niente scrittura)', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-11-01', data_partenza: '2099-11-05' },
+    });
+    const res = await request(app)
+      .patch(`/api/soggiorni/${creata.body.soggiorno.id}/annulla`)
+      .set(authHeader.portiere_notte());
+    expect(res.status).toBe(403);
+  });
+
+  test('soggiorno inesistente → 404', async () => {
+    const res = await request(app)
+      .patch('/api/soggiorni/999999999/annulla')
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(404);
+  });
+
+  test('unica camera attiva della prenotazione → 400, non annullata', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-11-10', data_partenza: '2099-11-15' },
+    });
+    const res = await request(app)
+      .patch(`/api/soggiorni/${creata.body.soggiorno.id}/annulla`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/unica camera attiva/i);
+
+    const db = getPool();
+    const riga = await db.query('SELECT cancellato FROM soggiorni WHERE id = $1', [creata.body.soggiorno.id]);
+    expect(riga.rows[0].cancellato).toBe(false);
+  });
+
+  test('famiglia con 2 camere: annulla la seconda → 200, prima resta attiva', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-11-20', data_partenza: '2099-11-25' },
+    });
+    const seconda = await request(app)
+      .post(`/api/prenotazioni/${creata.body.id}/soggiorni`)
+      .set(authHeader.receptionist())
+      .send({
+        soggiorno: {
+          camera_id: cameraTestId2,
+          ospite_id: ospiteTestId,
+          data_arrivo: '2099-11-20',
+          data_partenza: '2099-11-25',
+          tariffa_totale: 150,
+        },
+      });
+    expect(seconda.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/soggiorni/${seconda.body.id}/annulla`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    expect(res.body.cancellato).toBe(true);
+
+    const db = getPool();
+    const prima = await db.query('SELECT cancellato FROM soggiorni WHERE id = $1', [creata.body.soggiorno.id]);
+    expect(prima.rows[0].cancellato).toBe(false);
+
+    // Conto/griglia escludono cancellato=true — verifica che il dettaglio
+    // prenotazione mostri ancora entrambe le righe (cancellato incluso, la
+    // UI decide se filtrarle), non che siano sparite dal DB.
+    const dettaglio = await request(app).get(`/api/prenotazioni/${creata.body.id}`).set(authHeader.receptionist());
+    expect(dettaglio.body.soggiorni.length).toBe(2);
+  });
+
+  test('già annullato → 400', async () => {
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-12-01', data_partenza: '2099-12-05' },
+    });
+    const seconda = await request(app)
+      .post(`/api/prenotazioni/${creata.body.id}/soggiorni`)
+      .set(authHeader.receptionist())
+      .send({
+        soggiorno: {
+          camera_id: cameraTestId2,
+          ospite_id: ospiteTestId,
+          data_arrivo: '2099-12-01',
+          data_partenza: '2099-12-05',
+        },
+      });
+    await request(app).patch(`/api/soggiorni/${seconda.body.id}/annulla`).set(authHeader.receptionist());
+
+    const res = await request(app)
+      .patch(`/api/soggiorni/${seconda.body.id}/annulla`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(400);
+    expect(res.body.error).toMatch(/già annullato/i);
+  });
+});
+
 // ─── GET /api/soggiorni/:id/ospiti ────────────────────────────────────────────
 
 describe('GET /api/soggiorni/:id/ospiti', () => {

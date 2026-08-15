@@ -86,6 +86,59 @@ afterAll(async () => {
   await chiudiPool();
 });
 
+// ─── GET /api/gruppi ──────────────────────────────────────────────────────────
+// 15/08/2026 — ricerca per nome/referente, serve al pannello dettaglio
+// prenotazione per "assegna a un gruppo esistente" (comitiva che prenota
+// un'altra camera in un secondo momento).
+
+describe('GET /api/gruppi — ricerca', () => {
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/gruppi');
+    expect(res.status).toBe(401);
+  });
+
+  test('cameriere → 403', async () => {
+    const res = await request(app).get('/api/gruppi').set(authHeader.cameriere());
+    expect(res.status).toBe(403);
+  });
+
+  test('portiere_notte (sola lettura consentita) → 200', async () => {
+    const res = await request(app).get('/api/gruppi').set(authHeader.portiere_notte());
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body)).toBe(true);
+  });
+
+  test('ricerca per nome trova il gruppo creato, non uno con nome diverso', async () => {
+    const nomeUnico = `Comitiva Ricerca${SUFFISSO}`;
+    const gruppo = await creaGruppo(authHeader.receptionist(), { nome: nomeUnico });
+    expect(gruppo.status).toBe(201);
+
+    const res = await request(app)
+      .get(`/api/gruppi?search=${encodeURIComponent(nomeUnico)}`)
+      .set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.some(g => g.id === gruppo.body.id)).toBe(true);
+
+    const senzaMatch = await request(app)
+      .get('/api/gruppi?search=NomeCheNonEsisteDavvero123456')
+      .set(authHeader.titolare());
+    expect(senzaMatch.status).toBe(200);
+    expect(senzaMatch.body.some(g => g.id === gruppo.body.id)).toBe(false);
+  });
+
+  test('ricerca per referente_nome trova il gruppo', async () => {
+    const referenteUnico = `Referente Cerca ${SUFFISSO}`;
+    const gruppo = await creaGruppo(authHeader.receptionist(), { referente_nome: referenteUnico });
+    expect(gruppo.status).toBe(201);
+
+    const res = await request(app)
+      .get(`/api/gruppi?search=${encodeURIComponent(referenteUnico)}`)
+      .set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.some(g => g.id === gruppo.body.id)).toBe(true);
+  });
+});
+
 // ─── GET /api/gruppi/:id ──────────────────────────────────────────────────────
 
 describe('GET /api/gruppi/:id', () => {

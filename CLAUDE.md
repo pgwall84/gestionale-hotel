@@ -1237,6 +1237,41 @@ sessione (test-guardia Alloggiati Web, `.env` di sviluppo condiviso con
 quello di test, non un bug di oggi).** Dettaglio completo:
 `docs/DIARIO_SESSIONI.md`, voce 13/08/2026.
 
+**Sessione 15/08/2026**: due fix minori (blocco eliminazione configurazione
+sala già completo dal 06/08, solo `docs/EVOLUTIVE.md` era rimasto indietro;
+icona gruppo sulla barra in `/planning-camere`), riordino menu (gruppo
+PRINCIPALE eliminato da `Sidebar.tsx`, Timbratura/Personale in STRUTTURA,
+HACCP in ADEMPIMENTI, nuova icona Home persistente sulla bottom nav mobile
+per non isolare i ruoli senza quella scorciatoia), poi il pezzo grosso della
+sessione: **prenotazioni di gruppo complete**. Prima solo `gruppo_id`
+esisteva nello schema senza alcuna UI; ora: famiglia su più camere
+(`FormNuovaPrenotazione` resta aperto dopo il primo salvataggio in modalità
+"aggiungi un'altra camera", stesso intestatario, stessa prenotazione —
+`POST /api/prenotazioni/:id/soggiorni`, già esistente ma mai collegato a
+un bottone); comitiva su prenotazioni separate (`WizardGruppo`: dati gruppo
+→ loop "aggiungi camera", ogni camera con ospite proprio, `gruppo_id`
+condiviso); assegnazione a un gruppo esistente da un pannello già aperto
+(`ModalAssegnaGruppo`, nuovo `GET /api/gruppi?search=`); dettaglio gruppo
+con elenco camere/stati e pagamento — selettore esplicito "tutto il gruppo"
+(`POST /api/gruppi/:id/pagamenti`) o "solo questa camera"
+(`POST /api/prenotazioni/:id/pagamenti`), scelta lasciata alla reception su
+indicazione esplicita del titolare, nessuna nuova regola lato server (i due
+endpoint esistevano già entrambi, indipendenti). Nuovo endpoint
+`PATCH /api/soggiorni/:id/annulla` per disfare una singola camera di una
+famiglia multi-camera senza annullare l'intera prenotazione (mancava del
+tutto — scoperto disegnando il mockup con il titolare). `prenotazioni.aggiorna()`
+esteso per accettare `gruppo_id` in modo undefined-safe (CASE, non COALESCE:
+deve poter essere impostato a `null` esplicitamente per sganciare una camera
+dal gruppo). Verificato che l'aggregazione economica per famiglia multi-
+camera (conto unico, pagamento unico) funzionasse già senza modifiche:
+`conto()` e `pagamenti` erano già per `prenotazione_id`, non per singolo
+soggiorno. Gli addebiti extra restano sempre per-camera in entrambi i casi
+(`addebiti_extra.soggiorno_id`), invariato. Verificato con `tsc --noEmit`
+(intero frontend, zero errori) e `node -c` su tutti i file backend toccati
+— non ancora verificato in UI dal titolare, in particolare il flusso
+completo wizard gruppo + pagamento gruppo/camera. Dettaglio tecnico
+completo: `docs/DIARIO_SESSIONI.md`, voce 15/08/2026.
+
 ## 17. DOCUMENTI DI PROGETTO
 
 Indice di dove si trova cosa, per evitare di ricreare doppioni:
@@ -1257,7 +1292,14 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 
 ---
 
-*Documento aggiornato al 13/08/2026 — **Audit HR/timbrature + provisioning
+*Documento aggiornato al 15/08/2026 — **Prenotazioni di gruppo complete**:
+famiglia su più camere (stessa prenotazione), comitiva su prenotazioni
+separate (WizardGruppo + gruppo_id), assegnazione a gruppo esistente,
+dettaglio gruppo con pagamento tutto-il-gruppo/singola-camera, nuovo
+`PATCH /api/soggiorni/:id/annulla` — verificato solo con tsc/node -c, non
+ancora in UI dal titolare (dettaglio sopra e in `docs/DIARIO_SESSIONI.md`).
+Riordino menu (PRINCIPALE eliminato, Timbratura/Personale in STRUTTURA,
+HACCP in ADEMPIMENTI). Documento aggiornato al 13/08/2026 — **Audit HR/timbrature + provisioning
 dipendenti (Fasi A/B/C, dettaglio sopra e in `docs/DIARIO_SESSIONI.md`):
 migration 032/033, "Applica turno standard", contratto/fascia oraria,
 foglio "Consulente" nel report mensile — non ancora verificati end-to-end

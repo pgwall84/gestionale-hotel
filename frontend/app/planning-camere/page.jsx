@@ -11,12 +11,13 @@
 import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
-  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer, Download,
+  BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer, Download, Users,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
 } from '@dnd-kit/core';
 import Link from 'next/link';
+import { useSearchParams } from 'next/navigation';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -238,7 +239,7 @@ function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
         opacity: isDragging ? 0.6 : (attenuata ? 0.25 : 1),
         cursor: puoTrascinare ? 'grab' : 'pointer',
       }}
-      className="rounded-md px-2 py-1 text-[11px] font-medium truncate m-0.5 flex items-center select-none"
+      className="rounded-md px-2 py-1 text-[11px] font-medium m-0.5 flex items-center select-none"
       // Tooltip più dettagliato (04/08/2026, richiesto dal titolare) — prima
       // mostrava solo nome/stato, ora anche le date e il numero ospiti/
       // tariffa, tutti dati già presenti nella risposta della griglia
@@ -247,10 +248,17 @@ function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
         `${soggiorno.ospite_nome} ${soggiorno.ospite_cognome}\n` +
         `${formatDataEstesa(soggiorno.data_arrivo)} → ${formatDataEstesa(soggiorno.data_partenza)}\n` +
         `${soggiorno.num_ospiti} ${soggiorno.num_ospiti === 1 ? 'ospite' : 'ospiti'} · Stato: ${colori.label}` +
-        (soggiorno.tariffa_totale ? ` · €${Number(soggiorno.tariffa_totale).toFixed(2)}` : '')
+        (soggiorno.tariffa_totale ? ` · €${Number(soggiorno.tariffa_totale).toFixed(2)}` : '') +
+        (soggiorno.gruppo_id ? ' · Fa parte di un gruppo' : '')
       }
     >
-      {soggiorno.ospite_cognome}
+      {/* Icona gruppo (15/08/2026, richiesta esplicita del titolare): i
+          gruppi (gruppi_prenotazione) esistevano già nel sistema ma erano
+          invisibili a colpo d'occhio sulla griglia — si scoprivano solo
+          aprendo il pannello dettaglio. Nessuna nuova chiamata: gruppo_id
+          è già nella risposta di /griglia (aggiunto oggi al SELECT). */}
+      {soggiorno.gruppo_id && <Users size={10} className="shrink-0 mr-0.5" />}
+      <span className="truncate min-w-0">{soggiorno.ospite_cognome}</span>
     </div>
   );
 }
@@ -544,6 +552,26 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   // (riepilogo economico + pagamento rapido + stampa ricevuta di cortesia),
   // che esegue il PATCH solo dopo la conferma esplicita dell'operatore.
   const [mostraCheckOut, setMostraCheckOut] = useState(false);
+  // Gruppi di prenotazione (15/08/2026) — vedi ModalAssegnaGruppo/
+  // ModalDettaglioGruppo più sotto.
+  const [mostraAssegnaGruppo, setMostraAssegnaGruppo] = useState(false);
+  const [mostraDettaglioGruppo, setMostraDettaglioGruppo] = useState(false);
+  // Aggiungi un'altra camera a una prenotazione ESISTENTE (15/08/2026,
+  // segnalato dal titolare: "nessuna sezione me lo permette" — prima
+  // c'era solo nel form "Nuova prenotazione" appena creata, non qui su una
+  // prenotazione già esistente). Solo per famiglia (stessa prenotazione,
+  // stesso intestatario) — se la prenotazione fa già parte di un gruppo,
+  // aggiungere una camera lì significa una prenotazione separata, non un
+  // altro soggiorno qui (sezione ancora da costruire su ModalDettaglioGruppo,
+  // annotato in EVOLUTIVE.md).
+  const [mostraAggiungiCamera, setMostraAggiungiCamera] = useState(false);
+  const [nuovaCameraId, setNuovaCameraId] = useState('');
+  const [nuovaArrivo, setNuovaArrivo] = useState('');
+  const [nuovaPartenza, setNuovaPartenza] = useState('');
+  const [nuovoNumOspiti, setNuovoNumOspiti] = useState(1);
+  const [nuovaTariffa, setNuovaTariffa] = useState('');
+  const [erroreAggiungiCamera, setErroreAggiungiCamera] = useState(null);
+  const [salvandoAggiungiCamera, setSalvandoAggiungiCamera] = useState(false);
 
   // Annulla prenotazione (→ 'interrotta') — solo da 'opzione'/'confermata'
   // (uniche transizioni valide, vedi state machine). Il backend sincronizza
@@ -561,6 +589,72 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     } catch (err) {
       setErrore(err.message || 'Errore nell\'annullamento');
       setSalvataggio(false);
+    }
+  }
+
+  // Aggiungi un'altra camera alla stessa prenotazione (15/08/2026) — riusa
+  // POST /prenotazioni/:id/soggiorni, già esistente per il flusso "famiglia"
+  // nel form Nuova prenotazione, mai collegato prima a una prenotazione
+  // già esistente. L'ospite intestatario resta lo stesso di tutta la
+  // prenotazione (non richiesto di nuovo qui).
+  async function aggiungiCameraEsistente() {
+    if (!nuovaCameraId || !nuovaArrivo || !nuovaPartenza) {
+      setErroreAggiungiCamera('Camera e date sono obbligatorie.');
+      return;
+    }
+    // Ospite intestatario: stesso di tutta la prenotazione, ricavato dal
+    // primo soggiorno attivo — non richiesto di nuovo qui (stesso criterio
+    // usato nel render delle card sopra). Il backend (aggiungiSoggiorno)
+    // richiede sempre un ospite_id esplicito, nessuna inferenza server-side.
+    const soggiornoRif = dati.soggiorni?.find(s => !s.cancellato);
+    const intestatarioRif = soggiornoRif?.ospiti?.find(o => ['16', '17', '18'].includes(o.tipo_alloggiato)) || soggiornoRif?.ospiti?.[0];
+    if (!intestatarioRif?.id) {
+      setErroreAggiungiCamera('Impossibile determinare l\'ospite intestatario della prenotazione.');
+      return;
+    }
+    setSalvandoAggiungiCamera(true);
+    setErroreAggiungiCamera(null);
+    try {
+      await api.post(`/prenotazioni/${prenotazioneId}/soggiorni`, {
+        soggiorno: {
+          camera_id: Number(nuovaCameraId),
+          ospite_id: intestatarioRif.id,
+          data_arrivo: nuovaArrivo,
+          data_partenza: nuovaPartenza,
+          num_ospiti: Number(nuovoNumOspiti) || 1,
+          tariffa_totale: nuovaTariffa === '' ? null : Number(nuovaTariffa),
+        },
+      });
+      setMostraAggiungiCamera(false);
+      setNuovaCameraId('');
+      setNuovoNumOspiti(1);
+      setNuovaTariffa('');
+      await carica();
+      await caricaConto();
+      onCambiato();
+    } catch (err) {
+      setErroreAggiungiCamera(err.message || 'Errore nell\'aggiunta della camera');
+    } finally {
+      setSalvandoAggiungiCamera(false);
+    }
+  }
+
+  // Annulla una singola camera della prenotazione (15/08/2026) — PATCH
+  // /soggiorni/:id/annulla, il backend blocca con 400 se è l'ultimo
+  // soggiorno attivo (in quel caso va annullata l'intera prenotazione con
+  // annullaPrenotazione()).
+  async function annullaSoggiorno(soggiornoId) {
+    if (!window.confirm('Annullare questa camera? Le altre camere della prenotazione restano invariate.')) {
+      return;
+    }
+    setErrore(null);
+    try {
+      await api.patch(`/soggiorni/${soggiornoId}/annulla`);
+      await carica();
+      await caricaConto();
+      onCambiato();
+    } catch (err) {
+      setErrore(err.message || 'Errore nell\'annullamento della camera');
     }
   }
 
@@ -664,37 +758,213 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                 </span>
               </div>
 
-              {dati.soggiorni?.map((s) => {
-                const intestatario = s.ospiti?.find(o => ['16', '17', '18'].includes(o.tipo_alloggiato)) || s.ospiti?.[0];
-                return (
-                  <div key={s.id} className="rounded-lg border p-3 space-y-1.5 text-sm">
-                    <div className="flex items-center gap-2 font-medium">
-                      <User size={14} /> {intestatario ? `${intestatario.nome} ${intestatario.cognome}` : 'Ospite non indicato'}
+              {(() => {
+                // Solo soggiorni attivi (15/08/2026) — da quando esiste
+                // l'annullo di un singolo soggiorno (PATCH /soggiorni/:id/annulla),
+                // un soggiorno cancellato non va più mostrato qui, altrimenti
+                // resta come scheda fantasma permanente. Stesso criterio già
+                // usato da griglia()/conto() lato backend.
+                const soggiorniAttivi = dati.soggiorni?.filter(s => !s.cancellato) || [];
+                // "Primo" soggiorno di una famiglia = id più basso tra gli
+                // attivi (creato insieme alla prenotazione stessa, prima di
+                // ogni "aggiungi camera" successivo) — protetto dalla X qui
+                // per lo stesso motivo per cui FormNuovaPrenotazione non la
+                // mostra sulla prima camera appena creata: quella riga è
+                // l'ancora della prenotazione, non va tolta da qui. Non è
+                // l'ordine restituito dalla query (quello è per data_arrivo,
+                // due camere con le stesse date sarebbero indistinguibili).
+                // Non si applica ai gruppi (!dati.gruppo_id più sotto): lì
+                // ogni camera è una prenotazione a sé, annullabile sempre.
+                const primoSoggiornoId = soggiorniAttivi.length
+                  ? Math.min(...soggiorniAttivi.map(s => s.id))
+                  : null;
+                return soggiorniAttivi.map((s) => {
+                  const intestatario = s.ospiti?.find(o => ['16', '17', '18'].includes(o.tipo_alloggiato)) || s.ospiti?.[0];
+                  return (
+                    <div key={s.id} className="rounded-lg border p-3 space-y-1.5 text-sm">
+                      <div className="flex items-center gap-2 font-medium">
+                        <User size={14} /> {intestatario ? `${intestatario.nome} ${intestatario.cognome}` : 'Ospite non indicato'}
+                      </div>
+                      <p style={{ color: 'var(--muted-foreground)' }}>
+                        Camera {s.camera_numero}{s.piano != null ? ` — piano ${s.piano}` : ' — appartamento esterno'}
+                      </p>
+                      <p style={{ color: 'var(--muted-foreground)' }}>
+                        {formatDataEstesa(s.data_arrivo)} → {formatDataEstesa(s.data_partenza)}
+                      </p>
+                      <p style={{ color: 'var(--muted-foreground)' }}>{s.num_ospiti} ospiti</p>
+                      {/* Addebiti extra (10/08/2026): apre la griglia rapida bar/camera
+                          già con il soggiorno risolto — nessun passaggio "seleziona
+                          camera" quando si arriva da qui. */}
+                      <div className="flex items-center gap-2 flex-wrap">
+                        <Link
+                          href={`/addebiti-extra?soggiorno_id=${s.id}&camera=${encodeURIComponent(s.camera_numero ?? '')}&ospite=${encodeURIComponent(intestatario ? `${intestatario.nome} ${intestatario.cognome}` : '')}`}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 mt-1"
+                          style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}
+                        >
+                          <Receipt size={13} /> Addebiti extra
+                        </Link>
+                        {/* Annulla singola camera (15/08/2026, corretto lo
+                            stesso giorno dopo test del titolare): mai sulla
+                            camera "primo" (vedi sopra), visibile solo sulle
+                            altre e solo se ce n'è più di una attiva — il
+                            backend blocca comunque l'annullo dell'ultimo
+                            soggiorno rimasto anche se questa guardia fallisse. */}
+                        {puoScrivere && !dati.gruppo_id && soggiorniAttivi.length > 1 && s.id !== primoSoggiornoId && (
+                          <button
+                            type="button"
+                            onClick={() => annullaSoggiorno(s.id)}
+                            className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 mt-1"
+                            style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}
+                          >
+                            <X size={13} /> Annulla questa camera
+                          </button>
+                        )}
+                      </div>
                     </div>
-                    <p style={{ color: 'var(--muted-foreground)' }}>
-                      Camera {s.camera_numero}{s.piano != null ? ` — piano ${s.piano}` : ' — appartamento esterno'}
-                    </p>
-                    <p style={{ color: 'var(--muted-foreground)' }}>
-                      {formatDataEstesa(s.data_arrivo)} → {formatDataEstesa(s.data_partenza)}
-                    </p>
-                    <p style={{ color: 'var(--muted-foreground)' }}>{s.num_ospiti} ospiti</p>
-                    {/* Addebiti extra (10/08/2026): apre la griglia rapida bar/camera
-                        già con il soggiorno risolto — nessun passaggio "seleziona
-                        camera" quando si arriva da qui. */}
-                    <Link
-                      href={`/addebiti-extra?soggiorno_id=${s.id}&camera=${encodeURIComponent(s.camera_numero ?? '')}&ospite=${encodeURIComponent(intestatario ? `${intestatario.nome} ${intestatario.cognome}` : '')}`}
-                      className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5 mt-1"
-                      style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}
+                  );
+                });
+              })()}
+
+              {/* Aggiungi un'altra camera alla stessa famiglia (15/08/2026) —
+                  colma il gap segnalato dal titolare: prima esisteva solo nel
+                  form "Nuova prenotazione" appena creata, non su una
+                  prenotazione già esistente. Non disponibile se la
+                  prenotazione fa già parte di un gruppo (lì significa una
+                  prenotazione separata con gruppo_id condiviso, non un altro
+                  soggiorno qui — sezione ancora da costruire su
+                  ModalDettaglioGruppo). */}
+              {puoScrivere && !dati.gruppo_id && (
+                <div className="rounded-lg border p-3 text-sm">
+                  {!mostraAggiungiCamera ? (
+                    <button
+                      type="button"
+                      onClick={() => {
+                        // Prevalorizza le date sull'ultimo soggiorno attivo —
+                        // richiesta esplicita del titolare 15/08/2026: "questo
+                        // delle date vale anche per nuova prenotazione/modifica
+                        // delle famiglie".
+                        const attivi = dati.soggiorni?.filter(s => !s.cancellato) || [];
+                        const ultimo = attivi[attivi.length - 1];
+                        if (ultimo) {
+                          setNuovaArrivo(ultimo.data_arrivo?.slice(0, 10) || '');
+                          setNuovaPartenza(ultimo.data_partenza?.slice(0, 10) || '');
+                        }
+                        setErroreAggiungiCamera(null);
+                        setMostraAggiungiCamera(true);
+                      }}
+                      className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5"
+                      style={{ background: 'var(--hotel-navy)', color: 'white' }}
                     >
-                      <Receipt size={13} /> Addebiti extra
-                    </Link>
-                  </div>
-                );
-              })}
+                      <Plus size={13} /> Aggiungi un&apos;altra camera
+                    </button>
+                  ) : (
+                    <div className="space-y-2">
+                      <p className="font-medium">Aggiungi un&apos;altra camera</p>
+                      <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                        Stesso intestatario, stessa prenotazione — il pagamento resterà unico per tutte le camere.
+                      </p>
+                      <div className="grid grid-cols-2 gap-2">
+                        <div>
+                          <label className="text-xs font-medium block mb-1">Arrivo</label>
+                          <CampoData value={nuovaArrivo} onChange={setNuovaArrivo} className="border px-2 py-1.5" />
+                        </div>
+                        <div>
+                          <label className="text-xs font-medium block mb-1">Partenza</label>
+                          <CampoData value={nuovaPartenza} onChange={setNuovaPartenza} className="border px-2 py-1.5" />
+                        </div>
+                      </div>
+                      <div>
+                        <label className="text-xs font-medium block mb-1">Camera</label>
+                        <SelettoreCameraDisponibile
+                          elencoCamere={elencoCamere}
+                          dataArrivo={nuovaArrivo}
+                          dataPartenza={nuovaPartenza}
+                          value={nuovaCameraId}
+                          onChange={setNuovaCameraId}
+                        />
+                      </div>
+                      <div className="grid grid-cols-2 gap-2">
+                        <input
+                          type="number"
+                          min="1"
+                          value={nuovoNumOspiti}
+                          onChange={(e) => setNuovoNumOspiti(e.target.value)}
+                          placeholder="Ospiti"
+                          className="w-full rounded-lg border px-2.5 py-1.5 text-sm"
+                        />
+                        <input
+                          type="number"
+                          min="0"
+                          step="0.01"
+                          value={nuovaTariffa}
+                          onChange={(e) => setNuovaTariffa(e.target.value)}
+                          placeholder="Tariffa totale (€)"
+                          className="w-full rounded-lg border px-2.5 py-1.5 text-sm"
+                        />
+                      </div>
+                      {erroreAggiungiCamera && (
+                        <p className="text-xs" style={{ color: 'var(--status-red-text)' }}>{erroreAggiungiCamera}</p>
+                      )}
+                      <div className="flex items-center gap-2">
+                        <button
+                          type="button"
+                          disabled={salvandoAggiungiCamera}
+                          onClick={aggiungiCameraEsistente}
+                          className="inline-flex items-center gap-1.5 text-xs font-medium rounded-lg px-2.5 py-1.5"
+                          style={{ background: 'var(--hotel-navy)', color: 'white' }}
+                        >
+                          {salvandoAggiungiCamera ? <Loader2 size={13} className="animate-spin" /> : <Plus size={13} />} Conferma
+                        </button>
+                        <button
+                          type="button"
+                          onClick={() => { setMostraAggiungiCamera(false); setErroreAggiungiCamera(null); }}
+                          className="text-xs font-medium rounded-lg px-2.5 py-1.5"
+                          style={{ background: 'var(--background)', color: 'var(--muted-foreground)' }}
+                        >
+                          Annulla
+                        </button>
+                      </div>
+                    </div>
+                  )}
+                </div>
+              )}
 
               <div className="text-sm">
                 <p className="font-medium mb-1">Canale</p>
                 <p style={{ color: 'var(--muted-foreground)' }}>{dati.canale_origine || '—'}</p>
+              </div>
+
+              {/* Gruppo (15/08/2026) — collega questa prenotazione a una
+                  comitiva (gruppo_id), con pagamento e vista aggregata
+                  separati dal resto. Vedi ModalAssegnaGruppo/
+                  ModalDettaglioGruppo, definiti sotto FormNuovaPrenotazione. */}
+              <div className="text-sm">
+                <p className="font-medium mb-1 flex items-center gap-1.5"><Users size={14} /> Gruppo</p>
+                {dati.gruppo_id ? (
+                  <div className="flex items-center justify-between gap-2">
+                    <span
+                      className="inline-block text-xs font-medium rounded-full px-2.5 py-1"
+                      style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}
+                    >
+                      {dati.gruppo_nome}
+                    </span>
+                    <button
+                      onClick={() => setMostraDettaglioGruppo(true)}
+                      className="text-xs font-medium rounded-lg px-2.5 py-1.5 border"
+                    >
+                      Vedi gruppo
+                    </button>
+                  </div>
+                ) : puoScrivere ? (
+                  <button
+                    onClick={() => setMostraAssegnaGruppo(true)}
+                    className="text-xs font-medium rounded-lg px-2.5 py-1.5 border"
+                  >
+                    Assegna a un gruppo
+                  </button>
+                ) : (
+                  <p style={{ color: 'var(--muted-foreground)' }}>—</p>
+                )}
               </div>
 
               {dati.note && (
@@ -902,6 +1172,27 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
         prenotazioneId={prenotazioneId}
         onChiudi={() => setMostraCheckOut(false)}
         onCompletato={() => { setMostraCheckOut(false); onChiudi(); onCambiato(); }}
+      />
+    )}
+
+    {mostraAssegnaGruppo && (
+      <ModalAssegnaGruppo
+        prenotazioneId={prenotazioneId}
+        onChiudi={() => setMostraAssegnaGruppo(false)}
+        onAssegnato={async () => {
+          setMostraAssegnaGruppo(false);
+          await carica();
+          onCambiato();
+        }}
+      />
+    )}
+
+    {mostraDettaglioGruppo && dati?.gruppo_id && (
+      <ModalDettaglioGruppo
+        gruppoId={dati.gruppo_id}
+        elencoCamere={elencoCamere}
+        onChiudi={() => setMostraDettaglioGruppo(false)}
+        onCambiato={async () => { await carica(); onCambiato(); }}
       />
     )}
     </>
@@ -1145,6 +1436,580 @@ function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
   );
 }
 
+// ── Assegna a un gruppo esistente ────────────────────────────────────────────
+// Ricerca (GET /api/gruppi?search=) per il caso "la stessa comitiva prenota
+// un'altra camera in un secondo momento" — l'alternativa a costruire tutto
+// dal WizardGruppo. Include anche un mini "+ crea nuovo gruppo" per non
+// dover chiudere questo pannello e riaprire il wizard solo per un nome.
+function ModalAssegnaGruppo({ prenotazioneId, onChiudi, onAssegnato }) {
+  const [ricerca, setRicerca] = useState('');
+  const [risultati, setRisultati] = useState([]);
+  const [cercando, setCercando] = useState(false);
+  const [assegnando, setAssegnando] = useState(false);
+  const [errore, setErrore] = useState(null);
+  const [nuovoNomeAperto, setNuovoNomeAperto] = useState(false);
+  const [nuovoNome, setNuovoNome] = useState('');
+  const [creandoNuovo, setCreandoNuovo] = useState(false);
+
+  useEffect(() => {
+    const handle = setTimeout(async () => {
+      try {
+        setCercando(true);
+        const risposta = await api.get(`/gruppi?search=${encodeURIComponent(ricerca.trim())}`);
+        setRisultati(risposta.data);
+      } catch {
+        setRisultati([]);
+      } finally {
+        setCercando(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ricerca]);
+
+  async function assegna(gruppoId) {
+    setErrore(null);
+    setAssegnando(true);
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}`, { gruppo_id: gruppoId });
+      onAssegnato();
+    } catch (err) {
+      setErrore(err.response?.data?.error || err.message || 'Errore nell\'assegnazione al gruppo.');
+      setAssegnando(false);
+    }
+  }
+
+  async function creaEAssegna() {
+    if (!nuovoNome.trim()) return setErrore('Il nome del gruppo è obbligatorio.');
+    setErrore(null);
+    setCreandoNuovo(true);
+    try {
+      const risposta = await api.post('/gruppi', { nome: nuovoNome.trim() });
+      await assegna(risposta.data.id);
+    } catch (err) {
+      setErrore(err.response?.data?.error || err.message || 'Errore nella creazione del gruppo.');
+      setCreandoNuovo(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="w-full max-w-sm bg-white rounded-xl shadow-xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <p className="font-semibold text-sm">Assegna a un gruppo</p>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
+        </div>
+        <div className="p-4 space-y-3">
+          {errore && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {errore}
+            </div>
+          )}
+          <div className="relative">
+            <input type="text" value={ricerca} onChange={(e) => setRicerca(e.target.value)}
+                   placeholder="Cerca per nome gruppo o referente..." className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+            {cercando && <div className="absolute right-2 top-1.5"><Loader2 size={14} className="animate-spin" /></div>}
+          </div>
+          <div className="space-y-1.5 max-h-52 overflow-y-auto">
+            {risultati.map(g => (
+              <button key={g.id} type="button" disabled={assegnando} onClick={() => assegna(g.id)}
+                      className="w-full text-left rounded-lg border px-2.5 py-1.5 text-sm hover:bg-gray-50">
+                <span className="font-medium">{g.nome}</span>
+                {g.referente_nome && <span style={{ color: 'var(--muted-foreground)' }}> — {g.referente_nome}</span>}
+              </button>
+            ))}
+            {!cercando && risultati.length === 0 && (
+              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Nessun gruppo trovato.</p>
+            )}
+          </div>
+
+          {nuovoNomeAperto ? (
+            <div className="rounded-lg border p-2.5 space-y-2">
+              <input type="text" value={nuovoNome} onChange={(e) => setNuovoNome(e.target.value)}
+                     placeholder="Nome nuovo gruppo" className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+              <div className="flex gap-2">
+                <button type="button" onClick={creaEAssegna} disabled={creandoNuovo || assegnando}
+                        className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
+                  {creandoNuovo ? 'Creazione...' : 'Crea e assegna'}
+                </button>
+                <button type="button" onClick={() => setNuovoNomeAperto(false)} className="flex-1 rounded-lg py-1.5 text-xs font-medium border">
+                  Annulla
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button type="button" onClick={() => setNuovoNomeAperto(true)}
+                    className="w-full flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium border">
+              <Plus size={13} /> Nuovo gruppo
+            </button>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Dettaglio gruppo ─────────────────────────────────────────────────────────
+// Elenco camere/prenotazioni del gruppo (una riga per soggiorno non
+// cancellato), due totali separati (mai un saldo netto precalcolato, stessa
+// scelta di RiepilogoEconomico) e un form di pagamento con selettore
+// "tutto il gruppo" (POST /gruppi/:id/pagamenti) / "questa camera" (POST
+// /prenotazioni/:id/pagamenti) — la flessibilità chiesta esplicitamente dal
+// titolare, nessuna nuova regola lato server: sono due endpoint che
+// esistevano già entrambi, indipendenti. Gli addebiti extra restano sempre
+// per-camera (addebiti_extra.soggiorno_id), non compaiono qui.
+function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) {
+  const [dati, setDati] = useState(null);
+  const [loading, setLoading] = useState(true);
+  const [errore, setErrore] = useState(null);
+  const [applicaA, setApplicaA] = useState('gruppo'); // 'gruppo' | prenotazione_id
+  const [importo, setImporto] = useState('');
+  const [metodo, setMetodo] = useState('contanti');
+  const [tipo, setTipo] = useState('saldo');
+  const [salvataggio, setSalvataggio] = useState(false);
+  const [erroreForm, setErroreForm] = useState(null);
+
+  // Aggiungi camera a un gruppo GIÀ ESISTENTE (15/08/2026, richiesta
+  // esplicita del titolare) — stesso pattern di WizardGruppo.aggiungiCameraGruppo
+  // (ogni camera è una prenotazione separata con gruppo_id condiviso, mai
+  // POST /prenotazioni/:id/soggiorni che è per la famiglia), solo senza il
+  // passaggio "crea gruppo" perché qui il gruppo esiste già.
+  const [mostraFormCamera, setMostraFormCamera] = useState(false);
+  const [cameraId, setCameraId] = useState('');
+  const [dataArrivo, setDataArrivo] = useState('');
+  const [dataPartenza, setDataPartenza] = useState('');
+  const [numOspiti, setNumOspiti] = useState(1);
+  const [tariffaTotale, setTariffaTotale] = useState('');
+  const [ospiteSelezionato, setOspiteSelezionato] = useState(null);
+  const [ricercaOspite, setRicercaOspite] = useState('');
+  const [risultatiOspiti, setRisultatiOspiti] = useState([]);
+  const [cercandoOspiti, setCercandoOspiti] = useState(false);
+  const [nuovoOspiteAperto, setNuovoOspiteAperto] = useState(false);
+  const [nuovoOspiteNome, setNuovoOspiteNome] = useState('');
+  const [nuovoOspiteCognome, setNuovoOspiteCognome] = useState('');
+  const [creandoOspite, setCreandoOspite] = useState(false);
+  const [erroreCamera, setErroreCamera] = useState(null);
+  const [salvandoCamera, setSalvandoCamera] = useState(false);
+  // Prevalorizzazione (stesso principio di WizardGruppo): la prima volta che
+  // si apre il form si propone il referente del gruppo come ricerca ospite;
+  // dalla seconda camera in poi (nella stessa sessione del modal) riparte
+  // già selezionato con l'ultimo ospite/date usati.
+  const [ultimoOspiteUsato, setUltimoOspiteUsato] = useState(null);
+  const [ultimeDateUsate, setUltimeDateUsate] = useState({ arrivo: '', partenza: '' });
+
+  const carica = useCallback(async () => {
+    try {
+      setLoading(true);
+      setErrore(null);
+      const risposta = await api.get(`/gruppi/${gruppoId}`);
+      setDati(risposta.data);
+    } catch (err) {
+      setErrore('Errore nel caricamento del gruppo');
+    } finally {
+      setLoading(false);
+    }
+  }, [gruppoId]);
+
+  useEffect(() => { carica(); }, [carica]);
+
+  const camere = (dati?.prenotazioni || []).flatMap(p =>
+    (p.soggiorni || []).filter(s => !s.cancellato).map(s => ({ ...s, prenotazione_id: p.id, prenotazione_stato: p.stato }))
+  );
+  const prenotazioniAttive = (dati?.prenotazioni || []).filter(p => !['interrotta'].includes(p.stato));
+
+  async function registraPagamento(e) {
+    e.preventDefault();
+    setErroreForm(null);
+    const val = Number(importo);
+    if (!importo || isNaN(val) || val <= 0) return setErroreForm('Importo non valido.');
+    setSalvataggio(true);
+    try {
+      if (applicaA === 'gruppo') {
+        await api.post(`/gruppi/${gruppoId}/pagamenti`, { importo: val, metodo, tipo });
+      } else {
+        await api.post(`/prenotazioni/${applicaA}/pagamenti`, { importo: val, metodo, tipo });
+      }
+      setImporto('');
+      await carica();
+      onCambiato();
+    } catch (err) {
+      setErroreForm(err.response?.data?.error || err.message || 'Errore nella registrazione del pagamento.');
+    } finally {
+      setSalvataggio(false);
+    }
+  }
+
+  async function sganciaCamera(prenotazioneId) {
+    if (!window.confirm('Sganciare questa camera dal gruppo? La prenotazione resta valida, solo non più collegata al gruppo.')) return;
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}`, { gruppo_id: null });
+      await carica();
+      onCambiato();
+    } catch (err) {
+      setErrore(err.response?.data?.error || err.message || 'Errore nello sganciamento della camera.');
+    }
+  }
+
+  function apriAggiungiCamera() {
+    if (ultimoOspiteUsato) {
+      setOspiteSelezionato(ultimoOspiteUsato);
+    } else if (dati?.referente_nome && !ricercaOspite) {
+      setRicercaOspite(dati.referente_nome);
+    }
+    if (ultimeDateUsate.arrivo && ultimeDateUsate.partenza) {
+      setDataArrivo(ultimeDateUsate.arrivo);
+      setDataPartenza(ultimeDateUsate.partenza);
+    }
+    setErroreCamera(null);
+    setMostraFormCamera(true);
+  }
+
+  function apriNuovoOspite() {
+    setNuovoOspiteAperto(v => {
+      const apri = !v;
+      if (apri && !nuovoOspiteNome && !nuovoOspiteCognome && dati?.referente_nome) {
+        const parti = dati.referente_nome.trim().split(/\s+/);
+        setNuovoOspiteCognome(parti.pop());
+        setNuovoOspiteNome(parti.join(' '));
+      }
+      return apri;
+    });
+  }
+
+  useEffect(() => {
+    if (ospiteSelezionato || ricercaOspite.trim().length < 2) {
+      setRisultatiOspiti([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        setCercandoOspiti(true);
+        const risposta = await api.get(`/ospiti?search=${encodeURIComponent(ricercaOspite.trim())}`);
+        setRisultatiOspiti(risposta.data);
+      } catch {
+        setRisultatiOspiti([]);
+      } finally {
+        setCercandoOspiti(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ricercaOspite, ospiteSelezionato]);
+
+  async function creaNuovoOspite() {
+    if (!nuovoOspiteNome.trim() || !nuovoOspiteCognome.trim()) {
+      setErroreCamera('Nome e cognome sono obbligatori.');
+      return;
+    }
+    setCreandoOspite(true);
+    try {
+      const risposta = await api.post('/ospiti', { nome: nuovoOspiteNome.trim(), cognome: nuovoOspiteCognome.trim() });
+      setOspiteSelezionato(risposta.data);
+      setNuovoOspiteAperto(false);
+      setNuovoOspiteNome('');
+      setNuovoOspiteCognome('');
+    } catch (err) {
+      setErroreCamera(err.response?.data?.error || err.message || 'Errore nella creazione ospite.');
+    } finally {
+      setCreandoOspite(false);
+    }
+  }
+
+  function resetFormCamera() {
+    setCameraId(''); setNumOspiti(1); setTariffaTotale('');
+    setErroreCamera(null);
+  }
+
+  // Aggiunge una camera al gruppo GIÀ ESISTENTE — POST /prenotazioni con
+  // gruppo_id valorizzato subito (non /prenotazioni/:id/soggiorni, quello è
+  // per la famiglia): ogni camera qui è una prenotazione a sé, coerente con
+  // com'è già modellato il resto del gruppo.
+  async function aggiungiCameraGruppo() {
+    setErroreCamera(null);
+    if (!cameraId) return setErroreCamera('Seleziona una camera.');
+    if (!ospiteSelezionato) return setErroreCamera('Seleziona o crea un ospite.');
+    if (!dataArrivo || !dataPartenza) return setErroreCamera('Inserisci le date di arrivo e partenza.');
+    if (dataPartenza <= dataArrivo) return setErroreCamera('La partenza deve essere successiva all\'arrivo.');
+
+    setSalvandoCamera(true);
+    try {
+      await api.post('/prenotazioni', {
+        canale_origine: 'diretta',
+        external_booking_id: null,
+        gruppo_id: gruppoId,
+        note: '',
+        soggiorno: {
+          camera_id: Number(cameraId),
+          ospite_id: ospiteSelezionato.id,
+          data_arrivo: dataArrivo,
+          data_partenza: dataPartenza,
+          num_ospiti: Number(numOspiti) || 1,
+          tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+        },
+      });
+      setUltimoOspiteUsato(ospiteSelezionato);
+      setUltimeDateUsate({ arrivo: dataArrivo, partenza: dataPartenza });
+      setMostraFormCamera(false);
+      resetFormCamera();
+      await carica();
+      onCambiato();
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setErroreCamera(err.message || 'Camera già occupata in queste date.');
+      } else {
+        setErroreCamera(err.response?.data?.error || err.message || 'Errore nell\'aggiunta della camera.');
+      }
+    } finally {
+      setSalvandoCamera(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <div>
+            <p className="font-semibold text-sm">{dati?.nome || 'Gruppo'}</p>
+            {dati?.referente_nome && (
+              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                {dati.referente_nome}{dati.referente_telefono ? ` · ${dati.referente_telefono}` : ''}
+              </p>
+            )}
+          </div>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {loading && (
+            <div className="flex items-center justify-center py-10 text-sm" style={{ color: 'var(--muted-foreground)' }}>
+              <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
+            </div>
+          )}
+          {errore && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {errore}
+            </div>
+          )}
+
+          {dati && !loading && (<>
+            <div>
+              <p className="text-xs font-medium mb-1.5">Camere del gruppo</p>
+              <div className="space-y-1.5">
+                {camere.map(s => (
+                  <div key={s.id} className="flex items-center justify-between rounded-lg border px-2.5 py-1.5 text-sm">
+                    <div>
+                      <p>Camera {s.camera_numero} — {s.ospite_nome} {s.ospite_cognome}</p>
+                      <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                        {formatDataEstesa(s.data_arrivo)} → {formatDataEstesa(s.data_partenza)}
+                      </p>
+                    </div>
+                    <div className="flex items-center gap-2">
+                      <span
+                        className="inline-block text-xs font-medium rounded-full px-2 py-0.5"
+                        style={{
+                          background: (STATI_COLORI[s.prenotazione_stato] || STATI_COLORI.opzione).bg,
+                          color: (STATI_COLORI[s.prenotazione_stato] || STATI_COLORI.opzione).text,
+                        }}
+                      >
+                        {(STATI_COLORI[s.prenotazione_stato] || STATI_COLORI.opzione).label}
+                      </span>
+                      <button type="button" onClick={() => sganciaCamera(s.prenotazione_id)}
+                              className="text-xs underline" style={{ color: 'var(--muted-foreground)' }}>
+                        Sgancia
+                      </button>
+                    </div>
+                  </div>
+                ))}
+                {camere.length === 0 && (
+                  <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Nessuna camera attiva nel gruppo.</p>
+                )}
+              </div>
+
+              {erroreCamera && (
+                <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs mt-2"
+                     style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                  <AlertTriangle size={14} /> {erroreCamera}
+                </div>
+              )}
+
+              {mostraFormCamera ? (
+                <div className="rounded-lg border p-2.5 space-y-2 mt-2">
+                  {/* Date prima della camera: il selettore colorato ha
+                      bisogno delle date per sapere cosa è libero. */}
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Arrivo</label>
+                      <CampoData value={dataArrivo} onChange={setDataArrivo} className="border px-2 py-1.5" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Partenza</label>
+                      <CampoData value={dataPartenza} onChange={setDataPartenza} className="border px-2 py-1.5" />
+                    </div>
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Camera</label>
+                    <SelettoreCameraDisponibile
+                      elencoCamere={elencoCamere}
+                      dataArrivo={dataArrivo}
+                      dataPartenza={dataPartenza}
+                      value={cameraId}
+                      onChange={setCameraId}
+                    />
+                  </div>
+
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Ospite</label>
+                    {ospiteSelezionato ? (
+                      <div className="flex items-center justify-between border rounded-lg px-2 py-1.5 text-sm">
+                        <span className="flex items-center gap-1.5"><User size={14} /> {ospiteSelezionato.nome} {ospiteSelezionato.cognome}</span>
+                        <button type="button" onClick={() => setOspiteSelezionato(null)} className="text-xs underline" style={{ color: 'var(--muted-foreground)' }}>
+                          Cambia
+                        </button>
+                      </div>
+                    ) : (
+                      <div className="relative">
+                        <input type="text" value={ricercaOspite} onChange={(e) => setRicercaOspite(e.target.value)}
+                               placeholder="Cerca per nome o cognome..." className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                        {cercandoOspiti && <div className="absolute right-2 top-1.5"><Loader2 size={14} className="animate-spin" /></div>}
+                        {risultatiOspiti.length > 0 && (
+                          <div className="absolute z-20 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                            {risultatiOspiti.map(o => (
+                              <button type="button" key={o.id}
+                                      onClick={() => { setOspiteSelezionato(o); setRicercaOspite(''); setRisultatiOspiti([]); }}
+                                      className="w-full text-left px-2 py-1.5 text-sm hover:bg-gray-50">
+                                {o.nome} {o.cognome}
+                              </button>
+                            ))}
+                          </div>
+                        )}
+                        <button type="button" onClick={apriNuovoOspite}
+                                className="mt-1.5 text-xs font-medium flex items-center gap-1" style={{ color: 'var(--hotel-navy)' }}>
+                          <UserPlus size={13} /> Nuovo ospite
+                        </button>
+                        {nuovoOspiteAperto && (
+                          <div className="mt-2 border rounded-lg p-2.5 space-y-2" style={{ background: 'var(--background)' }}>
+                            <input type="text" value={nuovoOspiteNome} onChange={(e) => setNuovoOspiteNome(e.target.value)}
+                                   placeholder="Nome" className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                            <input type="text" value={nuovoOspiteCognome} onChange={(e) => setNuovoOspiteCognome(e.target.value)}
+                                   placeholder="Cognome" className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                            <div className="flex gap-2">
+                              <button type="button" onClick={creaNuovoOspite} disabled={creandoOspite}
+                                      className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
+                                {creandoOspite ? 'Creazione...' : 'Crea e usa'}
+                              </button>
+                              <button type="button" onClick={() => { setNuovoOspiteAperto(false); }}
+                                      className="flex-1 rounded-lg py-1.5 text-xs font-medium border">
+                                Annulla
+                              </button>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    )}
+                  </div>
+
+                  <div className="grid grid-cols-2 gap-2">
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Numero ospiti</label>
+                      <input type="number" min={1} value={numOspiti} onChange={(e) => setNumOspiti(e.target.value)}
+                             className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                    </div>
+                    <div>
+                      <label className="text-xs font-medium block mb-1">Tariffa totale (€)</label>
+                      <input type="number" min={0} step="0.01" value={tariffaTotale} onChange={(e) => setTariffaTotale(e.target.value)}
+                             className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <button type="button" onClick={aggiungiCameraGruppo} disabled={salvandoCamera}
+                            className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
+                      {salvandoCamera ? 'Aggiunta...' : 'Aggiungi camera'}
+                    </button>
+                    <button type="button" onClick={() => { setMostraFormCamera(false); resetFormCamera(); }}
+                            className="flex-1 rounded-lg py-1.5 text-xs font-medium border">
+                      Annulla
+                    </button>
+                  </div>
+                </div>
+              ) : (
+                <button type="button" onClick={apriAggiungiCamera}
+                        className="w-full flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium border mt-2">
+                  <Plus size={13} /> Aggiungi camera
+                </button>
+              )}
+            </div>
+
+            <div className="grid grid-cols-2 gap-3">
+              <div className="rounded-lg p-3" style={{ background: 'var(--background)' }}>
+                <p className="text-xs mb-0.5" style={{ color: 'var(--muted-foreground)' }}>Totale addebiti</p>
+                <p className="text-lg font-medium">{Number(dati.totale_addebiti).toFixed(2)} €</p>
+              </div>
+              <div className="rounded-lg p-3" style={{ background: 'var(--background)' }}>
+                <p className="text-xs mb-0.5" style={{ color: 'var(--muted-foreground)' }}>Pagato dal gruppo</p>
+                <p className="text-lg font-medium">{Number(dati.totale_pagamenti).toFixed(2)} €</p>
+              </div>
+            </div>
+            <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+              Gli extra bar/ristorante restano sul conto di ciascuna camera, non qui.
+            </p>
+
+            <form onSubmit={registraPagamento} className="rounded-lg border p-3 space-y-2">
+              <p className="text-xs font-medium">Registra pagamento</p>
+              {erroreForm && (
+                <p className="text-xs rounded-md px-2 py-1.5" style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                  {erroreForm}
+                </p>
+              )}
+              <div>
+                <label className="text-xs font-medium block mb-1">Applica a</label>
+                <select value={applicaA} onChange={(e) => setApplicaA(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm">
+                  <option value="gruppo">Tutto il gruppo</option>
+                  {prenotazioniAttive.map(p => {
+                    const s = (p.soggiorni || [])[0];
+                    return (
+                      <option key={p.id} value={p.id}>
+                        Solo camera {s?.camera_numero ?? p.id}
+                      </option>
+                    );
+                  })}
+                </select>
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium block mb-1">Importo (€)</label>
+                  <input type="number" min={0} step="0.01" value={importo} onChange={(e) => setImporto(e.target.value)}
+                         className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">Metodo</label>
+                  <select value={metodo} onChange={(e) => setMetodo(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm">
+                    <option value="contanti">Contanti</option>
+                    <option value="carta">Carta</option>
+                    <option value="bonifico">Bonifico</option>
+                  </select>
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1">Tipo</label>
+                <select value={tipo} onChange={(e) => setTipo(e.target.value)} className="w-full border rounded-lg px-2 py-1.5 text-sm">
+                  <option value="caparra">Caparra</option>
+                  <option value="saldo">Saldo</option>
+                  <option value="corrispettivo">Corrispettivo</option>
+                </select>
+              </div>
+              <button type="submit" disabled={salvataggio}
+                      className="w-full rounded-lg py-2 text-sm font-medium text-white" style={{ background: 'var(--hotel-amber)' }}>
+                {salvataggio ? 'Salvataggio...' : 'Salva pagamento'}
+              </button>
+            </form>
+          </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
 // ── Form nuova prenotazione ──────────────────────────────────────────────────
 // Stesso componente per i due punti d'ingresso (pulsante in alto / click cella
 // vuota): cambia solo `iniziale` con cui viene aperto. Su 409/400 il form
@@ -1182,6 +2047,28 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
   const [erroreDate, setErroreDate] = useState(null);
   const [erroreGenerale, setErroreGenerale] = useState(null);
   const [salvataggio, setSalvataggio] = useState(false);
+
+  // Famiglia su più camere (15/08/2026): dopo il primo salvataggio, invece
+  // di chiudere il form si resta aperti in modalità "aggiungi un'altra
+  // camera" — stesso intestatario, prenotazione condivisa (POST
+  // /prenotazioni/:id/soggiorni), niente gruppo_id coinvolto. Distinto dal
+  // wizard gruppi (WizardGruppo, più sotto): lì ogni camera è una
+  // prenotazione separata con ospite proprio, qui è la stessa prenotazione.
+  const [prenotazioneCreata, setPrenotazioneCreata] = useState(null);
+  const [camereAggiunte, setCamereAggiunte] = useState([]);
+  const [aggiuntaApertaCameraId, setAggiuntaApertaCameraId] = useState('');
+  const [aggiuntaArrivo, setAggiuntaArrivo] = useState('');
+  const [aggiuntaPartenza, setAggiuntaPartenza] = useState('');
+  const [aggiuntaNumOspiti, setAggiuntaNumOspiti] = useState(1);
+  const [aggiuntaTariffa, setAggiuntaTariffa] = useState('');
+  const [mostraFormAggiunta, setMostraFormAggiunta] = useState(false);
+  const [erroreAggiunta, setErroreAggiunta] = useState(null);
+  const [salvandoAggiunta, setSalvandoAggiunta] = useState(false);
+  // Prevalorizzazione date (15/08/2026, richiesta dal titolare, stesso
+  // principio applicato al wizard gruppo): la seconda camera di una
+  // famiglia è quasi sempre per lo stesso periodo della prima — riparte già
+  // valorizzata con l'ultimo periodo usato, sempre modificabile a mano.
+  const [ultimeDateFamiglia, setUltimeDateFamiglia] = useState({ arrivo: '', partenza: '' });
 
   // Ricerca ospiti con debounce — non cerca se un ospite è già selezionato.
   useEffect(() => {
@@ -1289,7 +2176,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
 
     setSalvataggio(true);
     try {
-      await api.post('/prenotazioni', {
+      const risposta = await api.post('/prenotazioni', {
         canale_origine: canaleOrigine,
         external_booking_id: null,
         gruppo_id: null,
@@ -1304,7 +2191,19 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
           pacchetto_id: pacchettoId ? Number(pacchettoId) : null,
         },
       });
-      onCreato();
+      // Non si chiude più subito: resta aperto in modalità "famiglia su più
+      // camere" — l'utente decide se aggiungere un'altra camera o chiudere
+      // (pulsante "Fine", che chiama onCreato come prima).
+      const cameraScelta = elencoCamere.find(c => String(c.camera_id) === String(cameraId));
+      setPrenotazioneCreata(risposta.data);
+      setCamereAggiunte([{
+        id: risposta.data.soggiorno.id,
+        camera_numero: cameraScelta?.numero,
+        camera_nome: cameraScelta?.nome,
+        tariffa_totale: risposta.data.soggiorno.tariffa_totale,
+        primo: true,
+      }]);
+      setUltimeDateFamiglia({ arrivo: dataArrivo, partenza: dataPartenza });
     } catch (err) {
       if (err.response?.status === 409) {
         setErroreGenerale(err.message || 'Camera già occupata in queste date.');
@@ -1316,20 +2215,78 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
     }
   }
 
+  // Aggiunge un'altra camera alla stessa prenotazione/famiglia (stesso
+  // ospite intestatario, nessun autocomplete qui — vedi commento sopra).
+  async function aggiungiCameraAllaFamiglia() {
+    setErroreAggiunta(null);
+    if (!aggiuntaApertaCameraId) return setErroreAggiunta('Seleziona una camera.');
+    if (!aggiuntaArrivo || !aggiuntaPartenza) return setErroreAggiunta('Inserisci le date di arrivo e partenza.');
+    if (aggiuntaPartenza <= aggiuntaArrivo) return setErroreAggiunta('La partenza deve essere successiva all\'arrivo.');
+
+    setSalvandoAggiunta(true);
+    try {
+      const risposta = await api.post(`/prenotazioni/${prenotazioneCreata.id}/soggiorni`, {
+        soggiorno: {
+          camera_id: Number(aggiuntaApertaCameraId),
+          ospite_id: ospiteSelezionato.id,
+          data_arrivo: aggiuntaArrivo,
+          data_partenza: aggiuntaPartenza,
+          num_ospiti: Number(aggiuntaNumOspiti) || 1,
+          tariffa_totale: aggiuntaTariffa === '' ? null : Number(aggiuntaTariffa),
+        },
+      });
+      const cameraScelta = elencoCamere.find(c => String(c.camera_id) === String(aggiuntaApertaCameraId));
+      setCamereAggiunte(prev => [...prev, {
+        id: risposta.data.id,
+        camera_numero: cameraScelta?.numero,
+        camera_nome: cameraScelta?.nome,
+        tariffa_totale: risposta.data.tariffa_totale,
+        primo: false,
+      }]);
+      setUltimeDateFamiglia({ arrivo: aggiuntaArrivo, partenza: aggiuntaPartenza });
+      setMostraFormAggiunta(false);
+      setAggiuntaApertaCameraId('');
+      setAggiuntaNumOspiti(1);
+      setAggiuntaTariffa('');
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setErroreAggiunta(err.message || 'Camera già occupata in queste date.');
+      } else {
+        setErroreAggiunta(err.response?.data?.error || err.message || 'Errore nell\'aggiunta della camera.');
+      }
+    } finally {
+      setSalvandoAggiunta(false);
+    }
+  }
+
+  // Toglie una camera aggiunta per errore (mai la prima: annullarla vuol
+  // dire annullare l'intera prenotazione, non questo endpoint — vedi
+  // soggiorniController.annulla lato backend).
+  async function rimuoviCameraDallaFamiglia(soggiornoId) {
+    setErroreAggiunta(null);
+    try {
+      await api.patch(`/soggiorni/${soggiornoId}/annulla`);
+      setCamereAggiunte(prev => prev.filter(c => c.id !== soggiornoId));
+    } catch (err) {
+      setErroreAggiunta(err.response?.data?.error || err.message || 'Errore nella rimozione della camera.');
+    }
+  }
+
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={prenotazioneCreata ? onCreato : onChiudi}>
       <div
         className="w-full max-w-md bg-white rounded-xl shadow-xl max-h-[90vh] overflow-y-auto"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
-          <p className="font-semibold text-sm">Nuova prenotazione</p>
-          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+          <p className="font-semibold text-sm">{prenotazioneCreata ? 'Camere della prenotazione' : 'Nuova prenotazione'}</p>
+          <button onClick={prenotazioneCreata ? onCreato : onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
             <X size={18} />
           </button>
         </div>
 
         <div className="p-4 space-y-3">
+        {!prenotazioneCreata ? (<>
           {erroreGenerale && (
             <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
                  style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
@@ -1535,6 +2492,655 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
               Annulla
             </button>
           </div>
+        </>) : (<>
+          <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+            Ospite: <span className="font-medium" style={{ color: 'var(--foreground)' }}>
+              {ospiteSelezionato?.nome} {ospiteSelezionato?.cognome}
+            </span>
+          </p>
+
+          <div>
+            <p className="text-xs font-medium mb-1.5">Camere di questa prenotazione</p>
+            <div className="space-y-1.5">
+              {camereAggiunte.map(c => (
+                <div key={c.id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm" style={{ background: 'var(--background)' }}>
+                  <span>{c.camera_numero !== 'app' ? `Camera ${c.camera_numero}` : c.camera_nome}</span>
+                  {c.primo ? (
+                    <span className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                      {c.tariffa_totale != null ? `${Number(c.tariffa_totale).toFixed(2)} €` : '—'}
+                    </span>
+                  ) : (
+                    <button
+                      type="button"
+                      onClick={() => rimuoviCameraDallaFamiglia(c.id)}
+                      className="p-0.5 rounded hover:bg-gray-200"
+                      aria-label={`Rimuovi camera ${c.camera_numero}`}
+                    >
+                      <X size={14} />
+                    </button>
+                  )}
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {erroreAggiunta && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {erroreAggiunta}
+            </div>
+          )}
+
+          {mostraFormAggiunta ? (
+            <div className="rounded-lg border p-2.5 space-y-2">
+              {/* Date prima della camera (15/08/2026, seguito): il
+                  selettore colorato ha bisogno delle date per sapere cosa è
+                  libero, stesso ordine già usato in WizardGruppo. */}
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium block mb-1">Arrivo</label>
+                  <CampoData value={aggiuntaArrivo} onChange={setAggiuntaArrivo} className="border px-2 py-1.5" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">Partenza</label>
+                  <CampoData value={aggiuntaPartenza} onChange={setAggiuntaPartenza} className="border px-2 py-1.5" />
+                </div>
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1">Camera</label>
+                <SelettoreCameraDisponibile
+                  elencoCamere={elencoCamere}
+                  dataArrivo={aggiuntaArrivo}
+                  dataPartenza={aggiuntaPartenza}
+                  value={aggiuntaApertaCameraId}
+                  onChange={setAggiuntaApertaCameraId}
+                />
+              </div>
+              <div className="grid grid-cols-2 gap-2">
+                <div>
+                  <label className="text-xs font-medium block mb-1">Numero ospiti</label>
+                  <input type="number" min={1} value={aggiuntaNumOspiti}
+                         onChange={(e) => setAggiuntaNumOspiti(e.target.value)}
+                         className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+                <div>
+                  <label className="text-xs font-medium block mb-1">Tariffa totale (€)</label>
+                  <input type="number" min={0} step="0.01" value={aggiuntaTariffa}
+                         onChange={(e) => setAggiuntaTariffa(e.target.value)}
+                         className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                </div>
+              </div>
+              <div className="flex gap-2">
+                <button
+                  type="button"
+                  onClick={aggiungiCameraAllaFamiglia}
+                  disabled={salvandoAggiunta}
+                  className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white"
+                  style={{ background: 'var(--hotel-navy)' }}
+                >
+                  {salvandoAggiunta ? 'Aggiunta...' : 'Aggiungi camera'}
+                </button>
+                <button
+                  type="button"
+                  onClick={() => { setMostraFormAggiunta(false); setErroreAggiunta(null); }}
+                  className="flex-1 rounded-lg py-1.5 text-xs font-medium border"
+                >
+                  Annulla
+                </button>
+              </div>
+            </div>
+          ) : (
+            <button
+              type="button"
+              onClick={() => {
+                if (ultimeDateFamiglia.arrivo && ultimeDateFamiglia.partenza) {
+                  setAggiuntaArrivo(ultimeDateFamiglia.arrivo);
+                  setAggiuntaPartenza(ultimeDateFamiglia.partenza);
+                }
+                setMostraFormAggiunta(true);
+              }}
+              className="w-full flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium border"
+            >
+              <Plus size={13} /> Aggiungi un&apos;altra camera (stessa famiglia)
+            </button>
+          )}
+
+          <button
+            onClick={onCreato}
+            className="w-full rounded-lg py-2 text-sm font-medium text-white mt-1"
+            style={{ background: 'var(--hotel-amber)' }}
+          >
+            Fine
+          </button>
+        </>)}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+// ── Selettore camera con disponibilità colorata ─────────────────────────────
+// 15/08/2026 — nasce da una richiesta del titolare durante i form "aggiungi
+// camera": invece di scoprire il conflitto solo al salvataggio, mostra
+// subito quali camere sono libere per le date scelte. Chip cliccabili
+// invece di una <select> nativa: colorare le singole <option> non è
+// affidabile su Safari iOS/Android (uso da tablet in questo gestionale),
+// qui il colore lo controlliamo noi via CSS. Montato per ora SOLO nel form
+// "aggiungi camera" del wizard gruppo (verifica dal titolare prima di
+// estenderlo agli altri 3 punti: form "Nuova prenotazione", "aggiungi
+// camera" famiglia, dettaglio gruppo).
+function SelettoreCameraDisponibile({ elencoCamere, dataArrivo, dataPartenza, escludiSoggiornoId, value, onChange }) {
+  const [mappaOccupate, setMappaOccupate] = useState(null); // camera_id → bool, null finché non caricato
+  const [caricando, setCaricando] = useState(false);
+  const dateValide = dataArrivo && dataPartenza && dataPartenza > dataArrivo;
+
+  useEffect(() => {
+    if (!dateValide) {
+      setMappaOccupate(null);
+      return;
+    }
+    let annullato = false;
+    (async () => {
+      try {
+        setCaricando(true);
+        const params = new URLSearchParams({ data_arrivo: dataArrivo, data_partenza: dataPartenza });
+        if (escludiSoggiornoId) params.set('escludi_soggiorno_id', escludiSoggiornoId);
+        const risposta = await api.get(`/prenotazioni/disponibilita?${params.toString()}`);
+        if (annullato) return;
+        const mappa = {};
+        risposta.data.forEach(c => { mappa[c.camera_id] = c.occupata; });
+        setMappaOccupate(mappa);
+      } catch {
+        if (!annullato) setMappaOccupate(null);
+      } finally {
+        if (!annullato) setCaricando(false);
+      }
+    })();
+    return () => { annullato = true; };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [dataArrivo, dataPartenza, escludiSoggiornoId, dateValide]);
+
+  return (
+    <div>
+      {!dateValide && (
+        <p className="text-xs mb-1.5" style={{ color: 'var(--muted-foreground)' }}>
+          Seleziona le date per vedere quali camere sono libere.
+        </p>
+      )}
+      {dateValide && caricando && (
+        <p className="text-xs mb-1.5 flex items-center gap-1" style={{ color: 'var(--muted-foreground)' }}>
+          <Loader2 size={12} className="animate-spin" /> Verifica disponibilità...
+        </p>
+      )}
+      <div className="flex flex-wrap gap-1.5">
+        {elencoCamere.map(c => {
+          const occupata = mappaOccupate ? mappaOccupate[c.camera_id] : null;
+          const selezionata = String(value) === String(c.camera_id);
+          const label = c.numero !== 'app' ? `Camera ${c.numero}` : c.nome;
+          let stile = { background: 'var(--background)', color: 'var(--muted-foreground)' };
+          if (occupata === false) stile = { background: 'var(--status-green-bg)', color: 'var(--status-green-text)' };
+          if (occupata === true) stile = { background: 'var(--status-red-bg)', color: 'var(--status-red-text)', opacity: 0.55 };
+          return (
+            <button
+              key={c.camera_id}
+              type="button"
+              disabled={occupata === true}
+              onClick={() => onChange(c.camera_id)}
+              className="rounded-lg px-2.5 py-1.5 text-xs font-medium disabled:cursor-not-allowed"
+              style={{ ...stile, outline: selezionata ? '2px solid var(--hotel-navy)' : 'none', outlineOffset: '1px' }}
+              title={occupata === true ? 'Occupata in queste date' : occupata === false ? 'Libera' : ''}
+            >
+              {label}
+            </button>
+          );
+        })}
+      </div>
+    </div>
+  );
+}
+
+// ── Wizard Nuovo gruppo ──────────────────────────────────────────────────────
+// Comitiva: prenotazioni SEPARATE (una per camera, ospite proprio per
+// ciascuna) collegate da gruppo_id — a differenza di FormNuovaPrenotazione
+// "aggiungi un'altra camera" (stessa famiglia, stessa prenotazione, stesso
+// intestatario). Due step nella stessa modale: 1) dati gruppo (POST
+// /api/gruppi) 2) loop "aggiungi camera" (ogni camera è una
+// POST /api/prenotazioni con gruppo_id valorizzato). Rimuovere una camera
+// già aggiunta annulla quella prenotazione (stato → 'interrotta', stesso
+// endpoint già usato dal pannello dettaglio) — non tocca le altre camere
+// del gruppo, ognuna è indipendente.
+function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
+  const [step, setStep] = useState('dati');
+  const [nome, setNome] = useState('');
+  const [referenteNome, setReferenteNome] = useState('');
+  const [referenteEmail, setReferenteEmail] = useState('');
+  const [referenteTelefono, setReferenteTelefono] = useState('');
+  const [noteGruppo, setNoteGruppo] = useState('');
+  const [creandoGruppo, setCreandoGruppo] = useState(false);
+  const [erroreGruppo, setErroreGruppo] = useState(null);
+
+  const [gruppoCreato, setGruppoCreato] = useState(null);
+  const [camereGruppo, setCamereGruppo] = useState([]);
+
+  const [mostraFormCamera, setMostraFormCamera] = useState(false);
+  const [cameraId, setCameraId] = useState('');
+  const [dataArrivo, setDataArrivo] = useState('');
+  const [dataPartenza, setDataPartenza] = useState('');
+  const [numOspiti, setNumOspiti] = useState(1);
+  const [tariffaTotale, setTariffaTotale] = useState('');
+  const [ospiteSelezionato, setOspiteSelezionato] = useState(null);
+  const [ricercaOspite, setRicercaOspite] = useState('');
+  const [risultatiOspiti, setRisultatiOspiti] = useState([]);
+  const [cercandoOspiti, setCercandoOspiti] = useState(false);
+  const [nuovoOspiteAperto, setNuovoOspiteAperto] = useState(false);
+  const [nuovoOspiteNome, setNuovoOspiteNome] = useState('');
+  const [nuovoOspiteCognome, setNuovoOspiteCognome] = useState('');
+  const [creandoOspite, setCreandoOspite] = useState(false);
+  const [erroreCamera, setErroreCamera] = useState(null);
+  const [salvandoCamera, setSalvandoCamera] = useState(false);
+  // Prevalorizzazione ospite (15/08/2026, seguito — segnalato dal titolare:
+  // dover ricercare/creare un ospite per OGNI camera non ha senso quando è
+  // quasi sempre lo stesso referente o la persona appena usata per la
+  // camera precedente). Prima camera: precompila la ricerca col nome del
+  // referente (non seleziona in automatico — nomi simili sono ambigui, la
+  // scelta resta della reception). Camere successive: riparte già
+  // selezionato con l'ultimo ospite usato, "Cambia" per una persona diversa.
+  const [ultimoOspiteUsato, setUltimoOspiteUsato] = useState(null);
+  // Stesso principio per le date (15/08/2026, seguito): una comitiva
+  // prenota quasi sempre lo stesso periodo per tutte le camere — dalla
+  // seconda in poi il periodo riparte già valorizzato con l'ultimo usato,
+  // sempre modificabile a mano per la singola camera.
+  const [ultimeDateUsate, setUltimeDateUsate] = useState({ arrivo: '', partenza: '' });
+
+  function apriAggiungiCamera() {
+    if (ultimoOspiteUsato) {
+      setOspiteSelezionato(ultimoOspiteUsato);
+    } else if (referenteNome.trim() && !ricercaOspite) {
+      setRicercaOspite(referenteNome.trim());
+    }
+    if (ultimeDateUsate.arrivo && ultimeDateUsate.partenza) {
+      setDataArrivo(ultimeDateUsate.arrivo);
+      setDataPartenza(ultimeDateUsate.partenza);
+    }
+    setMostraFormCamera(true);
+  }
+
+  // Spezza "Mario Rossi" in nome/cognome (ultima parola = cognome) per
+  // precompilare il mini-form "+ Nuovo ospite" — resta comunque un
+  // suggerimento modificabile, non un dato salvato finché non si conferma.
+  function apriNuovoOspite() {
+    setNuovoOspiteAperto(v => {
+      const apri = !v;
+      if (apri && !nuovoOspiteNome && !nuovoOspiteCognome && referenteNome.trim()) {
+        const parti = referenteNome.trim().split(/\s+/);
+        setNuovoOspiteCognome(parti.pop());
+        setNuovoOspiteNome(parti.join(' '));
+      }
+      return apri;
+    });
+  }
+
+  useEffect(() => {
+    if (ospiteSelezionato || ricercaOspite.trim().length < 2) {
+      setRisultatiOspiti([]);
+      return;
+    }
+    const handle = setTimeout(async () => {
+      try {
+        setCercandoOspiti(true);
+        const risposta = await api.get(`/ospiti?search=${encodeURIComponent(ricercaOspite.trim())}`);
+        setRisultatiOspiti(risposta.data);
+      } catch {
+        setRisultatiOspiti([]);
+      } finally {
+        setCercandoOspiti(false);
+      }
+    }, 300);
+    return () => clearTimeout(handle);
+  }, [ricercaOspite, ospiteSelezionato]);
+
+  async function creaNuovoOspite() {
+    if (!nuovoOspiteNome.trim() || !nuovoOspiteCognome.trim()) {
+      setErroreCamera('Nome e cognome sono obbligatori.');
+      return;
+    }
+    setCreandoOspite(true);
+    try {
+      const risposta = await api.post('/ospiti', { nome: nuovoOspiteNome.trim(), cognome: nuovoOspiteCognome.trim() });
+      setOspiteSelezionato(risposta.data);
+      setNuovoOspiteAperto(false);
+      setNuovoOspiteNome('');
+      setNuovoOspiteCognome('');
+    } catch (err) {
+      setErroreCamera(err.response?.data?.error || err.message || 'Errore nella creazione ospite.');
+    } finally {
+      setCreandoOspite(false);
+    }
+  }
+
+  async function creaGruppo() {
+    setErroreGruppo(null);
+    if (!nome.trim()) return setErroreGruppo('Il nome del gruppo è obbligatorio.');
+    setCreandoGruppo(true);
+    try {
+      const risposta = await api.post('/gruppi', {
+        nome: nome.trim(),
+        referente_nome: referenteNome.trim() || null,
+        referente_email: referenteEmail.trim() || null,
+        referente_telefono: referenteTelefono.trim() || null,
+        note: noteGruppo.trim() || null,
+      });
+      setGruppoCreato(risposta.data);
+      setStep('camere');
+      // Referente → ospite (15/08/2026, segnalato dal titolare): senza
+      // questo, alla prima camera veniva richiesto di ricercare/creare un
+      // ospite ripetendo lo stesso nome appena scritto per il referente.
+      // Cerca prima un ospite con nome+cognome esatti (evita duplicati se
+      // il referente è già in anagrafica); se non c'è, lo crea spezzando il
+      // nome sull'ultima parola. Nessun blocco se fallisce: è una comodità,
+      // non un requisito — la reception può sempre cercare/creare a mano
+      // dal form camera. ATTENZIONE (segnalato al titolare): lo split
+      // nome/cognome è approssimativo, non affidabile per ragioni sociali o
+      // cognomi doppi — sempre verificabile/correggibile con "Cambia".
+      if (referenteNome.trim()) {
+        try {
+          const ricerca = await api.get(`/ospiti?search=${encodeURIComponent(referenteNome.trim())}`);
+          const match = ricerca.data.find(
+            o => `${o.nome} ${o.cognome}`.trim().toLowerCase() === referenteNome.trim().toLowerCase()
+          );
+          if (match) {
+            setUltimoOspiteUsato(match);
+          } else {
+            const { nome: nomeSplit, cognome: cognomeSplit } = spezzaNomeCompleto(referenteNome);
+            if (cognomeSplit) {
+              const creato = await api.post('/ospiti', { nome: nomeSplit, cognome: cognomeSplit });
+              setUltimoOspiteUsato(creato.data);
+            }
+          }
+        } catch {
+          // silenzioso — vedi commento sopra, non blocca il flusso principale
+        }
+      }
+    } catch (err) {
+      setErroreGruppo(err.response?.data?.error || err.message || 'Errore nella creazione del gruppo.');
+    } finally {
+      setCreandoGruppo(false);
+    }
+  }
+
+  function spezzaNomeCompleto(testo) {
+    const parti = testo.trim().split(/\s+/);
+    const cognome = parti.pop() || '';
+    return { nome: parti.join(' '), cognome };
+  }
+
+  // Non azzera più ospiteSelezionato/ricercaOspite (15/08/2026, seguito):
+  // resta prevalorizzato per la camera successiva — vedi apriAggiungiCamera
+  // e ultimoOspiteUsato più sopra. "Cambia" nel campo ospite resta sempre
+  // disponibile per una persona diversa.
+  // Non azzera più dataArrivo/dataPartenza (15/08/2026, seguito): restano
+  // prevalorizzate per la camera successiva — vedi apriAggiungiCamera e
+  // ultimeDateUsate più sopra.
+  function resetFormCamera() {
+    setCameraId(''); setNumOspiti(1); setTariffaTotale('');
+    setErroreCamera(null);
+  }
+
+  async function aggiungiCameraGruppo() {
+    setErroreCamera(null);
+    if (!cameraId) return setErroreCamera('Seleziona una camera.');
+    if (!ospiteSelezionato) return setErroreCamera('Seleziona o crea un ospite.');
+    if (!dataArrivo || !dataPartenza) return setErroreCamera('Inserisci le date di arrivo e partenza.');
+    if (dataPartenza <= dataArrivo) return setErroreCamera('La partenza deve essere successiva all\'arrivo.');
+
+    setSalvandoCamera(true);
+    try {
+      const risposta = await api.post('/prenotazioni', {
+        canale_origine: 'diretta',
+        external_booking_id: null,
+        gruppo_id: gruppoCreato.id,
+        note: '',
+        soggiorno: {
+          camera_id: Number(cameraId),
+          ospite_id: ospiteSelezionato.id,
+          data_arrivo: dataArrivo,
+          data_partenza: dataPartenza,
+          num_ospiti: Number(numOspiti) || 1,
+          tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+        },
+      });
+      const cameraScelta = elencoCamere.find(c => String(c.camera_id) === String(cameraId));
+      setCamereGruppo(prev => [...prev, {
+        prenotazione_id: risposta.data.id,
+        camera_numero: cameraScelta?.numero,
+        camera_nome: cameraScelta?.nome,
+        ospite: `${ospiteSelezionato.nome} ${ospiteSelezionato.cognome}`,
+        data_arrivo: dataArrivo,
+        data_partenza: dataPartenza,
+      }]);
+      setUltimoOspiteUsato(ospiteSelezionato);
+      setUltimeDateUsate({ arrivo: dataArrivo, partenza: dataPartenza });
+      setMostraFormCamera(false);
+      resetFormCamera();
+    } catch (err) {
+      if (err.response?.status === 409) {
+        setErroreCamera(err.message || 'Camera già occupata in queste date.');
+      } else {
+        setErroreCamera(err.response?.data?.error || err.message || 'Errore nell\'aggiunta della camera.');
+      }
+    } finally {
+      setSalvandoCamera(false);
+    }
+  }
+
+  async function rimuoviCameraGruppo(prenotazioneId) {
+    if (!window.confirm('Annullare questa camera del gruppo? Tornerà disponibile.')) return;
+    try {
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'interrotta' });
+      setCamereGruppo(prev => prev.filter(c => c.prenotazione_id !== prenotazioneId));
+    } catch (err) {
+      setErroreCamera(err.response?.data?.error || err.message || 'Errore nella rimozione della camera.');
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={step === 'camere' ? onCreato : onChiudi}>
+      <div className="w-full max-w-md bg-white rounded-xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <p className="font-semibold text-sm">{step === 'dati' ? 'Nuovo gruppo' : gruppoCreato?.nome}</p>
+          <button onClick={step === 'camere' ? onCreato : onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          {step === 'dati' && (<>
+            {erroreGruppo && (
+              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                   style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                <AlertTriangle size={14} /> {erroreGruppo}
+              </div>
+            )}
+            <div>
+              <label className="text-xs font-medium block mb-1">Nome gruppo</label>
+              <input type="text" value={nome} onChange={(e) => setNome(e.target.value)}
+                     placeholder="es. Comitiva ciclistica Sanremo"
+                     className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">Referente — nome</label>
+              <input type="text" value={referenteNome} onChange={(e) => setReferenteNome(e.target.value)}
+                     className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+            </div>
+            <div className="grid grid-cols-2 gap-2">
+              <div>
+                <label className="text-xs font-medium block mb-1">Telefono</label>
+                <input type="text" value={referenteTelefono} onChange={(e) => setReferenteTelefono(e.target.value)}
+                       className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+              </div>
+              <div>
+                <label className="text-xs font-medium block mb-1">Email</label>
+                <input type="email" value={referenteEmail} onChange={(e) => setReferenteEmail(e.target.value)}
+                       className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+              </div>
+            </div>
+            <div>
+              <label className="text-xs font-medium block mb-1">Note</label>
+              <textarea value={noteGruppo} rows={2} onChange={(e) => setNoteGruppo(e.target.value)}
+                        className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+            </div>
+            <div className="flex gap-2 pt-2">
+              <button onClick={creaGruppo} disabled={creandoGruppo}
+                      className="flex-1 rounded-lg py-2 text-sm font-medium text-white" style={{ background: 'var(--hotel-amber)' }}>
+                {creandoGruppo ? 'Creazione...' : 'Crea gruppo'}
+              </button>
+              <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">Annulla</button>
+            </div>
+          </>)}
+
+          {step === 'camere' && (<>
+            {referenteNome && (
+              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>{referenteNome}{referenteTelefono ? ` · ${referenteTelefono}` : ''}</p>
+            )}
+
+            <div>
+              <p className="text-xs font-medium mb-1.5">Camere del gruppo</p>
+              {camereGruppo.length === 0 && (
+                <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>Nessuna camera ancora aggiunta.</p>
+              )}
+              <div className="space-y-1.5">
+                {camereGruppo.map(c => (
+                  <div key={c.prenotazione_id} className="flex items-center justify-between rounded-lg px-2.5 py-1.5 text-sm" style={{ background: 'var(--background)' }}>
+                    <span>{c.camera_numero !== 'app' ? `Camera ${c.camera_numero}` : c.camera_nome} · {c.ospite}</span>
+                    <button type="button" onClick={() => rimuoviCameraGruppo(c.prenotazione_id)}
+                            className="p-0.5 rounded hover:bg-gray-200" aria-label={`Rimuovi camera ${c.camera_numero}`}>
+                      <X size={14} />
+                    </button>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {erroreCamera && (
+              <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                   style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                <AlertTriangle size={14} /> {erroreCamera}
+              </div>
+            )}
+
+            {mostraFormCamera ? (
+              <div className="rounded-lg border p-2.5 space-y-2">
+                {/* Date prima della camera (15/08/2026): il selettore
+                    colorato ha bisogno delle date per sapere cosa è libero
+                    — con la camera come primo campo l'utente le vedrebbe
+                    sempre grigie al primo sguardo. */}
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Arrivo</label>
+                    <CampoData value={dataArrivo} onChange={setDataArrivo} className="border px-2 py-1.5" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Partenza</label>
+                    <CampoData value={dataPartenza} onChange={setDataPartenza} className="border px-2 py-1.5" />
+                  </div>
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium block mb-1">Camera</label>
+                  <SelettoreCameraDisponibile
+                    elencoCamere={elencoCamere}
+                    dataArrivo={dataArrivo}
+                    dataPartenza={dataPartenza}
+                    value={cameraId}
+                    onChange={setCameraId}
+                  />
+                </div>
+
+                <div>
+                  <label className="text-xs font-medium block mb-1">Ospite</label>
+                  {ospiteSelezionato ? (
+                    <div className="flex items-center justify-between border rounded-lg px-2 py-1.5 text-sm">
+                      <span className="flex items-center gap-1.5"><User size={14} /> {ospiteSelezionato.nome} {ospiteSelezionato.cognome}</span>
+                      <button type="button" onClick={() => setOspiteSelezionato(null)} className="text-xs underline" style={{ color: 'var(--muted-foreground)' }}>
+                        Cambia
+                      </button>
+                    </div>
+                  ) : (
+                    <div className="relative">
+                      <input type="text" value={ricercaOspite} onChange={(e) => setRicercaOspite(e.target.value)}
+                             placeholder="Cerca per nome o cognome..." className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                      {cercandoOspiti && <div className="absolute right-2 top-1.5"><Loader2 size={14} className="animate-spin" /></div>}
+                      {risultatiOspiti.length > 0 && (
+                        <div className="absolute z-20 w-full mt-1 bg-white border rounded-lg shadow-lg max-h-40 overflow-y-auto">
+                          {risultatiOspiti.map(o => (
+                            <button type="button" key={o.id}
+                                    onClick={() => { setOspiteSelezionato(o); setRicercaOspite(''); setRisultatiOspiti([]); }}
+                                    className="w-full text-left px-2 py-1.5 text-sm hover:bg-gray-50">
+                              {o.nome} {o.cognome}
+                            </button>
+                          ))}
+                        </div>
+                      )}
+                      <button type="button" onClick={apriNuovoOspite}
+                              className="mt-1.5 text-xs font-medium flex items-center gap-1" style={{ color: 'var(--hotel-navy)' }}>
+                        <UserPlus size={13} /> Nuovo ospite
+                      </button>
+                      {nuovoOspiteAperto && (
+                        <div className="mt-2 border rounded-lg p-2.5 space-y-2" style={{ background: 'var(--background)' }}>
+                          <input type="text" value={nuovoOspiteNome} onChange={(e) => setNuovoOspiteNome(e.target.value)}
+                                 placeholder="Nome" className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                          <input type="text" value={nuovoOspiteCognome} onChange={(e) => setNuovoOspiteCognome(e.target.value)}
+                                 placeholder="Cognome" className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                          <div className="flex gap-2">
+                            <button type="button" onClick={creaNuovoOspite} disabled={creandoOspite}
+                                    className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
+                              {creandoOspite ? 'Creazione...' : 'Crea e usa'}
+                            </button>
+                            <button type="button" onClick={() => { setNuovoOspiteAperto(false); }}
+                                    className="flex-1 rounded-lg py-1.5 text-xs font-medium border">
+                              Annulla
+                            </button>
+                          </div>
+                        </div>
+                      )}
+                    </div>
+                  )}
+                </div>
+
+                <div className="grid grid-cols-2 gap-2">
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Numero ospiti</label>
+                    <input type="number" min={1} value={numOspiti} onChange={(e) => setNumOspiti(e.target.value)}
+                           className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                  <div>
+                    <label className="text-xs font-medium block mb-1">Tariffa totale (€)</label>
+                    <input type="number" min={0} step="0.01" value={tariffaTotale} onChange={(e) => setTariffaTotale(e.target.value)}
+                           className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+                  </div>
+                </div>
+                <div className="flex gap-2">
+                  <button type="button" onClick={aggiungiCameraGruppo} disabled={salvandoCamera}
+                          className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
+                    {salvandoCamera ? 'Aggiunta...' : 'Aggiungi camera'}
+                  </button>
+                  <button type="button" onClick={() => { setMostraFormCamera(false); resetFormCamera(); }}
+                          className="flex-1 rounded-lg py-1.5 text-xs font-medium border">
+                    Annulla
+                  </button>
+                </div>
+              </div>
+            ) : (
+              <button type="button" onClick={apriAggiungiCamera}
+                      className="w-full flex items-center justify-center gap-1.5 rounded-lg py-1.5 text-xs font-medium border">
+                <Plus size={13} /> Aggiungi camera
+              </button>
+            )}
+
+            <button onClick={onCreato} className="w-full rounded-lg py-2 text-sm font-medium text-white mt-1" style={{ background: 'var(--hotel-amber)' }}>
+              Chiudi gruppo ({camereGruppo.length} camer{camereGruppo.length === 1 ? 'a' : 'e'})
+            </button>
+          </>)}
         </div>
       </div>
     </div>
@@ -1845,6 +3451,18 @@ function VistaElenco({ onApriPrenotazione, onFiltriCambiati }) {
 
 export default function PaginaPlanningCamere() {
   const { utente } = useAuth();
+  // Apertura diretta di un gruppo da URL (15/08/2026) — punto d'ingresso per
+  // la nuova pagina /gruppi: click su una riga naviga qui con ?gruppo=<id>,
+  // che apre ModalDettaglioGruppo senza passare da PannelloDettaglio (non
+  // c'è sempre una prenotazione "corrente" da cui partire). Stesso pattern
+  // già in uso in addebiti-extra/page.jsx (useSearchParams diretto, nessun
+  // boundary Suspense — pagina già interamente 'use client').
+  const searchParams = useSearchParams();
+  const [gruppoIdDaUrl, setGruppoIdDaUrl] = useState(null);
+  useEffect(() => {
+    const g = searchParams.get('gruppo');
+    setGruppoIdDaUrl(g ? Number(g) : null);
+  }, [searchParams]);
   // Default 14 giorni (era 7) — richiesto dal titolare 04/08/2026.
   // Toggle Griglia/Elenco (14/08/2026) — stessa voce di sidebar, due modi di
   // consultare la stessa realtà: griglia per l'operatività quotidiana,
@@ -1861,6 +3479,10 @@ export default function PaginaPlanningCamere() {
   const [dragErrore, setDragErrore] = useState(null);
   const [prenotazioneApertaId, setPrenotazioneApertaId] = useState(null);
   const [formNuovaPrenotazione, setFormNuovaPrenotazione] = useState(null);
+  // Gruppi di prenotazione (15/08/2026) — wizard creazione separato dal
+  // form singolo (gruppo_id ≠ famiglia multi-camera, vedi commento in
+  // WizardGruppo più sotto).
+  const [wizardGruppoAperto, setWizardGruppoAperto] = useState(false);
   const [statoOggiMap, setStatoOggiMap] = useState({}); // camera_id → {arrivo,partenza,pronta,note} di OGGI
   const [cameraStatoAperta, setCameraStatoAperta] = useState(null); // camera su cui è aperto il popup scopetta
 
@@ -2460,6 +4082,14 @@ export default function PaginaPlanningCamere() {
                 <Plus size={14} /> Nuova prenotazione
               </button>
             )}
+            {puoTrascinare && (
+              <button
+                onClick={() => setWizardGruppoAperto(true)}
+                className="flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium border bg-white"
+              >
+                <Users size={14} /> Nuovo gruppo
+              </button>
+            )}
           </div>
         </div>
 
@@ -2598,12 +4228,32 @@ export default function PaginaPlanningCamere() {
         />
       )}
 
+      {wizardGruppoAperto && (
+        <WizardGruppo
+          elencoCamere={elencoCamere}
+          onChiudi={() => setWizardGruppoAperto(false)}
+          onCreato={async () => {
+            setWizardGruppoAperto(false);
+            await caricaGriglia();
+          }}
+        />
+      )}
+
       {cameraStatoAperta && (
         <PopupStatoCamera
           camera={cameraStatoAperta}
           statoOggi={statoOggiMap[cameraStatoAperta.camera_id]}
           onChiudi={() => setCameraStatoAperta(null)}
           onSalvato={caricaStatoOggi}
+        />
+      )}
+
+      {gruppoIdDaUrl && (
+        <ModalDettaglioGruppo
+          gruppoId={gruppoIdDaUrl}
+          elencoCamere={elencoCamere}
+          onChiudi={() => setGruppoIdDaUrl(null)}
+          onCambiato={caricaGriglia}
         />
       )}
     </AppShell>
