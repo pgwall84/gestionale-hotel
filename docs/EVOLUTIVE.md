@@ -642,6 +642,14 @@ includere nella nuova pagina `/report`:
   riusabile senza nuovo schema: `docs/RICERCA_REPORTISTICA_COMPETITOR.md`.
   Nessuna decisione presa su priorità/ordine di sviluppo tra i 9 punti.
 
+  **Aggiornamento 16/08/2026**: punto 2 (ADR/RevPAR) avviato, con TRevPAR
+  aggiunto — la pagina `/report` esiste ora davvero (prima era solo
+  concetto), ma copre solo questo punto dei 9 elencati sopra. Vedi voce
+  dedicata più sotto "ADR / RevPAR / TRevPAR + pagina Report (16/08/2026)"
+  per il dettaglio implementativo — quella voce è la fonte più aggiornata
+  per lo stato di `/report`, questa resta valida per gli altri 8 punti
+  ancora tutti da fare, nessuno avviato.
+
 Fase 3 (futuro):
   6.1 HACCP avanzato (temperature, scongelo, cotture) — funzionalità
     identificate da ricerca di mercato/normativa dedicata (14/08/2026),
@@ -1284,6 +1292,152 @@ Dashboard a gruppi di widget (14/08/2026) — due punti aperti, non urgenti:
    esplicita in questo senso, solo la constatazione che il dato attuale è
    un'approssimazione onesta ma non lo stesso numero.
 
+✅ **Tre correzioni mirate alla dashboard (16/08/2026)** — nate da un audit
+del report KPI in `docs/kpi/report.docx` fatto col titolare: prima di
+implementare qualunque cosa il report proponeva si è verificato cosa c'era
+già (la griglia widget del 14/08 copriva già la maggior parte del punto
+"dashboard riorganizzata + numeri cliccabili" del report). Risultato: tre
+modifiche minime, nessuna migration.
+1. **Alert ordinati per gravità** — `alert()` in `dashboardController.js`
+   accodava i blocchi in ordine fisso per categoria (ZTL→HACCP→Menu→HR→
+   Magazzino→Prenotazioni→Alloggiati→Pre check-in→Compleanni→Manutenzione),
+   un rosso urgente in fondo alla lista si vedeva solo scrollando. Aggiunto
+   `alerts.sort(...)` prima di `res.json` (rosso sempre prima di ambra,
+   ordine stabile a parità di tipo — Array.sort è stabile in Node/V8 da
+   tempo). Nessun'altra modifica alla dashboard: il resto (5 gruppi con
+   `stato`/`href` già cliccabili) già faceva quello che il report chiedeva.
+2. **Manutenzione visibile in Stato Camere** — `segnalazioni_manutenzione`
+   era già visibile in `/manutenzione` e nell'alert dashboard, ma non nella
+   pagina operativa `/camere` dove lavora la cameriera/reception giorno per
+   giorno. `camereController.lista()` ora fa un `LEFT JOIN LATERAL` sulla
+   segnalazione aperta/in_lavorazione più urgente per quella camera (stesso
+   criterio già usato nell'alert: priorità alta prima, poi la più vecchia),
+   ritorna `manutenzione_priorita`/`manutenzione_descrizione`. Badge chiave
+   inglese in `camere/page.jsx`, rosso/ambra in base alla priorità, link a
+   `/manutenzione` per il dettaglio — non gestibile da lì, solo visibile.
+   Non filtrato per data: una segnalazione aperta resta rilevante
+   indipendentemente dal giorno visualizzato.
+3. **Quadratura incasso** — nuovo endpoint `GET
+   /api/dashboard/incassi/quadratura` (soloTitolare, stessa restrizione di
+   `/incassi/suggerimento`), riusa le stesse due fonti già lette da
+   `suggerimentoIncasso()` (nessuna query nuova): confronta
+   `incassi_giornalieri` (dichiarato a mano) con la somma di `pagamenti`
+   completati del giorno (atteso). Soglia fissa di 10€ (non percentuale —
+   un 5% su un giorno da 40€ è un'inezia, un 5% su un giorno da 2000€
+   nasconderebbe un ammanco vero) sotto la quale lo scostamento non è
+   segnalato come anomalia. **Limite esplicito, ripetuto in ogni commento e
+   nella risposta JSON (`copreRistorante: false`) per non farlo passare per
+   una quadratura completa**: `pagamenti` è alimentata solo dal check-out
+   camere, il ristorante chiude ancora sul registratore fisico Hugin
+   RT-K50, fuori sistema (lo sostituirà A-Cube, modulo 3.1, non iniziato).
+   Se `incassi_giornalieri` non ha ancora una riga per il giorno,
+   `dichiarato`/`scostamento` sono `null`, non zero — un dato mancante e
+   un'anomalia sono due cose diverse. Tessera "Incasso oggi" nel gruppo
+   Costi di `home/page.jsx` mostra un badge verde/ambra con lo scostamento;
+   nessun `href` aggiunto lì (la registrazione resta nel bottom sheet già
+   esistente dietro "+ Registra incasso", non serve una pagina dedicata).
+   Test in `tests/api/dashboard.test.js`: permessi, caso senza dati
+   dichiarati, scostamento sotto soglia, scostamento sopra soglia (i due
+   ultimi condizionati all'esistenza di almeno una prenotazione reale nel
+   DB per la FK di `pagamenti.prenotazione_id`, coerente con l'ambiente di
+   sviluppo che li esegue).
+Deliberatamente rimandati (il titolare ha chiesto di riprenderli dopo aver
+inquadrato tutto il resto): scorte con giorni di autonomia, calendario
+occupazione 30 giorni, food cost teorico per piatto (richiede `ricette` con
+grammature — costo organizzativo prima che tecnico, la raccolta dati può
+partire in parallelo) — e i KPI direzionali del report (GOPPAR, RevPAR,
+pickup/pace, channel manager), volutamente non prima di aver consolidato
+quanto sopra.
+
+✅ [FATTO 16/08/2026] Bug alert compleanni — "tra NaN giorni" invece del
+numero, segnalato dal titolare in UI dopo il rilascio dei tre punti sopra
+(non causato da quei tre punti — bug preesistente del 14/08/2026, mai
+notato prima perché l'alert era nuovo). Causa: la query calcolava
+`gs.giorno - CURRENT_DATE`, e `gs.giorno` (prodotto da `generate_series` con
+argomenti timestamp) è un timestamp, non un date — timestamp meno date in
+Postgres è un INTERVAL, non un intero. `backend/config/db.js` registra un
+type parser custom solo per DATE (oid 1082) e BIGINT (oid 20), non per
+INTERVAL: arrivava in JS come oggetto (`{days: ...}` dal pacchetto
+`postgres-interval` usato internamente da node-postgres), e `Number()` su
+quell'oggetto è sempre `NaN`. Il blocco "scadenze HR" nella stessa funzione
+usava già il pattern corretto (`s.data_scadenza::date - CURRENT_DATE`,
+date meno date = integer) — bastava applicare lo stesso cast:
+`gs.giorno::date - CURRENT_DATE`. Un solo carattere di query mancante
+(`::date`), non un problema di logica. Aggiunto un test dedicato in
+`tests/api/dashboard.test.js` che inserisce un ospite di test con
+compleanno fra 3 giorni e verifica che il testo dell'alert non contenga mai
+"NaN" — prima non esisteva nessun test HTTP su questo alert specifico.
+
+✅ **Punti 4 e 5 evolutiva dashboard (16/08/2026)** — calendario occupazione
+30 giorni e scorte con giorni di autonomia. Un correzione a quanto detto
+nella sessione precedente prima di descriverli: avevo detto che il food
+cost teorico per piatto (punto 6, ancora rimandato) avrebbe richiesto
+costruire da zero una tabella `ricette` — falso, `ricette` e
+`ricette_ingredienti` esistono già dalla migration 004 (le primissime del
+progetto), semplicemente non le usa nessun controller. Il lavoro rimasto
+per il punto 6 è quindi solo applicativo (UI + logica), non di schema —
+cambia la stima di complessità data prima, in meglio.
+1. **Scorte con giorni di autonomia** — `magazzinoController.listaProdotti()`
+   ora calcola, per prodotto, il consumo medio giornaliero (somma degli
+   `scarico` in `movimenti_magazzino` negli ultimi 30 giorni ÷ 30) e i
+   giorni di autonomia stimati (giacenza ÷ consumo medio). Nessuna nuova
+   tabella. `giorniAutonomia` è `null`, non 0 né "infinito", quando non c'è
+   nessuno scarico registrato negli ultimi 30 giorni — un prodotto mai
+   scaricato non è automaticamente "sicuro", è semplicemente non stimabile
+   con i dati disponibili. Badge colorato (rosso ≤3gg, ambra ≤7gg) nella
+   card prodotto di `magazzino/page.jsx`. Test in `tests/api/magazzino.test.js`:
+   caso con consumo calcolabile e caso senza.
+2. **Calendario occupazione prossimi 30 giorni** — **zero endpoint nuovi**:
+   riusa `GET /prenotazioni/griglia` (la stessa fonte dati di
+   `/planning-camere` e dell'export PDF "Planning mensile" del 14/08),
+   aggregata client-side in `home/page.jsx` (`calcolaOccupazione30Giorni`)
+   in percentuale-occupata per ciascuno dei 30 giorni. Fascia orizzontale
+   sola-lettura sotto la griglia widget, intensità del colore proporzionale
+   all'occupazione — deliberatamente NON i colori di stato rosso/ambra/verde
+   dell'app: un'alta occupazione è una buona notizia, riusarli avrebbe letto
+   come un allarme. Link generico a `/planning-camere` per il dettaglio/
+   editing, che resta lo strumento operativo — questa fascia è solo un
+   colpo d'occhio. **Limite di test**: essendo aggregazione client-side pura
+   (nessuna nuova query backend), non ha un test HTTP dedicato — verificata
+   solo per sintassi (esbuild) e per lettura della logica, non con un test
+   automatico della funzione di aggregazione. Se in futuro emergono bug qui,
+   vale la pena valutare uno unit test JS lato frontend (oggi il progetto
+   non ha infrastruttura di test frontend, solo `tests/api/*` via supertest).
+
+⏸️ **Punto 6 rimandato deliberatamente (16/08/2026) — food cost teorico per
+piatto**: NON è un blocco tecnico, è in attesa che il titolare decida CHI
+inserisce le grammature ricetta per ricetta (chef? chi altro?) — costruirlo
+ora sarebbe lavoro sprecato senza quella decisione, prima ancora che i dati
+esistano. Analisi già fatta, da riprendere pari pari quando si sblocca,
+senza rifare l'audit:
+- `ricette`/`ricette_ingredienti` esistono già dalla migration 004
+  (mai usate da nessun controller) — non serve crearle.
+- **Decisione di schema necessaria prima di scrivere codice**:
+  `ricette.nome_piatto` è testo libero, senza FK verso `menu_piatti.id` —
+  matchare per nome scritto a mano è fragile. Proposto: aggiungere
+  `ricette.menu_piatto_id` (FK nullable, additiva, nessun rischio sui dati
+  esistenti — la tabella oggi è vuota o quasi).
+- **Il "top 10 piatti" NON serve deciderlo a occhio**: `comande_righe
+  (piatto_id, quantita)` esiste già e traccia ogni riga di ogni comanda —
+  si può ricavare automaticamente dai piatti più venduti reali (es. ultimi
+  90 giorni, comande non annullate), non da una supposizione dello chef.
+- **Due assunzioni tecniche da confermare prima di implementare** (sbagliarle
+  produce numeri falsati senza errore visibile):
+  1. Unità di misura: `ricette_ingredienti.unita_misura` è un campo libero
+     separato da `prodotti.unita_misura`, senza tabella di conversione.
+     Proposto: richiedere in UI la STESSA unità del prodotto in magazzino,
+     validato non silenzioso — nessuna conversione automatica per ora.
+  2. Costo da usare: `prodotti` non ha un "costo attuale", vive dentro
+     `movimenti_magazzino.costo_unitario` per ogni carico. Proposto: ultimo
+     carico con costo registrato (stesso criterio di `storicoPrezzi()`),
+     non una media.
+- Lavoro tecnico stimato quando si sblocca: una migration additiva (FK), un
+  controller CRUD ricette/ingredienti (solo admin/titolare, come anagrafica
+  prodotti), calcolo costo teorico + margine per piatto, vista "top 10"
+  teorico vs effettivo del mese (l'effettivo aggregato esiste già in
+  `dashboard/kpi`, `foodCost.euroPerCoperto`) — piccolo, il collo di
+  bottiglia resta solo l'inserimento dati.
+
 ✅ [FATTO 14/08/2026] Planning camere — export PDF stampabile. Pulsante
   "Esporta" nel toolbar (prima di "Nuova prenotazione", visibile a tutti i
   ruoli con accesso alla pagina, non solo a chi trascina), apre un piccolo
@@ -1434,3 +1588,80 @@ cognome "Santis", nome "Maria De") o per ragioni sociali. Non bloccante
 (il campo resta sempre modificabile dopo la creazione), ma da tenere
 presente se un gruppo viene creato con un referente dal nome composito.
 ```
+
+ADR / RevPAR / TRevPAR + pagina Report (16/08/2026, richiesta esplicita:
+"predisporrei ora il calcolo ADR/RevPAR/TrevPAR..."). Primi 3 indicatori
+costi/ricavi del report KPI (docs/kpi/report.docx) costruiti — gli unici,
+tra tutti quelli discussi in una sessione precedente lo stesso giorno, che
+non dipendono da WuBook/A-Cube/nessuna mail in sospeso (quel ragionamento
+era stato fatto solo in conversazione, non era mai stato scritto qui — va
+tenuto presente per il futuro: se una discussione produce una conclusione
+che conta, va salvata subito, non solo detta).
+
+- **Backend**: `GET /api/dashboard/revenue?data=YYYY-MM-DD`
+  (`dashboardController.revenueKpi`, mese in corso — dal giorno 1 a
+  `data` — confrontato con lo stesso periodo dell'anno scorso). Stessa
+  policy di accesso di `kpi()`: tutti i ruoli autenticati (dati aggregati,
+  non sensibili), il frontend li mostra solo ad admin/titolare.
+  - **ADR** = ricavo camere / camere-notte vendute.
+  - **RevPAR** = ricavo camere / camere-notte disponibili.
+  - **TRevPAR** = ricavo totale (camere+ristorante) / camere-notte disponibili.
+  - Ricavo camere: `soggiorni.tariffa_totale` NON si somma per prenotazione
+    (un soggiorno può attraversare due mesi) — si prorata sulle notti
+    (tariffa_totale / notti totali) e si somma solo la quota-notti che
+    cade nel periodo, con clamp GREATEST/LEAST invece di generate_series
+    (una sola query aggregata, niente subquery per riga).
+  - Camere disponibili nel periodo = camere attive OGGI × giorni del
+    periodo — approssimazione nota, stesso limite già esistente di
+    `camereTotali` in `kpi()`: non c'è uno storico di quando una camera è
+    stata attivata/disattivata. Esposta in risposta (`periodo.camereAttive`)
+    invece di restare un dettaglio nascosto.
+  - **TRevPAR — punto da aggiornare quando l'integrazione sarà completa**:
+    oggi il ricavo totale viene da `incassi_giornalieri` (inserimento
+    manuale, camere+ristorante insieme, come già per `quadraturaIncasso`).
+    Isolato apposta in una funzione a sé (`ricavoTotalePeriodo()`,
+    commentata esplicitamente nel codice): quando WuBook (camere) e A-Cube
+    (ristorante) saranno collegati, basterà cambiare la query dentro quella
+    funzione con una SUM su `pagamenti` reali — il resto del calcolo (ADR/
+    RevPAR/TRevPAR, la pagina Report, il widget dashboard) non richiede
+    nessuna modifica, perché consuma solo il numero che quella funzione
+    restituisce. Questo era il vincolo esplicito della richiesta ("andrà
+    aggiornato correttamente il calcolo senza numeri manuali a
+    integrazione completata") — non rifarlo diversamente in futuro.
+- **Widget dashboard**: nuovo gruppo "Ricavi" in `GrigliaWidget`
+  (`frontend/app/home/page.jsx`) — 3 tessere ADR/RevPAR/TRevPAR del mese
+  in corso con badge di trend vs anno scorso (verde/rosso), click-through
+  su `/report`.
+- **Pagina `/report`** (nuova, `frontend/app/report/page.jsx`): selettore
+  mese (mesi precedenti inclusi), i 3 indicatori con variazione %,
+  dettaglio numerico (camere-notte vendute/disponibili, ricavo camere,
+  ricavo totale, confronto anno scorso), nota metodologica esplicita sulle
+  due approssimazioni (fonte manuale TRevPAR, camere disponibili
+  "storiche" approssimate). In fondo, sezione "Altri indicatori (in
+  programma)" con GOPPAR/Net RevPAR/CPOR/Pace-Pickup come tessere
+  `sviluppato=false` (stesso pattern onesto già usato in dashboard) — non
+  costruiti ora su richiesta esplicita, restano solo elencati qui sotto.
+- **Navigazione**: nuova voce "Report" nel gruppo STRUTTURA della sidebar
+  (`frontend/components/layout/Sidebar.tsx`), `href: '/report'`, riservata
+  ad admin/titolare (`ruoli: AT`) — stessa policy dei dati finanziari già
+  ristretti in dashboard (Incasso oggi, Registra incasso), non una nuova
+  restrizione inventata apposta.
+- **Impostazioni ▸ Report — deciso di NON crearla ora**: i 3 indicatori di
+  oggi sono rapporti puri (ricavo/camere-notte), non hanno nessun
+  parametro configurabile — una pagina impostazioni vuota non avrebbe
+  senso. Diventerà necessaria quando arriveranno indicatori che richiedono
+  un input manuale del titolare: GOPPAR e CPOR avranno bisogno di un costo
+  del personale allocato alle camere (oggi assente da qualunque tabella),
+  Net RevPAR di una % di commissione per canale — a quel punto la pagina
+  impostazioni serve per inserire quei parametri, non prima. Da riaprire
+  quando si sblocca uno di quei due indicatori, non prima.
+- **Test**: `tests/api/dashboard.test.js`, describe `GET
+  /api/dashboard/revenue` — copre proration su un soggiorno a cavallo di
+  mese (5 notti totali, solo 2 nel periodo), esclusione dei soggiorni
+  cancellato=true, coerenza RevPAR/TRevPAR con `camereAttive`/`giorni`
+  dichiarati in risposta (non un numero assoluto ignoto — il conteggio
+  reale delle camere attive del DB di sviluppo non è sotto controllo del
+  test), periodo senza alcun dato (adr null, revpar/trevpar 0, nessun
+  errore), permessi (kpi()-style, non ristretto a soloTitolare).
+  Anno fittizio 2099 in tutte le fixture, stesso principio di isolamento
+  già usato altrove nel file.

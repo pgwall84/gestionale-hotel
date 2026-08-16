@@ -311,3 +311,55 @@ describe('GET /api/magazzino/prodotti/qr/:qr_code', () => {
     expect(res.status).toBe(404);
   });
 });
+
+// ─── GET /api/magazzino/prodotti — giorni di autonomia (16/08/2026) ────────
+// I movimenti creati via POST /movimenti prendono `data = NOW()` di default
+// (registraMovimento non accetta una data esplicita), quindi ricadono
+// sempre nella finestra "ultimi 30 giorni" della query — nessuna necessità
+// di inserire righe direttamente via SQL con una data forzata.
+describe('GET /api/magazzino/prodotti — giorni di autonomia', () => {
+  let prodottoConConsumoId;
+  let prodottoSenzaConsumoId;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const p1 = await db.query(
+      `INSERT INTO prodotti (nome, unita_misura, soglia_minima, qr_code) VALUES ($1, 'lt', 5, $2) RETURNING id`,
+      [`${PREFISSO}Olio`, `${PREFISSO}QR-OLIO`]
+    );
+    prodottoConConsumoId = p1.rows[0].id;
+    const p2 = await db.query(
+      `INSERT INTO prodotti (nome, unita_misura, soglia_minima, qr_code) VALUES ($1, 'kg', 5, $2) RETURNING id`,
+      [`${PREFISSO}SaleGrosso`, `${PREFISSO}QR-SALE`]
+    );
+    prodottoSenzaConsumoId = p2.rows[0].id;
+
+    // prodottoConConsumoId: carico 90 + scarico 30 → giacenza 60, consumo 30gg = 30
+    // → consumoMedioGiornaliero = 1 → giorniAutonomia = 60.
+    await request(app).post('/api/magazzino/movimenti').set(authHeader.portiere_notte())
+      .send({ prodotto_id: prodottoConConsumoId, tipo: 'carico', quantita: 90 });
+    await request(app).post('/api/magazzino/movimenti').set(authHeader.cuoco())
+      .send({ prodotto_id: prodottoConConsumoId, tipo: 'scarico', quantita: 30 });
+
+    // prodottoSenzaConsumoId: solo carico, nessuno scarico → non calcolabile.
+    await request(app).post('/api/magazzino/movimenti').set(authHeader.portiere_notte())
+      .send({ prodotto_id: prodottoSenzaConsumoId, tipo: 'carico', quantita: 50 });
+  });
+
+  test('prodotto con scarichi negli ultimi 30gg → consumoMedioGiornaliero e giorniAutonomia calcolati', async () => {
+    const res = await request(app).get('/api/magazzino/prodotti').set(authHeader.admin());
+    const p = res.body.prodotti.find(x => x.id === prodottoConConsumoId);
+    expect(p).toBeDefined();
+    expect(p.giacenza).toBe(60);
+    expect(p.consumoMedioGiornaliero).toBe(1);
+    expect(p.giorniAutonomia).toBe(60);
+  });
+
+  test('prodotto senza scarichi → giorniAutonomia null, non 0 né infinito', async () => {
+    const res = await request(app).get('/api/magazzino/prodotti').set(authHeader.admin());
+    const p = res.body.prodotti.find(x => x.id === prodottoSenzaConsumoId);
+    expect(p).toBeDefined();
+    expect(p.consumoMedioGiornaliero).toBe(0);
+    expect(p.giorniAutonomia).toBeNull();
+  });
+});

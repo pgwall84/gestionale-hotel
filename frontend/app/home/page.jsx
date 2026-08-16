@@ -21,7 +21,7 @@
 
 import { useState, useEffect } from 'react';
 import {
-  BedDouble, UtensilsCrossed, Banknote, TrendingDown, X,
+  BedDouble, UtensilsCrossed, Banknote, TrendingDown, TrendingUp, X,
   Users, ShieldCheck, Wrench, UtensilsCrossed as IconaRistorante,
 } from 'lucide-react';
 import Link from 'next/link';
@@ -71,6 +71,20 @@ function costruisciKpi(dati) {
   ];
 }
 
+// ADR/RevPAR/TRevPAR (16/08/2026) — traduce variazionePercentuale in
+// stato/sub per WidgetItem, stessa filosofia di badgeVariazione() sopra ma
+// per il vocabolario verde/ambra/rosso/neutro di WidgetItem invece del
+// badge di KpiCard (i due componenti non condividono le stesse prop).
+function statoTrendRicavi(pct) {
+  if (pct === null || pct === undefined) return 'neutro';
+  return pct >= 0 ? 'verde' : 'rosso';
+}
+function subTrendRicavi(pct) {
+  if (pct === null || pct === undefined) return 'mese in corso · nessun confronto disponibile';
+  const segno = pct > 0 ? '+' : '';
+  return `mese in corso · ${segno}${pct}% vs anno scorso`;
+}
+
 function formattaDataOra(iso) {
   if (!iso) return null;
   return new Date(iso).toLocaleString('it-IT', { day: 'numeric', month: 'short', hour: '2-digit', minute: '2-digit' });
@@ -82,6 +96,37 @@ function formattaDataOra(iso) {
 function oggiLocale() {
   const d = new Date();
   return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
+// Aggrega le righe di GET /prenotazioni/griglia (una riga per camera per
+// soggiorno che si sovrappone al range) in percentuale-occupata per
+// ciascuno dei 30 giorni a partire da `oggiStr` (16/08/2026, punto 4
+// evolutiva dashboard). data_arrivo/data_partenza arrivano già come
+// stringa 'YYYY-MM-DD' (types.setTypeParser(1082, ...) in
+// backend/config/db.js), confrontabili lessicograficamente come le date
+// ISO — nessun new Date() necessario per il confronto, solo per generare
+// la sequenza dei 30 giorni.
+function calcolaOccupazione30Giorni(righe, oggiStr) {
+  const camereAttive = new Set(righe.map(r => r.camera_id));
+  const totale = camereAttive.size;
+  const [y, m, g] = oggiStr.split('-').map(Number);
+  const giorni = [];
+  for (let i = 0; i < 30; i++) {
+    const d = new Date(y, m - 1, g + i);
+    const dataStr = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+    const occupate = new Set(
+      righe
+        .filter(r => r.soggiorno_id && r.data_arrivo <= dataStr && r.data_partenza > dataStr)
+        .map(r => r.camera_id)
+    ).size;
+    giorni.push({
+      data: dataStr,
+      occupate,
+      totale,
+      percentuale: totale > 0 ? Math.round((occupate / totale) * 100) : 0,
+    });
+  }
+  return giorni;
 }
 
 // Bottom sheet registrazione incasso giornaliero — solo admin/titolare
@@ -225,7 +270,63 @@ function RiepilogoCamere() {
 
 // Griglia dei 5 gruppi di widget — solo admin/titolare. Dati da /dashboard/gruppi
 // più incasso/food cost già disponibili da /dashboard/kpi (nessuna doppia query).
-function GrigliaWidget({ dati, datiKpi, loading, onRegistraIncasso }) {
+// Stato/sub della tessera Incasso in base alla quadratura (16/08/2026,
+// punto 3 evolutiva dashboard) — vedi dashboardController.quadraturaIncasso.
+// dichiarato === null → titolare non ha ancora registrato nulla oggi,
+// niente da confrontare: nessuno stato invece di un falso "ambra".
+// copreRistorante è sempre false (limite noto, non un bug) — lo diciamo
+// esplicitamente nel sub per non far credere a una quadratura completa.
+function statoQuadraturaIncasso(datiQuadratura) {
+  if (!datiQuadratura || datiQuadratura.dichiarato === null) {
+    return { stato: undefined, sub: 'contanti + POS' };
+  }
+  if (datiQuadratura.significativo) {
+    const segno = datiQuadratura.scostamento > 0 ? '+' : '';
+    return {
+      stato: 'ambra',
+      sub: `Scostamento ${segno}€ ${datiQuadratura.scostamento.toFixed(2)} da pagamenti camere (non copre ristorante)`,
+    };
+  }
+  return { stato: 'verde', sub: 'Quadra con i pagamenti camere (non copre ristorante)' };
+}
+
+// Fascia "Occupazione prossimi 30 giorni" (16/08/2026, punto 4 evolutiva
+// dashboard) — sola lettura, colpo d'occhio: intensità del colore
+// proporzionale alla percentuale occupata, nessun semaforo verde/ambra/rosso
+// (un'alta occupazione è una buona notizia, non un allarme — riusare i
+// colori di stato dell'app per "pieno" avrebbe letto come un problema).
+// Link generico a /planning-camere (senza deep-link al giorno: non è lo
+// scopo di questa fascia, che resta un riepilogo, non un punto di ingresso
+// per editare una prenotazione specifica).
+function FasciaOccupazione30Giorni({ giorni }) {
+  if (!giorni) return null;
+  return (
+    <div className="rounded-xl p-3 mb-6" style={{ background: 'var(--card)', border: '1px solid var(--border)' }}>
+      <div className="flex items-center justify-between mb-2">
+        <p className="text-[11px] font-medium" style={{ color: 'var(--muted-foreground)' }}>
+          Occupazione prossimi 30 giorni
+        </p>
+        <Link href="/planning-camere" className="text-[11px] font-medium" style={{ color: 'var(--hotel-amber)' }}>
+          Vai al planning
+        </Link>
+      </div>
+      <div className="flex gap-1 overflow-x-auto pb-1">
+        {giorni.map(g => (
+          <div key={g.data}
+               title={`${fmtGiornoBreve(g.data)} — ${g.occupate}/${g.totale} camere occupate (${g.percentuale}%)`}
+               className="flex-1 min-w-[10px] h-10 rounded"
+               style={{ background: 'var(--status-blue-text)', opacity: 0.12 + (g.percentuale / 100) * 0.78 }} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
+function fmtGiornoBreve(dataStr) {
+  return new Date(`${dataStr}T00:00:00`).toLocaleDateString('it-IT', { weekday: 'short', day: 'numeric', month: 'short' });
+}
+
+function GrigliaWidget({ dati, datiKpi, loading, datiQuadratura, datiRevenue, onRegistraIncasso }) {
   if (loading) {
     return (
       <p className="text-center py-6 text-sm mb-6" style={{ color: 'var(--muted-foreground)' }}>
@@ -307,10 +408,33 @@ function GrigliaWidget({ dati, datiKpi, loading, onRegistraIncasso }) {
                      )}>
         <WidgetItem label="Incasso oggi"
                     valore={datiKpi ? `€ ${datiKpi.incasso.attuale.toFixed(2)}` : '—'}
-                    sub="contanti + POS" />
+                    {...statoQuadraturaIncasso(datiQuadratura)} />
         <WidgetItem label="Food cost mese"
                     valore={datiKpi?.foodCost.euroPerCoperto !== null && datiKpi?.foodCost.euroPerCoperto !== undefined
                       ? `€ ${datiKpi.foodCost.euroPerCoperto.toFixed(2)}/coperto` : '—'} />
+      </WidgetGruppo>
+
+      {/* Ricavi — ADR/RevPAR/TRevPAR (16/08/2026), primi 3 indicatori del
+          report KPI costruiti: non dipendono da WuBook/A-Cube, vedi
+          docs/EVOLUTIVE.md. Mese in corso, click-through verso /report per
+          il dettaglio (mesi precedenti, nota metodologica). Gli altri
+          indicatori (GOPPAR, CPOR, Net RevPAR, pace/pickup...) restano
+          evolutiva finché non ci sono i dati che richiedono — vedi stesso
+          documento. */}
+      <WidgetGruppo titolo="Ricavi" Icona={TrendingUp}>
+        <WidgetItem label="ADR" valore={datiRevenue?.adr?.attuale !== null && datiRevenue?.adr?.attuale !== undefined
+                      ? `€ ${datiRevenue.adr.attuale.toFixed(2)}` : '—'}
+                    sub={subTrendRicavi(datiRevenue?.adr?.variazionePercentuale)}
+                    stato={statoTrendRicavi(datiRevenue?.adr?.variazionePercentuale)} href="/report" />
+        <WidgetItem label="RevPAR" valore={datiRevenue?.revpar?.attuale !== null && datiRevenue?.revpar?.attuale !== undefined
+                      ? `€ ${datiRevenue.revpar.attuale.toFixed(2)}` : '—'}
+                    sub={subTrendRicavi(datiRevenue?.revpar?.variazionePercentuale)}
+                    stato={statoTrendRicavi(datiRevenue?.revpar?.variazionePercentuale)} href="/report" />
+        <WidgetItem label="TRevPAR" valore={datiRevenue?.trevpar?.attuale !== null && datiRevenue?.trevpar?.attuale !== undefined
+                      ? `€ ${datiRevenue.trevpar.attuale.toFixed(2)}` : '—'}
+                    sub={subTrendRicavi(datiRevenue?.trevpar?.variazionePercentuale)}
+                    stato={statoTrendRicavi(datiRevenue?.trevpar?.variazionePercentuale)} href="/report" />
+        <WidgetItem label="Report completo" sub="Dettaglio, mesi precedenti, nota metodologica" href="/report" />
       </WidgetGruppo>
 
     </div>
@@ -326,6 +450,9 @@ export default function PaginaHome() {
   const [datiKpi, setDatiKpi] = useState(null);
   const [loadingKpi, setLoadingKpi] = useState(true);
   const [datiGruppi, setDatiGruppi] = useState(null);
+  const [datiQuadratura, setDatiQuadratura] = useState(null);
+  const [occupazione30gg, setOccupazione30gg] = useState(null);
+  const [datiRevenue, setDatiRevenue] = useState(null);
   const [loadingGruppi, setLoadingGruppi] = useState(true);
   const [mostraIncasso, setMostraIncasso] = useState(false);
   const [salvandoIncasso, setSalvandoIncasso] = useState(false);
@@ -356,6 +483,33 @@ export default function PaginaHome() {
         .then(r => setDatiGruppi(r.data))
         .catch(() => {})
         .finally(() => setLoadingGruppi(false));
+      // Quadratura incasso (16/08/2026, punto 3 evolutiva dashboard) — solo
+      // admin/titolare, stessa restrizione di /incassi/suggerimento. Se
+      // fallisce (es. ruolo senza permesso su una build vecchia) la tessera
+      // Incasso resta semplicemente senza badge, non rompe il resto.
+      api.get('/dashboard/incassi/quadratura')
+        .then(r => setDatiQuadratura(r.data))
+        .catch(() => {});
+      // ADR/RevPAR/TRevPAR mese in corso (16/08/2026) — dettaglio completo
+      // e mesi precedenti su /report, questa è solo l'istantanea del mese
+      // corrente per il colpo d'occhio in dashboard.
+      api.get('/dashboard/revenue')
+        .then(r => setDatiRevenue(r.data))
+        .catch(() => {});
+      // Occupazione prossimi 30 giorni (16/08/2026, punto 4 evolutiva
+      // dashboard) — nessun endpoint nuovo: riusa GET /prenotazioni/griglia
+      // (la stessa fonte dati di /planning-camere e dell'export PDF
+      // "Planning mensile"), aggregata qui in percentuale-per-giorno invece
+      // di renderizzare la griglia interattiva completa. Quella resta lo
+      // strumento per lavorare sulle prenotazioni; questa è solo un colpo
+      // d'occhio, senza drag&drop.
+      const oggiG = oggiLocale();
+      const [yG, mG, gG] = oggiG.split('-').map(Number);
+      const fine30 = new Date(yG, mG - 1, gG + 30);
+      const dataFine30 = `${fine30.getFullYear()}-${String(fine30.getMonth() + 1).padStart(2, '0')}-${String(fine30.getDate()).padStart(2, '0')}`;
+      api.get(`/prenotazioni/griglia?data_inizio=${oggiG}&data_fine=${dataFine30}`)
+        .then(r => setOccupazione30gg(calcolaOccupazione30Giorni(r.data, oggiG)))
+        .catch(() => {});
     } else {
       setLoadingPresenze(false);
       setLoadingAlerts(false);
@@ -407,8 +561,13 @@ export default function PaginaHome() {
           vive dentro il widget Costi (azione del gruppo), non più isolato qui. */}
       {isGestione && (
         <GrigliaWidget dati={datiGruppi} datiKpi={datiKpi} loading={loadingGruppi}
+                        datiQuadratura={datiQuadratura} datiRevenue={datiRevenue}
                         onRegistraIncasso={() => setMostraIncasso(true)} />
       )}
+
+      {/* Occupazione prossimi 30 giorni — solo admin/titolare, stessa
+          restrizione di /prenotazioni/griglia (16/08/2026, punto 4). */}
+      {isGestione && <FasciaOccupazione30Giorni giorni={occupazione30gg} />}
 
       {/* Griglia secondaria — layout dipende dal ruolo */}
       <div className={`grid grid-cols-1 gap-4 ${isGestione ? 'md:grid-cols-2' : ''}`}>

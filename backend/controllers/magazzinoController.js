@@ -12,25 +12,50 @@ function generaQrCode() {
   return `PRD-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`.toUpperCase();
 }
 
-// GET /api/magazzino/prodotti — lista prodotti con giacenza calcolata e flag sottoscorta
+// GET /api/magazzino/prodotti — lista prodotti con giacenza calcolata, flag
+// sottoscorta e giorni di autonomia stimati.
 // Accessibile a: admin, titolare, cuoco, receptionist, portiere_notte
+//
+// Giorni di autonomia (16/08/2026, punto 5 evolutiva dashboard) — diverso
+// da "sottoscorta": quello confronta la giacenza con una soglia statica,
+// questo stima QUANDO finirà in base al consumo reale degli ultimi 30
+// giorni (solo `scarico`, i `carico` non contano come consumo). Nessuna
+// nuova tabella: `movimenti_magazzino` aveva già tutto il necessario.
+// consumoMedioGiornaliero = 0 (nessuno scarico registrato negli ultimi 30
+// giorni) → giorniAutonomia è `null`, non "infinito" né 0: un prodotto mai
+// scaricato non ha un consumo stimabile, non è automaticamente "sicuro".
 async function listaProdotti(req, res) {
   try {
     const result = await pool.query(`
       SELECT p.id, p.nome, p.categoria, p.unita_misura, p.soglia_minima,
              p.qr_code, p.barcode_ean, p.attivo, p.created_at,
-             COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) AS giacenza
+             COALESCE(SUM(CASE WHEN m.tipo = 'carico' THEN m.quantita ELSE -m.quantita END), 0) AS giacenza,
+             COALESCE(consumo.tot, 0) AS consumo_30gg
       FROM prodotti p
       LEFT JOIN movimenti_magazzino m ON m.prodotto_id = p.id
+      LEFT JOIN LATERAL (
+        SELECT SUM(m2.quantita) AS tot
+        FROM movimenti_magazzino m2
+        WHERE m2.prodotto_id = p.id AND m2.tipo = 'scarico' AND m2.data >= NOW() - INTERVAL '30 days'
+      ) consumo ON true
       WHERE p.attivo = true
-      GROUP BY p.id
+      GROUP BY p.id, consumo.tot
       ORDER BY p.nome
     `);
-    const prodotti = result.rows.map(p => ({
-      ...p,
-      giacenza: parseFloat(p.giacenza),
-      sottoscorta: parseFloat(p.giacenza) < parseFloat(p.soglia_minima),
-    }));
+    const prodotti = result.rows.map(p => {
+      const giacenza = parseFloat(p.giacenza);
+      const consumoMedioGiornaliero = Math.round((parseFloat(p.consumo_30gg) / 30) * 100) / 100;
+      const giorniAutonomia = consumoMedioGiornaliero > 0
+        ? Math.max(0, Math.round(giacenza / consumoMedioGiornaliero))
+        : null;
+      return {
+        ...p,
+        giacenza,
+        sottoscorta: giacenza < parseFloat(p.soglia_minima),
+        consumoMedioGiornaliero,
+        giorniAutonomia,
+      };
+    });
     res.json({ prodotti });
   } catch (err) {
     console.error('listaProdotti error:', err);

@@ -73,7 +73,8 @@ async function lista(req, res) {
         COALESCE(s.pronta, false) AS pronta,
         s.note,
         s.updated_at,
-        sogg.soggiorno_id, sogg.ospite_nome, sogg.ospite_cognome
+        sogg.soggiorno_id, sogg.ospite_nome, sogg.ospite_cognome,
+        man.manutenzione_priorita, man.manutenzione_descrizione
       FROM camere c
       LEFT JOIN stato_camere s ON s.camera_id = c.id AND s.data = $1
       LEFT JOIN tipi_camera tc ON tc.id = c.tipo_camera_id
@@ -85,6 +86,21 @@ async function lista(req, res) {
           AND sg.data_arrivo <= $1 AND sg.data_partenza > $1
         LIMIT 1
       ) sogg ON true
+      -- Manutenzione aperta (16/08/2026, punto 2 dell'evolutiva dashboard):
+      -- segnalazioni_manutenzione non ha mai fatto JOIN verso questa vista
+      -- operativa — era visibile solo nell'alert dashboard e nella pagina
+      -- /manutenzione dedicata, non su Stato Camere dove lavora la
+      -- cameriera/reception giorno per giorno. Solo la più urgente/vecchia
+      -- (stesso ORDER BY già usato in dashboardController.js per l'alert),
+      -- non filtrata per data: una segnalazione aperta resta rilevante finché
+      -- non è risolta, indipendentemente dal giorno visualizzato.
+      LEFT JOIN LATERAL (
+        SELECT sm.priorita AS manutenzione_priorita, sm.descrizione AS manutenzione_descrizione
+        FROM segnalazioni_manutenzione sm
+        WHERE sm.camera_id = c.id AND sm.stato IN ('aperta', 'in_lavorazione')
+        ORDER BY (sm.priorita = 'alta') DESC, sm.created_at ASC
+        LIMIT 1
+      ) man ON true
       ${soloAttive ? 'WHERE c.attivo = true' : ''}
       ORDER BY
         CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END

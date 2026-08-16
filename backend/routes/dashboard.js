@@ -8,5 +8,7 @@ router.get('/kpi', verificaToken, dashboardCtrl.kpi);
 router.get('/gruppi', verificaToken, dashboardCtrl.gruppiWidget);
 router.post('/incassi', verificaToken, soloTitolare, dashboardCtrl.registraIncasso);
 router.get('/incassi/suggerimento', verificaToken, soloTitolare, dashboardCtrl.suggerimentoIncasso);
+router.get('/incassi/quadratura', verificaToken, soloTitolare, dashboardCtrl.quadraturaIncasso);
+router.get('/revenue', verificaToken, dashboardCtrl.revenueKpi);
 
 module.exports = router;

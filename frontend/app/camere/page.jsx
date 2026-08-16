@@ -9,7 +9,8 @@
 // cuoco): possono marcare "pronta" (shared/ruoli.js sezione 'camere'.'pulizia').
 
 import { useState, useEffect, useCallback } from 'react';
-import { ChevronLeft, ChevronRight, CheckCircle, Circle } from 'lucide-react';
+import { ChevronLeft, ChevronRight, CheckCircle, Circle, Wrench } from 'lucide-react';
+import Link from 'next/link';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
@@ -73,6 +74,21 @@ function CardCamera({ camera, puoEditare, puoPulire, onAggiorna, salvando }) {
                              style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>Partenza</span>}
         {camera.pronta && <span className="text-[10px] font-medium px-1.5 py-0.5 rounded-full"
                                 style={{ background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)' }}>Pronta ✓</span>}
+        {/* Manutenzione aperta (16/08/2026) — indipendente da arrivo/partenza:
+            una camera può avere un guasto aperto anche senza movimento oggi.
+            Colore in base a priorita, stesso criterio dell'alert dashboard
+            (alta = rosso, bassa/media = ambra). Link alla pagina dedicata
+            per il dettaglio/gestione, non gestibile da qui. */}
+        {camera.manutenzione_priorita && (
+          <Link href="/manutenzione" title={camera.manutenzione_descrizione}
+                className="text-[10px] font-medium px-1.5 py-0.5 rounded-full flex items-center gap-1"
+                style={{
+                  background: camera.manutenzione_priorita === 'alta' ? 'var(--status-red-bg)' : 'var(--status-amber-bg)',
+                  color: camera.manutenzione_priorita === 'alta' ? 'var(--status-red-text)' : 'var(--status-amber-text)',
+                }}>
+            <Wrench size={9} /> Manutenzione
+          </Link>
+        )}
       </div>
 
       {/* Pulsante pronta — chiunque possa pulire, se c'è attività oggi */}

@@ -39,7 +39,7 @@ import {
   CalendarDays, BookOpen, Car, Archive, Settings,
   Clock, LogOut, LogIn, ChefHat, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench, Receipt, KeyRound, Search, Home, Thermometer,
+  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -151,6 +151,11 @@ const SEZIONI_MENU = [
       { href: '/personale',  icona: Users, testo: 'Personale',  ruoli: TUTTI },
       { href: '/archivio', icona: Archive,       testo: 'Archivio',     ruoli: [...AT,'receptionist'] },
       { href: '/manutenzione', icona: Wrench, testo: 'Manutenzione', ruoli: TUTTI },
+      // Report (16/08/2026) — ADR/RevPAR/TRevPAR, primi indicatori
+      // costi/ricavi del report KPI (docs/kpi/report.docx). Riservata ad
+      // AT come i dati finanziari già visibili solo a loro in dashboard
+      // (Incasso oggi, Registra incasso) — stessa policy, non una nuova.
+      { href: '/report', icona: BarChart3, testo: 'Report', ruoli: AT },
     ],
   },
   {

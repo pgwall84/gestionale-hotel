@@ -209,6 +209,18 @@ export default function MagazzinoPage() {
                   <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
                     min. {p.soglia_minima}
                   </p>
+                  {/* Giorni di autonomia (16/08/2026) — null quando non c'è consumo
+                      stimabile negli ultimi 30gg: "—", non un falso "tranquillo". */}
+                  {p.giorniAutonomia !== null && (
+                    <p className="text-[11px] font-medium"
+                       style={{
+                         color: p.giorniAutonomia <= 3 ? 'var(--status-red-text)'
+                              : p.giorniAutonomia <= 7 ? 'var(--status-amber-text)'
+                              : 'var(--muted-foreground)',
+                       }}>
+                      {p.giorniAutonomia} {p.giorniAutonomia === 1 ? 'giorno' : 'giorni'} di autonomia
+                    </p>
+                  )}
                 </div>
               </div>
             ))}

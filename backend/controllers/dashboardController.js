@@ -353,8 +353,14 @@ async function alert(req, res) {
     // il rischio toISOString/UTC già presente altrove nel progetto (vedi
     // CLAUDE.md — convenzione date). data_nascita duplicati esclusi
     // (duplicato_di IS NULL), stesso filtro di default di lista().
+    // FIX 16/08/2026 (bug "tra NaN giorni" segnalato dal titolare in UI):
+    // gs.giorno::date, non gs.giorno — generate_series produce timestamp,
+    // e timestamp - date è un INTERVAL, non un intero. node-postgres non
+    // ha un parser custom per INTERVAL (backend/config/db.js ne ha solo per
+    // DATE e BIGINT), quindi Number(interval) è sempre NaN. Stesso pattern
+    // già corretto nel blocco "scadenze HR" qui sopra (::date - CURRENT_DATE).
     const compleanni = await pool.query(`
-      SELECT o.id, o.nome, o.cognome, (gs.giorno - CURRENT_DATE) AS giorni_mancanti
+      SELECT o.id, o.nome, o.cognome, (gs.giorno::date - CURRENT_DATE) AS giorni_mancanti
       FROM ospiti o
       JOIN LATERAL generate_series(CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days', INTERVAL '1 day') AS gs(giorno) ON true
       WHERE o.duplicato_di IS NULL
@@ -396,6 +402,13 @@ async function alert(req, res) {
         link: '/manutenzione',
       });
     }
+
+    // Ordina per gravità (16/08/2026, punto 1 evolutiva dashboard): finora
+    // i blocchi erano accodati in un ordine fisso per categoria (ZTL prima,
+    // Manutenzione ultima) — un rosso urgente in fondo alla lista si vedeva
+    // solo scrollando. Array.sort di Node è stabile da tempo (V8/ES2019):
+    // a parità di type l'ordine tra categorie resta quello di prima.
+    alerts.sort((a, b) => (a.type === 'red' ? 0 : 1) - (b.type === 'red' ? 0 : 1));
 
     res.json({ alerts });
   } catch (err) {
@@ -760,4 +773,221 @@ async function suggerimentoIncasso(req, res) {
   }
 }
 
-module.exports = { alert, kpi, registraIncasso, suggerimentoIncasso, alertInviiAlloggiati, alertChecklistHaccp, alertRegistroTemperature, gruppiWidget };
+// Sotto questa soglia (in euro) uno scostamento non è segnalato come
+// anomalia — un errore di arrotondamento o un resto sbagliato di 2-3€ non è
+// un problema, un errore di 10€ o più sì, indipendentemente dal volume del
+// giorno (niente percentuale: il 5% di un giorno da 40€ è un'inezia, il 5%
+// di un giorno da 2000€ nasconderebbe un ammanco vero).
+const SOGLIA_SCOSTAMENTO_INCASSO = 10;
+
+// GET /api/dashboard/incassi/quadratura?data=YYYY-MM-DD — confronta
+// l'incasso dichiarato a mano (incassi_giornalieri) con quello atteso dai
+// pagamenti reali (16/08/2026, punto 3 evolutiva dashboard).
+//
+// Riusa le stesse due fonti di suggerimentoIncasso() sopra, non aggiunge
+// nessuna query nuova: prima il suggerimento serviva solo a precompilare il
+// form, ora lo stesso dato "atteso" viene anche confrontato con quanto
+// effettivamente registrato. Stesso limite di suggerimentoIncasso, ribadito
+// qui perché è la parte più facile da fraintendere leggendo solo il
+// risultato: `atteso` copre SOLO i pagamenti camere (check-out, tabella
+// `pagamenti`) — il ristorante chiude ancora sul registratore fisico Hugin
+// RT-K50, fuori sistema (lo sostituirà A-Cube, modulo 3.1, non iniziato).
+// Uno scostamento reale può quindi dipendere anche dall'incasso ristorante,
+// che qui non è tracciato — `copreRistorante: false` è nella risposta
+// apposta per non lasciare al frontend l'onere di saperlo a memoria.
+// Accessibile a: admin, titolare (stessi permessi di registraIncasso/suggerimento)
+async function quadraturaIncasso(req, res) {
+  const oggiLocale = () => {
+    const d = new Date();
+    return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  };
+  const giorno = req.query.data || oggiLocale();
+  try {
+    const [dichiaratoRes, pagamentiRes] = await Promise.all([
+      pool.query(
+        `SELECT contanti, pos FROM incassi_giornalieri WHERE data = $1`,
+        [giorno]
+      ),
+      pool.query(
+        `SELECT metodo, COALESCE(SUM(importo), 0)::float AS totale
+         FROM pagamenti
+         WHERE created_at::date = $1::date AND stato = 'completato'
+         GROUP BY metodo`,
+        [giorno]
+      ),
+    ]);
+
+    const somme = { contanti: 0, pos: 0, bonifico: 0, altro: 0 };
+    pagamentiRes.rows.forEach((r) => {
+      const chiave = ['contanti', 'pos', 'bonifico'].includes(r.metodo) ? r.metodo : 'altro';
+      somme[chiave] += Number(r.totale);
+    });
+    const atteso = { contanti: somme.contanti, pos: somme.pos };
+
+    const riga = dichiaratoRes.rows[0];
+    // Nessuna riga ancora registrata: non è uno scostamento, è "non ancora
+    // inserito" — il frontend deve poterli distinguere (un'anomalia da
+    // segnalare non è la stessa cosa di un dato mancante).
+    if (!riga) {
+      return res.json({
+        data: giorno,
+        dichiarato: null,
+        atteso,
+        scostamento: null,
+        copreRistorante: false,
+      });
+    }
+
+    const dichiarato = { contanti: Number(riga.contanti), pos: Number(riga.pos) };
+    const scostamentoTotale = Math.round(
+      ((dichiarato.contanti + dichiarato.pos) - (atteso.contanti + atteso.pos)) * 100
+    ) / 100;
+
+    res.json({
+      data: giorno,
+      dichiarato,
+      atteso,
+      scostamento: scostamentoTotale,
+      significativo: Math.abs(scostamentoTotale) > SOGLIA_SCOSTAMENTO_INCASSO,
+      copreRistorante: false,
+    });
+  } catch (err) {
+    console.error('Errore quadraturaIncasso:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+// ─── ADR / RevPAR / TRevPAR (16/08/2026) ───────────────────────────────────
+// Primi 3 indicatori di docs/kpi/report.docx costruiti: sono gli unici tra
+// tutti quelli discussi che non dipendono da WuBook/A-Cube/altre mail in
+// sospeso (vedi ragionamento in docs/EVOLUTIVE.md). Periodo: dal 1° del
+// mese di `data` a `data` stessa (mese in corso, coerente con
+// spesaMese/copertiMese di kpi() sopra), confrontato con lo stesso
+// intervallo di giorni dell'anno precedente.
+//
+// Definizioni standard di settore:
+//   ADR     = ricavo camere / camere-notte VENDUTE           (tariffa media)
+//   RevPAR  = ricavo camere / camere-notte DISPONIBILI        (ricavo per camera disponibile)
+//   TRevPAR = ricavo TOTALE (camere + ristorante + altro) / camere-notte disponibili
+//
+// Ricavo camere: NON si possono sommare i `tariffa_totale` dei soggiorni con
+// arrivo/partenza nel mese — tariffa_totale è il totale dell'INTERO
+// soggiorno, che può attraversare più mesi. Si prorata sulle notti
+// (tariffa_totale / notti_totali_soggiorno) e si somma solo la quota-notti
+// che cade nel periodo richiesto: un soggiorno 28/10→05/11 contribuisce a
+// novembre solo con le notti dall'1 al 4, non con l'intera tariffa.
+async function ricavoCamerePeriodo(inizio, fine) {
+  const r = await pool.query(
+    `SELECT
+       ($2::date - $1::date + 1) AS giorni,
+       COALESCE(SUM(GREATEST(0, LEAST(s.data_partenza, $2::date + 1) - GREATEST(s.data_arrivo, $1::date))), 0) AS camere_notte,
+       COALESCE(SUM(
+         (COALESCE(s.tariffa_totale, 0) / GREATEST(s.data_partenza - s.data_arrivo, 1))
+         * GREATEST(0, LEAST(s.data_partenza, $2::date + 1) - GREATEST(s.data_arrivo, $1::date))
+       ), 0) AS ricavo
+     FROM soggiorni s
+     WHERE s.cancellato = false AND s.data_arrivo <= $2::date AND s.data_partenza > $1::date`,
+    [inizio, fine]
+  );
+  const riga = r.rows[0];
+  return {
+    giorni: parseInt(riga.giorni),
+    camereNotte: parseInt(riga.camere_notte),
+    ricavo: parseFloat(riga.ricavo),
+  };
+}
+
+// Ricavo totale del periodo (per TRevPAR) — QUESTO È IL PUNTO DA CAMBIARE
+// quando l'integrazione sarà completa. Oggi arriva da `incassi_giornalieri`,
+// cioè dal totale contanti+POS inserito A MANO dal titolare (camere +
+// ristorante insieme, non scorporabile — stesso limite di
+// quadraturaIncasso() sopra, `copreRistorante` lì è un promemoria dello
+// stesso fatto). Quando WuBook (camere) e A-Cube (ristorante) saranno
+// collegati, `pagamenti` conterrà i ricavi REALI di entrambi i reparti:
+// basterà sostituire la query qui dentro con una SUM(importo) su
+// `pagamenti` (stato='completato') nel periodo — revenueKpi() sotto non va
+// toccato, perché consuma solo il numero restituito da questa funzione,
+// isolata apposta per questo.
+async function ricavoTotalePeriodo(inizio, fine) {
+  // FONTE ATTUALE: manuale (incassi_giornalieri). Da sostituire a
+  // integrazione WuBook/A-Cube completata — vedi commento sopra.
+  const r = await pool.query(
+    `SELECT COALESCE(SUM(contanti), 0) + COALESCE(SUM(pos), 0) AS tot
+     FROM incassi_giornalieri WHERE data BETWEEN $1 AND $2`,
+    [inizio, fine]
+  );
+  return parseFloat(r.rows[0].tot);
+}
+
+// GET /api/dashboard/revenue?data=YYYY-MM-DD — ADR/RevPAR/TRevPAR del mese
+// in corso, con confronto sullo stesso periodo dell'anno precedente.
+// Accessibile a: tutti i ruoli autenticati (stessa policy di kpi() sopra —
+// dati aggregati, non sensibili); il frontend li mostra solo ad admin/
+// titolare, coerente con come oggi è già gestito "Incasso oggi" in kpi().
+async function revenueKpi(req, res) {
+  const data = req.query.data || new Date().toISOString().slice(0, 10);
+  const inizio = `${data.slice(0, 7)}-01`;
+  const dataAnnoScorso = `${parseInt(data.slice(0, 4)) - 1}${data.slice(4)}`;
+  const inizioAnnoScorso = `${parseInt(inizio.slice(0, 4)) - 1}${inizio.slice(4)}`;
+
+  try {
+    // Camere disponibili nel periodo = camere attive OGGI × giorni del
+    // periodo. Approssimazione nota (stesso limite di camereTotali in
+    // kpi()): non esiste uno storico di quando una camera è stata
+    // attivata/disattivata, si usa lo stato attuale anche per l'anno
+    // scorso. Esposta in risposta (`periodo.camereAttive`) invece di
+    // restare un dettaglio interno, cosí chi legge il numero puó verificare
+    // da sé come è stato ottenuto camereNotteDisponibili.
+    const camereAttiveRes = await pool.query('SELECT COUNT(*) AS tot FROM camere WHERE attivo = true');
+    const camereAttive = parseInt(camereAttiveRes.rows[0].tot);
+
+    const [periodo, periodoAnnoScorso, ricavoTotale, ricavoTotaleAnnoScorso] = await Promise.all([
+      ricavoCamerePeriodo(inizio, data),
+      ricavoCamerePeriodo(inizioAnnoScorso, dataAnnoScorso),
+      ricavoTotalePeriodo(inizio, data),
+      ricavoTotalePeriodo(inizioAnnoScorso, dataAnnoScorso),
+    ]);
+
+    const calcola = (p, ricavoTot) => {
+      const camereNotteDisponibili = camereAttive * p.giorni;
+      return {
+        adr: p.camereNotte > 0 ? Math.round((p.ricavo / p.camereNotte) * 100) / 100 : null,
+        revpar: camereNotteDisponibili > 0 ? Math.round((p.ricavo / camereNotteDisponibili) * 100) / 100 : null,
+        trevpar: camereNotteDisponibili > 0 ? Math.round((ricavoTot / camereNotteDisponibili) * 100) / 100 : null,
+        camereNotteVendute: p.camereNotte,
+        camereNotteDisponibili,
+        ricavoCamere: Math.round(p.ricavo * 100) / 100,
+        ricavoTotale: Math.round(ricavoTot * 100) / 100,
+      };
+    };
+
+    const attuale = calcola(periodo, ricavoTotale);
+    const scorso = calcola(periodoAnnoScorso, ricavoTotaleAnnoScorso);
+
+    res.json({
+      periodo: { inizio, fine: data, giorni: periodo.giorni, camereAttive },
+      periodoAnnoScorso: { inizio: inizioAnnoScorso, fine: dataAnnoScorso, giorni: periodoAnnoScorso.giorni },
+      adr:     { attuale: attuale.adr,     annoScorso: scorso.adr,     variazionePercentuale: variazione(attuale.adr, scorso.adr) },
+      revpar:  { attuale: attuale.revpar,  annoScorso: scorso.revpar,  variazionePercentuale: variazione(attuale.revpar, scorso.revpar) },
+      trevpar: { attuale: attuale.trevpar, annoScorso: scorso.trevpar, variazionePercentuale: variazione(attuale.trevpar, scorso.trevpar) },
+      dettaglio: {
+        camereNotteVendute: attuale.camereNotteVendute,
+        camereNotteDisponibili: attuale.camereNotteDisponibili,
+        ricavoCamere: attuale.ricavoCamere,
+        ricavoTotale: attuale.ricavoTotale,
+        camereNotteVenduteAnnoScorso: scorso.camereNotteVendute,
+        ricavoCamereAnnoScorso: scorso.ricavoCamere,
+        ricavoTotaleAnnoScorso: scorso.ricavoTotale,
+      },
+      note: {
+        trevparFonte: 'manuale',
+        camereDisponibiliApprossimate: true,
+      },
+    });
+  } catch (err) {
+    console.error('Errore dashboard revenue:', err);
+    res.status(500).json({ errore: 'Errore interno del server.' });
+  }
+}
+
+module.exports = { alert, kpi, registraIncasso, suggerimentoIncasso, quadraturaIncasso, revenueKpi, alertInviiAlloggiati, alertChecklistHaccp, alertRegistroTemperature, gruppiWidget };

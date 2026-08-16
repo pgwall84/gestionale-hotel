@@ -371,3 +371,315 @@ describe('GET /api/dashboard/gruppi', () => {
     expect(typeof res.body.ristorante.menuPronto).toBe('boolean');
   });
 });
+
+// ─── GET /api/dashboard/alert — ordinamento per gravità (16/08/2026) ────────
+// Punto 1 evolutiva dashboard: verifica un invariante strutturale (nessun
+// 'amber' prima di un 'red'), non un conteggio — resta valido indipendente
+// da quanto backlog reale esiste nel DB di sviluppo in un dato momento
+// (stesso motivo per cui alertInviiAlloggiati sopra usa soggiornoIds
+// invece di contare sull'endpoint HTTP).
+describe('GET /api/dashboard/alert — ordinamento per gravità (16/08/2026)', () => {
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/dashboard/alert');
+    expect(res.status).toBe(401);
+  });
+
+  test('nessun alert ambra precede un alert rosso', async () => {
+    const res = await request(app).get('/api/dashboard/alert').set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    const tipi = res.body.alerts.map(a => a.type);
+    const ultimoRosso = tipi.lastIndexOf('red');
+    const primoAmbra = tipi.indexOf('amber');
+    if (ultimoRosso !== -1 && primoAmbra !== -1) {
+      expect(primoAmbra).toBeGreaterThan(ultimoRosso);
+    }
+  });
+});
+
+// ─── GET /api/dashboard/incassi/quadratura (16/08/2026, punto 3) ───────────
+// Confronta incassi_giornalieri (dichiarato, già inserito da DATA_TEST nel
+// blocco 'POST /api/dashboard/incassi' sopra: contanti=500, pos=0 dopo
+// l'upsert dell'ultimo test di quel blocco) con `pagamenti` (atteso). Il
+// pagamento di test usa created_at = DATA_TEST esplicito (non NOW()) per
+// restare isolato dai dati reali, stesso principio delle date fittizie
+// 2099/2098 di tutto il file. prenotazione_id è NOT NULL — riusa una
+// prenotazione reale qualsiasi (stesso pattern di camere.test.js che riusa
+// `primaCamera`): il test non modifica quella prenotazione, la referenzia
+// solo per soddisfare la FK.
+describe('GET /api/dashboard/incassi/quadratura', () => {
+  let prenotazioneTestId;
+  let pagamentoTestId;
+  const DATA_QUADRATURA = '2099-12-05'; // giorno dedicato, non condiviso con DATA_TEST di sopra
+
+  beforeAll(async () => {
+    const db = getPool();
+    const p = await db.query('SELECT id FROM prenotazioni ORDER BY id LIMIT 1');
+    prenotazioneTestId = p.rows[0]?.id;
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    if (pagamentoTestId) {
+      await db.query('DELETE FROM pagamenti WHERE id = $1', [pagamentoTestId]);
+    }
+    await db.query('DELETE FROM incassi_giornalieri WHERE data = $1', [DATA_QUADRATURA]);
+  });
+
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/dashboard/incassi/quadratura');
+    expect(res.status).toBe(401);
+  });
+
+  test('cameriere → 403 (solo titolare/admin, stessi permessi di suggerimento)', async () => {
+    const res = await request(app)
+      .get('/api/dashboard/incassi/quadratura')
+      .set(authHeader.cameriere());
+    expect(res.status).toBe(403);
+  });
+
+  test('nessun incasso dichiarato per il giorno → dichiarato e scostamento null, non un falso scostamento', async () => {
+    const res = await request(app)
+      .get(`/api/dashboard/incassi/quadratura?data=${DATA_QUADRATURA}`)
+      .set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.dichiarato).toBeNull();
+    expect(res.body.scostamento).toBeNull();
+    expect(res.body.copreRistorante).toBe(false);
+  });
+
+  test('dichiarato e atteso vicini → scostamento non significativo (sotto soglia 10€)', async () => {
+    const db = getPool();
+    await db.query(
+      `INSERT INTO incassi_giornalieri (data, contanti, pos) VALUES ($1, 100, 50)`,
+      [DATA_QUADRATURA]
+    );
+    if (prenotazioneTestId) {
+      const pag = await db.query(
+        `INSERT INTO pagamenti (prenotazione_id, importo, metodo, tipo, stato, created_at)
+         VALUES ($1, 145, 'contanti', 'saldo', 'completato', $2) RETURNING id`,
+        [prenotazioneTestId, DATA_QUADRATURA]
+      );
+      pagamentoTestId = pag.rows[0].id;
+    }
+
+    const res = await request(app)
+      .get(`/api/dashboard/incassi/quadratura?data=${DATA_QUADRATURA}`)
+      .set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.dichiarato).toEqual({ contanti: 100, pos: 50 });
+    if (prenotazioneTestId) {
+      // atteso: 145 contanti (test) + 0 pos = 145; dichiarato totale 150 → scostamento +5
+      expect(res.body.scostamento).toBe(5);
+      expect(res.body.significativo).toBe(false);
+    }
+  });
+
+  test('scostamento sopra soglia → significativo true', async () => {
+    if (!prenotazioneTestId) return; // ambiente senza prenotazioni reali — vedi nota sopra
+    const db = getPool();
+    // Alza il pagamento reale a 200 (dichiarato resta 150) → scostamento -50
+    await db.query('UPDATE pagamenti SET importo = 200 WHERE id = $1', [pagamentoTestId]);
+
+    const res = await request(app)
+      .get(`/api/dashboard/incassi/quadratura?data=${DATA_QUADRATURA}`)
+      .set(authHeader.titolare());
+    expect(res.body.scostamento).toBe(-50);
+    expect(res.body.significativo).toBe(true);
+  });
+});
+
+// ─── GET /api/dashboard/alert — compleanni, bug "NaN giorni" (16/08/2026) ──
+// Segnalato dal titolare in UI. Causa: `(gs.giorno - CURRENT_DATE)` sottraeva
+// un CURRENT_DATE (date) da gs.giorno, che generate_series produce come
+// timestamp (non date) — date - timestamp in Postgres è un INTERVAL, non un
+// intero. node-postgres non ha un parser custom per INTERVAL (vedi
+// backend/config/db.js: solo DATE e BIGINT hanno setTypeParser), quindi
+// arriva in JS come oggetto {days:...}: `Number(quell'oggetto)` è NaN. Il
+// blocco "scadenze HR" poco sopra nello stesso file usa correttamente
+// `s.data_scadenza::date - CURRENT_DATE` (date - date = integer) — stesso
+// pattern applicato qui col cast `gs.giorno::date`. Anno 2000 per
+// data_nascita (bisestile, evita un INSERT che fallisce se "oggi + N
+// giorni" cade il 29 febbraio in un anno che bisestile non è).
+describe('GET /api/dashboard/alert — compleanni (fix NaN giorni, 16/08/2026)', () => {
+  const PREFISSO = 'ZZZ_TEST_';
+  let ospiteTestId;
+  const GIORNI_ATTESI = 3;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const oggi = new Date();
+    const traNGiorni = new Date(oggi.getFullYear(), oggi.getMonth(), oggi.getDate() + GIORNI_ATTESI);
+    const dataNascitaTest = `2000-${String(traNGiorni.getMonth() + 1).padStart(2, '0')}-${String(traNGiorni.getDate()).padStart(2, '0')}`;
+    const r = await db.query(
+      `INSERT INTO ospiti (nome, cognome, data_nascita) VALUES ($1, $2, $3) RETURNING id`,
+      [`${PREFISSO}Mario`, `${PREFISSO}Compleanno`, dataNascitaTest]
+    );
+    ospiteTestId = r.rows[0].id;
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM ospiti WHERE id = $1', [ospiteTestId]);
+  });
+
+  // La lista compleanni dell'endpoint è LIMIT 5 (ordinata per giorni_mancanti
+  // ASC) — nell'ambiente di test/sviluppo l'anagrafica ospiti reale ha spesso
+  // già 5+ compleanni entro pochi giorni, quindi la riga sintetica di questo
+  // test può restare fuori dal taglio dei 5 anche se il calcolo è corretto.
+  // Per non dipendere dalla quantità di dati reali presenti, la correttezza
+  // del cast `::date` si verifica sulla query grezza (stessa di
+  // dashboardController.js, non limitata) sul singolo ospite di test; il
+  // giro sull'endpoint HTTP resta a verificare — su TUTTI i compleanni
+  // realmente restituiti, anche quelli reali — che il bug "NaN" non sia
+  // mai tornato, senza assumere quale specifica riga compaia nel taglio.
+  test('la query giorni_mancanti calcola un intero corretto, mai NaN (verifica diretta, non limitata)', async () => {
+    const db = getPool();
+    const r = await db.query(
+      `SELECT (gs.giorno::date - CURRENT_DATE) AS giorni_mancanti
+       FROM ospiti o
+       JOIN LATERAL generate_series(CURRENT_DATE, CURRENT_DATE + INTERVAL '7 days', INTERVAL '1 day') AS gs(giorno) ON true
+       WHERE o.id = $1
+         AND EXTRACT(MONTH FROM o.data_nascita) = EXTRACT(MONTH FROM gs.giorno)
+         AND EXTRACT(DAY FROM o.data_nascita) = EXTRACT(DAY FROM gs.giorno)`,
+      [ospiteTestId]
+    );
+    expect(r.rows).toHaveLength(1);
+    const giorni = Number(r.rows[0].giorni_mancanti);
+    expect(Number.isNaN(giorni)).toBe(false);
+    expect(giorni).toBe(GIORNI_ATTESI);
+  });
+
+  test('nessun alert di compleanno restituito dall\'endpoint contiene mai "NaN" nel testo', async () => {
+    const res = await request(app).get('/api/dashboard/alert').set(authHeader.titolare());
+    const alertCompleanni = res.body.alerts.filter(a => a.category === 'Clienti · Compleanni');
+    expect(alertCompleanni.length).toBeGreaterThan(0);
+    for (const a of alertCompleanni) {
+      expect(a.text).not.toMatch(/NaN/);
+    }
+  });
+});
+
+// ─── GET /api/dashboard/revenue — ADR/RevPAR/TRevPAR (16/08/2026) ──────────
+// Periodo di test: novembre 2099 (anno fittizio, come DATA_TEST in alto —
+// nessuna prenotazione reale può cadere nel 2099, isola completamente dai
+// dati di produzione). Tre soggiorni pensati per coprire i due casi che
+// contano davvero nella logica di proration:
+//   A) tutto dentro il periodo (5 notti, tariffa 500 → 100/notte)
+//   B) a cavallo tra ottobre e novembre (5 notti totali, ma solo 2 cadono
+//      nel periodo richiesto → verifica che il calcolo prorata per notte,
+//      non per prenotazione intera)
+//   C) cancellato (deve essere escluso, stessa condizione cancellato=false
+//      usata ovunque nel resto del progetto)
+// camereAttive non è noto a priori (dipende dai dati reali del DB), quindi
+// i test che dipendono da RevPAR/TRevPAR ricalcolano l'atteso a partire dal
+// `periodo.camereAttive` restituito dalla risposta stessa — stesso principio
+// dei test "strutturali" già usati per l'ordinamento degli alert sopra:
+// verificano la relazione interna, non un numero assoluto ignoto.
+describe('GET /api/dashboard/revenue', () => {
+  const MESE_INIZIO = '2099-11-01';
+  // NON 23 (= DATA_TEST in cima al file): il blocco POST /api/dashboard/incassi
+  // sopra registra un incasso proprio per DATA_TEST e lo ripulisce solo
+  // nell'afterAll di modulo (fine file), quindi resterebbe visibile qui e
+  // gonfierebbe ricavoTotale in modo silenzioso. Qualsiasi giorno del mese
+  // dopo la fine dei soggiorni di fixture (10) e prima del 23 va bene.
+  const MESE_FINE   = '2099-11-20';
+  const PREFISSO = 'ZZZ_TEST_';
+
+  let cameraId, ospiteId;
+  let prenotazioniIds = [], soggiorniIds = [];
+
+  beforeAll(async () => {
+    const db = getPool();
+    const cam = await db.query(
+      `INSERT INTO camere (numero, nome) VALUES ($1, 'Camera Test Dashboard Revenue') RETURNING id`,
+      [`${PREFISSO}REV`]
+    );
+    cameraId = cam.rows[0].id;
+    const osp = await db.query(
+      `INSERT INTO ospiti (nome, cognome) VALUES ($1, 'DashboardRevenue') RETURNING id`,
+      [`${PREFISSO}Prova`]
+    );
+    ospiteId = osp.rows[0].id;
+
+    async function creaSoggiorno(arrivo, partenza, tariffa, cancellato) {
+      const pren = await db.query(
+        `INSERT INTO prenotazioni (canale_origine, stato) VALUES ('diretta', 'confermata') RETURNING id`
+      );
+      prenotazioniIds.push(pren.rows[0].id);
+      const sog = await db.query(
+        `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti, tariffa_totale, cancellato)
+         VALUES ($1, $2, $3, $4, $5, 1, $6, $7) RETURNING id`,
+        [pren.rows[0].id, cameraId, ospiteId, arrivo, partenza, tariffa, cancellato]
+      );
+      soggiorniIds.push(sog.rows[0].id);
+    }
+
+    // A) tutto dentro novembre: 5 notti, 500 → 100/notte
+    await creaSoggiorno('2099-11-05', '2099-11-10', 500, false);
+    // B) a cavallo ottobre/novembre: 5 notti totali (29,30,31 ott + 1,2 nov),
+    // solo 2 cadono nel periodo richiesto → 250/5 = 50/notte, 2 notti = 100
+    await creaSoggiorno('2099-10-29', '2099-11-03', 250, false);
+    // C) cancellato: deve essere escluso anche se cade in pieno nel periodo
+    await creaSoggiorno('2099-11-06', '2099-11-08', 999, true);
+
+    await db.query(
+      `INSERT INTO incassi_giornalieri (data, contanti, pos) VALUES ($1, 300, 200), ($2, 400, 100)`,
+      ['2099-11-05', '2099-11-15']
+    );
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM soggiorni WHERE id = ANY($1::int[])', [soggiorniIds]);
+    await db.query('DELETE FROM prenotazioni WHERE id = ANY($1::int[])', [prenotazioniIds]);
+    await db.query('DELETE FROM camere WHERE id = $1', [cameraId]);
+    await db.query('DELETE FROM ospiti WHERE id = $1', [ospiteId]);
+    await db.query('DELETE FROM incassi_giornalieri WHERE data IN ($1, $2)', ['2099-11-05', '2099-11-15']);
+  });
+
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/dashboard/revenue');
+    expect(res.status).toBe(401);
+  });
+
+  test('accessibile a un ruolo non-gestione (stessa policy di kpi())', async () => {
+    const res = await request(app).get(`/api/dashboard/revenue?data=${MESE_FINE}`).set(authHeader.cameriere());
+    expect(res.status).toBe(200);
+  });
+
+  test('ADR prorata correttamente le notti a cavallo di mese, esclude i cancellati', async () => {
+    const res = await request(app).get(`/api/dashboard/revenue?data=${MESE_FINE}`).set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.periodo.inizio).toBe(MESE_INIZIO);
+    expect(res.body.periodo.fine).toBe(MESE_FINE);
+    // 5 notti (A) + 2 notti (B) = 7 camere-notte vendute; 500 + 100 = 600 di ricavo
+    expect(res.body.dettaglio.camereNotteVendute).toBe(7);
+    expect(res.body.dettaglio.ricavoCamere).toBeCloseTo(600, 2);
+    expect(res.body.adr.attuale).toBeCloseTo(600 / 7, 2);
+  });
+
+  test('RevPAR e TRevPAR sono coerenti con camereAttive e camereNotteDisponibili dichiarati in risposta', async () => {
+    const res = await request(app).get(`/api/dashboard/revenue?data=${MESE_FINE}`).set(authHeader.titolare());
+    const { periodo, dettaglio, revpar, trevpar } = res.body;
+    const camereNotteAttese = periodo.camereAttive * periodo.giorni;
+    expect(dettaglio.camereNotteDisponibili).toBe(camereNotteAttese);
+    expect(revpar.attuale).toBeCloseTo(dettaglio.ricavoCamere / camereNotteAttese, 2);
+    // Ricavo totale del periodo = 300+200+400+100 = 1000 (i due incassi_giornalieri di fixture)
+    expect(dettaglio.ricavoTotale).toBeCloseTo(1000, 2);
+    expect(trevpar.attuale).toBeCloseTo(1000 / camereNotteAttese, 2);
+  });
+
+  test('periodo senza alcun dato (2097, mai popolato) → adr null, revpar/trevpar 0, nessun errore', async () => {
+    const res = await request(app).get('/api/dashboard/revenue?data=2097-06-15').set(authHeader.titolare());
+    expect(res.status).toBe(200);
+    expect(res.body.adr.attuale).toBeNull();
+    expect(res.body.revpar.attuale).toBe(0);
+    expect(res.body.trevpar.attuale).toBe(0);
+  });
+
+  test('note.trevparFonte dichiara esplicitamente la fonte manuale (da sostituire a integrazione completata)', async () => {
+    const res = await request(app).get(`/api/dashboard/revenue?data=${MESE_FINE}`).set(authHeader.titolare());
+    expect(res.body.note.trevparFonte).toBe('manuale');
+    expect(res.body.note.camereDisponibiliApprossimate).toBe(true);
+  });
+});

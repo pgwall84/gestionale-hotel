@@ -98,6 +98,71 @@ describe('GET /api/camere', () => {
   });
 });
 
+// Manutenzione visibile in Stato Camere (16/08/2026, punto 2 evolutiva
+// dashboard) — segnalazioni_manutenzione aperte/in_lavorazione ora fanno
+// JOIN dentro lista() invece di essere visibili solo in /manutenzione e
+// nell'alert dashboard. Non filtrato per data: una segnalazione aperta è
+// rilevante indipendentemente dal giorno visualizzato in Stato Camere.
+describe('GET /api/camere — manutenzione aperta (16/08/2026)', () => {
+  const SUFFISSO = `_${Date.now().toString().slice(-6)}`;
+  let cameraTestId;
+  let segnalazioneId;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const r = await db.query(
+      `INSERT INTO camere (numero, nome) VALUES ($1, 'Camera Test Manutenzione') RETURNING id`,
+      [`MAN${SUFFISSO}`]
+    );
+    cameraTestId = r.rows[0].id;
+    const s = await db.query(
+      `INSERT INTO segnalazioni_manutenzione (luogo_tipo, camera_id, descrizione, priorita, stato, segnalato_da)
+       VALUES ('camera', $1, 'Rubinetto che perde', 'alta', 'aperta', 2) RETURNING id`,
+      [cameraTestId]
+    );
+    segnalazioneId = s.rows[0].id;
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM segnalazioni_manutenzione WHERE id = $1', [segnalazioneId]);
+    await db.query('DELETE FROM camere WHERE id = $1', [cameraTestId]);
+  });
+
+  test('la camera con segnalazione aperta ha manutenzione_priorita e manutenzione_descrizione', async () => {
+    const res = await request(app)
+      .get('/api/camere?tutte=true')
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const camera = res.body.camere.find(c => c.id === cameraTestId);
+    expect(camera).toBeDefined();
+    expect(camera.manutenzione_priorita).toBe('alta');
+    expect(camera.manutenzione_descrizione).toBe('Rubinetto che perde');
+  });
+
+  test('una camera senza segnalazioni aperte ha manutenzione_priorita null', async () => {
+    const res = await request(app)
+      .get('/api/camere')
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const altraCamera = res.body.camere.find(c => c.id !== cameraTestId);
+    expect(altraCamera).toBeDefined();
+    expect(altraCamera.manutenzione_priorita).toBeNull();
+  });
+
+  test('una segnalazione risolta non compare più in Stato Camere', async () => {
+    const db = getPool();
+    await db.query(`UPDATE segnalazioni_manutenzione SET stato = 'risolta' WHERE id = $1`, [segnalazioneId]);
+    const res = await request(app)
+      .get('/api/camere?tutte=true')
+      .set(authHeader.receptionist());
+    const camera = res.body.camere.find(c => c.id === cameraTestId);
+    expect(camera.manutenzione_priorita).toBeNull();
+    // Ripristina per non alterare gli altri test del blocco/afterAll
+    await db.query(`UPDATE segnalazioni_manutenzione SET stato = 'aperta' WHERE id = $1`, [segnalazioneId]);
+  });
+});
+
 // ─── GET /api/camere/oggi ─────────────────────────────────────────────────────
 
 describe('GET /api/camere/oggi', () => {
