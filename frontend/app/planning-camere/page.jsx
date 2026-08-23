@@ -4081,12 +4081,19 @@ export default function PaginaPlanningCamere() {
   return (
     <AppShell titolo="Prenotazioni camere" sottotitolo="Vista griglia / planning">
       <div className="space-y-3">
-        {/* Toggle vista + selettore range + navigazione */}
-        <div className="flex items-center justify-between flex-wrap gap-2">
-          <div className="flex items-center gap-2 flex-wrap">
+        {/* Toggle vista + selettore range + navigazione — mai a capo (bug
+            segnalato dal titolare 23/08/2026: con la vista 14 giorni la
+            riga si allargava abbastanza da mandare i pulsanti a capo,
+            finendo parzialmente sotto il resto della pagina). flex-nowrap
+            invece di flex-wrap: tutti i gruppi restano fissi (shrink-0),
+            solo il campo di ricerca si restringe per assorbire lo spazio
+            mancante — mai scorrimento orizzontale, su richiesta esplicita
+            del titolare. */}
+        <div className="flex items-center justify-between flex-nowrap gap-2">
+          <div className="flex items-center gap-2 flex-nowrap min-w-0">
             {/* Griglia/Elenco (14/08/2026) — stessa voce di sidebar, due modi
                 di consultare la stessa realtà, non una pagina nuova. */}
-            <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
+            <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white shrink-0">
               <button
                 onClick={() => setVista('griglia')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
@@ -4110,7 +4117,7 @@ export default function PaginaPlanningCamere() {
             </div>
 
             {vista === 'griglia' && (
-              <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
+              <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white shrink-0">
                 {RANGE_OPZIONI.map(opt => (
                   <button
                     key={opt.chiave}
@@ -4131,14 +4138,14 @@ export default function PaginaPlanningCamere() {
                 vedi corrispondeRicerca. Ambito diverso dalla lente globale
                 della Sidebar (navigazione, non filtro sui dati di questa pagina). */}
             {vista === 'griglia' && (
-              <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 bg-white">
-                <Search size={14} style={{ color: 'var(--muted-foreground)' }} />
+              <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 bg-white flex-1 min-w-[5rem]">
+                <Search size={14} className="shrink-0" style={{ color: 'var(--muted-foreground)' }} />
                 <input
                   type="text"
                   value={ricercaGriglia}
                   onChange={(e) => setRicercaGriglia(e.target.value)}
                   placeholder="Cerca ospite o camera..."
-                  className="text-xs outline-none w-40"
+                  className="text-xs outline-none w-full min-w-0"
                 />
                 {ricercaGriglia && (
                   <button onClick={() => setRicercaGriglia('')} style={{ color: 'var(--muted-foreground)' }}>
@@ -4150,7 +4157,7 @@ export default function PaginaPlanningCamere() {
           </div>
 
           {vista === 'griglia' && (
-            <div className="flex items-center gap-2">
+            <div className="flex items-center gap-2 shrink-0">
               <button onClick={vaiIndietro} className="p-1.5 rounded-lg border bg-white"><ChevronLeft size={16} /></button>
               <div className="min-w-32 text-center">
                 {/* Mese/anno aggiunto il 31/07/2026 — prima non c'era da nessuna
@@ -4166,7 +4173,7 @@ export default function PaginaPlanningCamere() {
             </div>
           )}
 
-          <div className="flex items-center gap-2">
+          <div className="flex items-center gap-2 shrink-0">
             {/* Esporta PDF (14/08/2026) — planning mensile o elenco
                 prenotazioni, indipendente dalla vista attiva (Griglia/
                 Elenco): un titolare in griglia può comunque voler
