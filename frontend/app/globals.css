@@ -40,6 +40,13 @@
   --status-graylight-text: #6B7280;
   --status-graydark-bg: #E2E4E8;
   --status-graydark-text: #374151;
+  /* Viola (23/08/2026) — aggiunto per "confermata" in STATI_COLORI di
+     planning-camere/page.jsx, nella revisione che separa il sistema colore
+     della prenotazione da quello della pulizia camera (vedi commento lì).
+     Unica tonalità non già occupata da un altro stato: verde=check-in,
+     ambra=opzione, blu=check-out, rosso=annullata. */
+  --status-violet-bg: #F1EAFB;
+  --status-violet-text: #6B3FA0;
 
   /* Tipografia */
   --font-primary: 'Inter', -apple-system, BlinkMacSystemFont, sans-serif;

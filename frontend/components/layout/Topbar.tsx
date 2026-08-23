@@ -3,7 +3,7 @@
 // Topbar — barra superiore con titolo pagina, data e azione primaria contestuale.
 // Altezza fissa 60px. Su mobile è nascosta (sostituita dalla bottom nav).
 
-import { Bell } from 'lucide-react';
+import { Bell, Search } from 'lucide-react';
 
 interface TopbarProps {
   titolo: string;          // Titolo della sezione corrente (es. "Personale")
@@ -11,9 +11,10 @@ interface TopbarProps {
   azioneLabel?: string;    // Testo del pulsante primario (es. "Nuovo dipendente")
   onAzione?: () => void;   // Callback del pulsante primario
   alertCount?: number;     // Numero alert da mostrare sul campanellino
+  onCercaClick?: () => void; // Apre RicercaGlobale (CMD+K, 23/08/2026)
 }
 
-export default function Topbar({ titolo, sottotitolo, azioneLabel, onAzione, alertCount = 0 }: TopbarProps) {
+export default function Topbar({ titolo, sottotitolo, azioneLabel, onAzione, alertCount = 0, onCercaClick }: TopbarProps) {
   // Data dinamica in italiano
   const oggi = new Date().toLocaleDateString('it-IT', {
     weekday: 'long', day: 'numeric', month: 'long', year: 'numeric',
@@ -21,7 +22,7 @@ export default function Topbar({ titolo, sottotitolo, azioneLabel, onAzione, ale
 
   return (
     <header
-      className="hidden md:flex items-center justify-between px-6 shrink-0"
+      className="hidden md:flex items-center justify-between px-6 shrink-0 relative"
       style={{
         height: 'var(--topbar-height)',
         background: 'var(--card)',
@@ -37,6 +38,22 @@ export default function Topbar({ titolo, sottotitolo, azioneLabel, onAzione, ale
           {sottotitolo ?? oggi}
         </p>
       </div>
+
+      {/* Centro: ricerca universale (CMD+K, 23/08/2026) — posizionata in
+          assoluto per restare davvero centrata rispetto all'intera barra,
+          indipendentemente da quanto sono larghi i blocchi sinistra/destra. */}
+      {onCercaClick && (
+        <button
+          onClick={onCercaClick}
+          className="absolute left-1/2 -translate-x-1/2 flex items-center gap-2 px-3 py-1.5 rounded-lg border text-xs transition-colors hover:bg-gray-50"
+          style={{ color: 'var(--muted-foreground)', width: '280px' }}
+          title="Ricerca universale"
+        >
+          <Search size={14} />
+          <span className="flex-1 text-left">Cerca ospite, camera, prenotazione...</span>
+          <kbd className="text-[10px] px-1.5 py-0.5 rounded border shrink-0">⌘K</kbd>
+        </button>
+      )}
 
       {/* Destra: campanella + pulsante azione primaria */}
       <div className="flex items-center gap-3">

@@ -80,6 +80,47 @@ testi editabili + Offerte (04/08).
   suite è salito da 33 (audit 22/08) a 34 — nessuna nuova suite segnalata
   esplicitamente in questa sessione, probabilmente solo un ricalcolo
   corretto, non un problema.
+- ✅ **Revisione colori planning-camere (23/08/2026, fatta in Cowork, non
+  nel tab Code) — CONFERMATA A VIDEO da Marco stesso giorno**:
+  `STATI_COLORI` (confermata→viola, check_out→blu, aggiunta
+  interrotta→rosso) e `PopupStatoCamera` (Fermata/Partenza→grigio neutro,
+  Pronta→verde) riscritti per separare il colore-stato-prenotazione dal
+  colore-stato-pulizia — dettaglio e motivazione in
+  `docs/DIARIO_SESSIONI.md`. Resta comunque solo `esbuild` come verifica
+  automatica (nessuna suite Jest dedicata ai colori, sono solo stile).
+- **Posizione fissa bottoni — pannello dettaglio prenotazione (23/08/2026,
+  fatta in Cowork, non nel tab Code)**: footer fisso in fondo al pannello
+  (primario a destra colore brand, annulla/distruttivo a sinistra),
+  condiviso tra modalità vista e modifica — dettaglio in
+  `docs/DIARIO_SESSIONI.md`. Solo `esbuild`, **zero verifica visiva**:
+  Marco deve controllare a video che ogni stato (opzione/confermata/
+  check-in/check-out/modifica) mostri il bottone giusto nel posto giusto.
+  Non toccati `PannelloCheckOut`/`ModalAssegnaGruppo`/
+  `ModalDettaglioGruppo` (bottoni ancora nel vecchio schema, in attesa
+  della decisione sui drawer annidati, vedi terzo pattern UI più sotto).
+
+## Pattern UI competitor — stato dei 4 punti (23/08/2026)
+
+Discussione con il titolare su 4 pattern UI dei PMS competitor. Ordine di
+lavoro deciso insieme, non tutti e 4 hanno la stessa priorità.
+
+1. Drawer laterale (pannello principale) — ✅ già così da prima di questa
+   discussione.
+2. Posizione fissa bottoni — ✅ fatto oggi sul pannello principale, vedi
+   riga sopra in "Verifiche pendenti".
+3. ✅ Drawer coerenti sui pannelli annidati — **fatto oggi** dopo il
+   mockup: `PannelloCheckOut`/`ModalAssegnaGruppo`/`ModalDettaglioGruppo`
+   ora drawer da destra come il pannello principale (dettaglio in
+   `docs/DIARIO_SESSIONI.md`). Solo `esbuild`, **zero verifica visiva**.
+4. ✅ CMD+K (ricerca universale) — **fatto oggi**. Nuovo endpoint
+   `GET /api/ricerca?q=` (ospiti/camere/prenotazioni, non "fatture" —
+   modulo non costruito), componente `RicercaGlobale.tsx` montato in
+   `AppShell`, apribile da `Cmd+K`/`Ctrl+K` o dal pulsante centrato in
+   Topbar. Dettaglio completo in `docs/DIARIO_SESSIONI.md`. **Verifica
+   più debole di oggi**: solo `node -c`/`esbuild`, **le query SQL nuove
+   non sono mai state eseguite contro Postgres reale** (nessun accesso DB
+   da questo ambiente) — è il punto con più rischio residuo dei quattro,
+   va testato per primo.
 
 ## Decisioni in sospeso da Marco (nessun blocco tecnico, solo sua scelta)
 

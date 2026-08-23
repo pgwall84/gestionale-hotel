@@ -21,6 +21,7 @@ const magazzinoRoutes    = require('./routes/magazzino');
 const archivioRoutes     = require('./routes/archivio');
 const ospitiRoutes       = require('./routes/ospiti');
 const prenotazioniRoutes = require('./routes/prenotazioni');
+const ricercaRoutes      = require('./routes/ricerca'); // CMD+K, 23/08/2026
 const soggiorniRoutes    = require('./routes/soggiorni');
 const gruppiRoutes       = require('./routes/gruppi');
 const tipiCameraRoutes   = require('./routes/tipiCamera');
@@ -110,6 +111,7 @@ app.use('/api/magazzino', magazzinoRoutes);
 app.use('/api/archivio', archivioRoutes);
 app.use('/api/ospiti',   ospitiRoutes);
 app.use('/api/prenotazioni', prenotazioniRoutes);
+app.use('/api/ricerca',      ricercaRoutes); // CMD+K, 23/08/2026
 app.use('/api/soggiorni',    soggiorniRoutes);
 app.use('/api/gruppi',       gruppiRoutes);
 app.use('/api/tipi-camera',  tipiCameraRoutes);

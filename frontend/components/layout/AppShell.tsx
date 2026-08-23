@@ -7,11 +7,12 @@
 // Wrappato con dynamic ssr:false per garantire idratazione corretta su IP locale.
 
 import dynamic from 'next/dynamic';
-import { useEffect } from 'react';
+import { useEffect, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useAuth } from '@/context/AuthContext';
 import Sidebar from './Sidebar';
 import Topbar from './Topbar';
+import RicercaGlobale from '../ui/RicercaGlobale';
 
 interface AppShellProps {
   children: React.ReactNode;
@@ -32,6 +33,25 @@ function AppShellInner({ children, titolo, sottotitolo, azioneLabel, onAzione, a
       router.replace('/login');
     }
   }, [utente, loading, router]);
+
+  // Ricerca universale (CMD+K, 23/08/2026) — stato posseduto qui, non da
+  // RicercaGlobale né da Topbar: un solo componente controllato, apribile
+  // sia dal pulsante in Topbar sia da tastiera da qualunque pagina (il
+  // listener è globale su window, non richiede che un campo abbia il
+  // focus). Montato una sola volta per tutta l'app, dentro AppShell.
+  const [ricercaAperta, setRicercaAperta] = useState(false);
+  useEffect(() => {
+    function onKeyDown(e: KeyboardEvent) {
+      if ((e.metaKey || e.ctrlKey) && e.key.toLowerCase() === 'k') {
+        e.preventDefault();
+        setRicercaAperta(true);
+      } else if (e.key === 'Escape') {
+        setRicercaAperta(false);
+      }
+    }
+    window.addEventListener('keydown', onKeyDown);
+    return () => window.removeEventListener('keydown', onKeyDown);
+  }, []);
 
   if (loading) {
     return (
@@ -59,7 +79,12 @@ function AppShellInner({ children, titolo, sottotitolo, azioneLabel, onAzione, a
           azioneLabel={azioneLabel}
           onAzione={onAzione}
           alertCount={alertCount}
+          onCercaClick={() => setRicercaAperta(true)}
         />
+
+        {/* Ricerca universale (CMD+K, 23/08/2026) — componente controllato,
+            vedi stato ricercaAperta sopra. */}
+        <RicercaGlobale aperta={ricercaAperta} onChiudi={() => setRicercaAperta(false)} />
 
         {/* Contenuto principale con scroll */}
         <main

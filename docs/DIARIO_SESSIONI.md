@@ -5161,3 +5161,190 @@ completa. **gestionale-hotel: 34/34 suite, 952/952 test verdi**, fix
 cleanup FK applicato, commit `5892dd9` su `main`. **sito-hotel**: nessuna
 suite di test in questo repo, commit `a08e842` su `master`. Entrambi
 pushati. Nessuna regressione.
+
+### Revisione colori planning-camere — due sistemi separati (23/08/2026)
+
+Discussione con il titolare su 4 pattern UI usati dai competitor PMS
+(drawer laterale, posizione fissa bottoni, colori di stato universali,
+ricerca CMD+K). Sul punto colori, verifica su Mews/Cloudbeds/StayNTouch
+(ricerca web) ha confermato che i PMS leader tengono **due sistemi colore
+separati**: stato prenotazione vs. stato pulizia/housekeeping della camera,
+mai la stessa palette. Verificato poi nel codice esistente che il
+gestionale aveva già in parte questa separazione (la "scopetta" sulla riga
+camera è un canale a sé) ma con due bug concreti trovati leggendo
+`planning-camere/page.jsx`:
+1. `STATI_COLORI` (stato prenotazione) usava blu sia per `confermata` che
+   concettualmente in conflitto con la richiesta del titolare di riservare
+   il blu a check-out; `interrotta` (prenotazione annullata) non aveva
+   affatto una voce — ogni lookup ricadeva su `STATI_COLORI.opzione`
+   (fallback), mostrando una prenotazione annullata come "Opzione" ambra
+   ovunque comparisse in una lista che non la filtra prima (es. tabella
+   ricerca).
+2. Dentro `PopupStatoCamera` (il popup che apre la scopetta), "Fermata"
+   era verde e "Partenza" era rosso — le stesse identiche tinte usate un
+   click prima dalla scopetta per "pulita"/"da pulire", ma con un
+   significato completamente diverso (occupazione, non pulizia). Il
+   toggle "Pronta" nello stesso popup era blu, diverso ancora dal verde
+   della scopetta per lo stesso identico stato.
+
+**Corretto (23/08/2026, in Cowork — non nel tab Code)**:
+- `globals.css`: nuovo token `--status-violet-bg`/`--status-violet-text`
+  (uniche tonalità libere nella palette esistente).
+- `STATI_COLORI` in `planning-camere/page.jsx`: `confermata` → viola
+  (era blu), `check_out` → blu (era grigio chiaro, nessun significato),
+  aggiunta `interrotta` → rosso (mancava del tutto). `opzione` (ambra) e
+  `check_in` (verde) invariati — già coerenti con la richiesta del
+  titolare. `chiusa` invariata (grigio scuro neutro, nessuna richiesta
+  esplicita su questo stato).
+- `PopupStatoCamera`: "Fermata"/"Partenza" → grigio neutro (erano
+  verde/rosso, in conflitto con "Pronta"); "Pronta" → verde (era blu),
+  ora allineata alla scopetta sulla riga camera. Risultato: nell'intera
+  pagina il colore è ora riservato esclusivamente allo stato pulizia in
+  questo popup/scopetta, mai riusato per altro.
+
+**Verifica e limiti**: come per le sessioni precedenti da questo ambiente,
+solo `esbuild --jsx=automatic` sul file `.jsx` toccato (sintassi/JSX, non
+type-checking né logica) — **nessun accesso al database, nessuna
+esecuzione della suite Jest, nessuna verifica visiva a schermo**. Marco/
+tab Code deve confermare a video che i 6 stati del planning si vedano
+come previsto e che la scopetta+popup camera restino leggibili. Non
+toccata la pagina `/prenotazioni` (prenotazioni RISTORANTE, non camere —
+ha un proprio `STATI_BADGE` indipendente con stati diversi: confermata/
+in_attesa/completata/cancellata — verificato che non condivide codice con
+`STATI_COLORI` di planning-camere, nessuna modifica necessaria lì).
+Ambito volutamente limitato a `/planning-camere`, non propagato ad altre
+pagine del gestionale (decisione presa nella stessa sessione, vedi sopra
+la discussione sui 4 pattern UI).
+
+**Confermato a video da Marco stesso giorno.**
+
+### Posizione fissa bottoni — pannello dettaglio prenotazione (23/08/2026)
+
+Secondo dei 4 pattern UI discussi. Il pannello dettaglio prenotazione in
+`planning-camere/page.jsx` aveva i bottoni di azione dentro il flusso
+scrollabile del contenuto, in due punti diversi (riga bottoni modalità
+vista, riga bottoni modalità modifica), tutti con lo stesso peso visivo
+(`flex-1`), nessuna posizione fissa.
+
+**Fatto (in Cowork, non nel tab Code)**:
+- Il pannello (`h-full w-full max-w-md ... overflow-y-auto`) diventa
+  `flex flex-col`: solo il corpo (`flex-1 overflow-y-auto`) scorre ora,
+  header e footer restano sempre visibili.
+- Nuovo footer fisso in fondo al pannello, fuori dall'area scrollabile,
+  condiviso tra modalità vista e modalità modifica (prima due gruppi di
+  bottoni separati nel contenuto): sinistra = Annulla/distruttivo
+  (Annulla prenotazione in vista, Annulla in modifica), destra = azione
+  primaria colore brand navy/ambra (Conferma prenotazione / Check-in /
+  Check-out / Salva, a seconda dello stato — mai più di una visibile
+  insieme, sono stadi mutuamente esclusivi del ciclo vita prenotazione),
+  con "Modifica" come bottone secondario subito a sinistra della
+  primaria. Nessuna logica di stato toccata, solo dove/come i bottoni
+  esistenti vengono renderizzati.
+
+**Non toccato in questo passaggio**: `PannelloCheckOut`,
+`ModalAssegnaGruppo`, `ModalDettaglioGruppo` restano con i bottoni nel
+vecchio schema — decisione di aspettare l'esito della discussione sui
+drawer annidati (vedi sotto) prima di rifare anche il loro footer, per
+non toccare due volte lo stesso codice.
+
+**Verifica e limiti**: solo `esbuild --jsx=automatic` (sintassi/JSX),
+rilettura manuale della porzione modificata per controllare che apertura/
+chiusura dei tag tornasse — **nessuna esecuzione della suite Jest,
+nessuna verifica visiva a schermo da questo ambiente**. Marco/tab Code
+deve verificare a video che il footer resti leggibile e che tutti gli
+stati (opzione/confermata/check-in/check-out/modifica) mostrino il
+bottone giusto nel posto giusto.
+
+### Mockup per drawer annidati — in attesa di decisione (23/08/2026)
+
+Terzo pattern (drawer coerenti sui pannelli annidati: assegna gruppo,
+dettaglio gruppo, check-out — oggi modal centrati) non ancora deciso.
+Marco ha chiesto un mockup prima di scegliere — consegnato come file HTML
+a parte (non nel repo, materiale di decisione, non codice), confronto
+visivo "come è ora" (modal centrato) vs "come diventerebbe" (drawer da
+destra) usando l'esempio "Assegna a un gruppo".
+
+**Deciso da Marco dopo il mockup: sì, convertire.** Fatto nella stessa
+sessione (23/08/2026, in Cowork, non nel tab Code):
+- `PannelloCheckOut`: da modal centrato a drawer da destra, stesso schema
+  del pannello principale (`flex flex-col`, corpo scrollabile, footer
+  fisso). "Stampa ricevuta di cortesia" resta nel corpo (azione
+  ausiliaria, non primaria/distruttiva); "Conferma check-out"/"Annulla"
+  spostati nel footer fisso (primaria a destra, annulla a sinistra) —
+  bonus non richiesto esplicitamente ma coerente col secondo pattern
+  (posizione fissa bottoni) già fatto sullo stesso file.
+- `ModalAssegnaGruppo`: da modal centrato a drawer da destra. Nessun
+  footer con azione primaria aggiunto: l'assegnazione avviene cliccando
+  direttamente una riga risultato, non c'è un singolo "Conferma" da
+  fissare in basso — il mini-form "Nuovo gruppo" interno resta dov'era.
+- `ModalDettaglioGruppo`: da modal centrato a drawer da destra. Stesso
+  discorso: due form interni indipendenti (pagamento, aggiungi camera),
+  ognuno col proprio bottone — nessun footer unico applicabile qui.
+
+**Verifica e limiti**: solo `esbuild --jsx=automatic` sui 3 componenti
+(sintassi/JSX), rilettura manuale delle porzioni modificate — **nessuna
+suite Jest, nessuna verifica visiva a schermo**. Marco/tab Code deve
+controllare a video che i 3 pannelli si aprano coerenti col principale e
+che lo stacking (z-50/z-[60], un drawer sopra l'altro se aperti insieme)
+resti leggibile.
+
+### CMD+K — ricerca universale (23/08/2026)
+
+Quarto e ultimo pattern discusso. Ambito deciso in chat: ospiti, camere,
+prenotazioni (non "fatture", modulo fatturazione non ancora costruito).
+Richiedeva backend nuovo — verificato prima di scrivere codice che
+`GET /api/ospiti?search=` (query multi-parola nome/cognome,
+`anagraficaOspitiController.lista`) e `GET /api/prenotazioni?ricerca=`
+(nome ospite o numero camera, `prenotazioniController.lista`) esistevano
+già e sono riusabili; `camere` non aveva ricerca (tabella piccola, ~20
+righe, ILIKE diretto sufficiente).
+
+**Fatto (in Cowork, non nel tab Code)**:
+- `backend/controllers/ricercaController.js` (nuovo) — aggrega ospiti/
+  camere/prenotazioni in 3 query parallele (`Promise.all`), limite 5 per
+  categoria (è un menu a tendina, non una lista paginata). Nessuna logica
+  di ricerca reinventata, stesso pattern ILIKE già in uso altrove.
+- `backend/routes/ricerca.js` (nuovo) — `GET /api/ricerca?q=`, permesso
+  `richiedeAzione('prenotazioni', 'lettura')` (stessi ruoli di
+  `ospiti.lettura` in `shared/ruoli.js`: admin/titolare/receptionist/
+  portiere_notte; `camere` non ha un permesso di lettura dedicato, già
+  aperta a chiunque autenticato).
+- `backend/app.js` — montata `/api/ricerca`.
+- `frontend/components/ui/RicercaGlobale.tsx` (nuovo) — palette stile
+  Spotlight, componente controllato (stato posseduto da `AppShell`, non
+  da sé stesso), tre gruppi di risultati con icona e navigazione: ospite
+  → `/clienti/:id`, camera/prenotazione → `/planning-camere?ricerca=...`.
+- `frontend/components/layout/AppShell.tsx` — possiede lo stato
+  `ricercaAperta`, listener globale `Cmd+K`/`Ctrl+K`/`Escape` su
+  `window` (funziona da qualunque pagina, non richiede focus su un
+  campo), monta `RicercaGlobale` una sola volta per tutta l'app.
+- `frontend/components/layout/Topbar.tsx` — nuovo pulsante-pillola
+  centrato ("in alto al centro", richiesta esplicita del titolare),
+  posizionato in assoluto per restare centrato rispetto all'intera barra
+  indipendentemente da titolo/pulsante azione ai lati.
+- `frontend/app/planning-camere/page.jsx` — la griglia leggeva già
+  `?gruppo=` da URL ma NON `?ricerca=`: senza questa aggiunta, i
+  risultati "camera"/"prenotazione" di CMD+K avrebbero navigato sulla
+  pagina senza applicare davvero il filtro. Aggiunto un `useEffect` che
+  prefilla `ricercaGriglia` da `searchParams.get('ricerca')` una sola
+  volta all'apertura (stesso pattern già in uso per `?gruppo=`).
+
+**Icone verificate prima dell'uso** (non date per scontate): `Search` e
+`BedDouble` confermati già in uso in `Sidebar.tsx` in questa esatta
+versione di `lucide-react` (`^1.21.0`); `CalendarCheck` NON risultava
+usato da nessuna parte nel repo — sostituito con `CalendarDays`
+(confermato in uso) per non rischiare un import di un'icona inesistente
+in questa versione del pacchetto, non verificabile da questo ambiente
+(niente `node_modules` staged, nessun modo di eseguire davvero il build).
+
+**Verifica e limiti**: solo `node -c` (backend) ed `esbuild --jsx=automatic`
+(frontend) — sintassi, non type-checking, non logica. **Nessun accesso al
+database dal container Cowork: le query SQL nuove in
+`ricercaController.js` non sono state eseguite contro Postgres reale**,
+solo scritte riusando colonne/pattern verificati leggendo il codice
+esistente (`c.attivo`, non `c.attiva` — verificato leggendo
+`camereController.js` riga per riga prima di scrivere la query, non
+assunto). **Nessuna verifica visiva**: Marco/tab Code deve testare
+davvero la ricerca (endpoint + tasto CMD+K + click su un risultato) prima
+di considerarla chiusa — è il pattern con più superficie nuova toccata
+oggi (nuovo endpoint mai eseguito, mai nessun test scritto per esso).

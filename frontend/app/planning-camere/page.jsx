@@ -46,12 +46,30 @@ const RUOLI_TRASCINA = ['admin', 'titolare', 'receptionist'];
 // nella pagina /camere dedicata, non ha accesso a questa griglia).
 const RUOLI_GESTIONE_CAMERE = ['admin', 'titolare', 'receptionist', 'portiere_notte'];
 
+// Revisione colori (23/08/2026) — due sistemi separati: questo mappa lo
+// STATO PRENOTAZIONE (badge pieno bg+text), l'altro è quello della scopetta/
+// PopupStatoCamera più sotto (stato pulizia camera, sempre e solo icona/pill
+// pieno, mai badge bg+text come qui, per restare visivamente distinguibile
+// a colpo d'occhio). Non condividere tonalità tra i due sistemi.
+// - confermata: prima condivideva il blu con "check-out" — ora viola,
+//   l'unica tonalità libera (verde=check-in, ambra=opzione, blu=check-out,
+//   rosso=annullata).
+// - check_out: prima grigio chiaro (nessun significato funzionale) — ora
+//   blu, coerente con la richiesta esplicita del titolare.
+// - interrotta: MANCAVA del tutto — ogni lookup ricadeva silenziosamente
+//   su STATI_COLORI.opzione (vedi `|| STATI_COLORI.opzione` sotto), quindi
+//   una prenotazione annullata veniva mostrata come "Opzione" ambra ovunque
+//   comparisse in una lista che non filtra 'interrotta' (es. tabella
+//   ricerca più sotto). Aggiunta come voce propria, rosso.
+// - chiusa: invariata, grigio scuro neutro — nessuna richiesta esplicita
+//   su questo stato, non equivale a "annullata".
 const STATI_COLORI = {
-  opzione:    { bg: 'var(--status-amber-bg)',     text: 'var(--status-amber-text)',     label: 'Opzione' },
-  confermata: { bg: 'var(--status-blue-bg)',      text: 'var(--status-blue-text)',      label: 'Confermata' },
-  check_in:   { bg: 'var(--status-green-bg)',     text: 'var(--status-green-text)',     label: 'Check-in' },
-  check_out:  { bg: 'var(--status-graylight-bg)', text: 'var(--status-graylight-text)', label: 'Check-out' },
-  chiusa:     { bg: 'var(--status-graydark-bg)',  text: 'var(--status-graydark-text)',  label: 'Chiusa' },
+  opzione:    { bg: 'var(--status-amber-bg)',  text: 'var(--status-amber-text)',  label: 'Opzione' },
+  confermata: { bg: 'var(--status-violet-bg)', text: 'var(--status-violet-text)', label: 'Confermata' },
+  check_in:   { bg: 'var(--status-green-bg)',  text: 'var(--status-green-text)',  label: 'Check-in' },
+  check_out:  { bg: 'var(--status-blue-bg)',   text: 'var(--status-blue-text)',   label: 'Check-out' },
+  chiusa:     { bg: 'var(--status-graydark-bg)', text: 'var(--status-graydark-text)', label: 'Chiusa' },
+  interrotta: { bg: 'var(--status-red-bg)',    text: 'var(--status-red-text)',    label: 'Annullata' },
 };
 
 // Trattamento (Modulo tariffe derivate, 20/08/2026) — nessuna etichetta per
@@ -739,7 +757,7 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     <>
     <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
       <div
-        className="h-full w-full max-w-md bg-white shadow-xl overflow-y-auto"
+        className="h-full w-full max-w-md bg-white shadow-xl flex flex-col"
         onClick={(e) => e.stopPropagation()}
       >
         <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
@@ -749,7 +767,11 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
           </button>
         </div>
 
-        <div className="p-4">
+        {/* Corpo scrollabile (23/08/2026, revisione posizione bottoni) —
+            prima l'intero pannello scorreva insieme all'header; ora solo
+            questa area scorre, header e footer bottoni restano sempre
+            visibili. */}
+        <div className="flex-1 overflow-y-auto p-4">
           {loading && (
             <div className="flex items-center justify-center py-10 text-sm" style={{ color: 'var(--muted-foreground)' }}>
               <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
@@ -1012,57 +1034,10 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                   condiviso con PannelloCheckOut — vedi RiepilogoEconomico. */}
               {puoVedereConto && <RiepilogoEconomico conto={conto} contoErrore={contoErrore} />}
 
-              <div className="flex gap-2 pt-2">
-                {puoConfermare && (
-                  <button
-                    onClick={confermaPrenotazione}
-                    disabled={salvataggio}
-                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
-                    style={{ background: 'var(--hotel-navy)' }}
-                  >
-                    Conferma prenotazione
-                  </button>
-                )}
-                {dati.stato === 'confermata' && puoCheckIn && (
-                  <button
-                    onClick={fasiCheckIn}
-                    disabled={salvataggio}
-                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
-                    style={{ background: 'var(--hotel-navy)' }}
-                  >
-                    Check-in
-                  </button>
-                )}
-                {puoCheckOut && (
-                  <button
-                    onClick={() => setMostraCheckOut(true)}
-                    disabled={salvataggio}
-                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
-                    style={{ background: 'var(--hotel-navy)' }}
-                  >
-                    Check-out
-                  </button>
-                )}
-                {puoScrivere && (
-                  <button
-                    onClick={apriModifica}
-                    className="flex-1 rounded-lg py-2 text-sm font-medium border flex items-center justify-center gap-1.5"
-                  >
-                    <Pencil size={14} /> Modifica
-                  </button>
-                )}
-              </div>
-
-              {puoAnnullare && (
-                <button
-                  onClick={annullaPrenotazione}
-                  disabled={salvataggio}
-                  className="w-full rounded-lg py-2 text-sm font-medium border flex items-center justify-center gap-1.5"
-                  style={{ color: 'var(--status-red-text)', borderColor: 'var(--status-red-text)' }}
-                >
-                  <X size={14} /> Annulla prenotazione
-                </button>
-              )}
+              {/* Bottoni Conferma/Check-in/Check-out/Modifica/Annulla
+                  spostati nel footer fisso del pannello (23/08/2026,
+                  revisione posizione bottoni) — non più qui nel flusso
+                  scrollabile. Vedi footer dopo la chiusura di questo div. */}
 
               {puoScrivere && (
                 <div className="space-y-1.5">
@@ -1174,22 +1149,90 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                           onChange={(e) => setForm(f => ({ ...f, note: e.target.value }))}
                           className="w-full border rounded-lg px-2 py-1.5 text-sm" />
               </div>
-              <div className="flex gap-2 pt-2">
+              {/* Bottoni Salva/Annulla spostati nel footer fisso qui sotto
+                  (23/08/2026, revisione posizione bottoni). */}
+            </div>
+          )}
+        </div>
+
+        {/* Footer fisso (23/08/2026, revisione posizione bottoni) — fuori
+            dall'area scrollabile sopra, sempre nella stessa posizione.
+            Sinistra: annulla/distruttivo. Destra: azione primaria (colore
+            brand), sempre il bottone più a destra di tutti. Un solo footer
+            condiviso tra modalità vista e modalità modifica — prima erano
+            due gruppi di bottoni distinti, in punti diversi del contenuto
+            scrollabile, senza posizione fissa. */}
+        {dati && !loading && (
+          <div className="shrink-0 border-t px-4 py-3 flex items-center justify-between gap-2 bg-white">
+            <div>
+              {!inModifica && puoAnnullare && (
+                <button
+                  onClick={annullaPrenotazione}
+                  disabled={salvataggio}
+                  className="rounded-lg px-3 py-2 text-sm font-medium border flex items-center gap-1.5"
+                  style={{ color: 'var(--status-red-text)', borderColor: 'var(--status-red-text)' }}
+                >
+                  <X size={14} /> Annulla prenotazione
+                </button>
+              )}
+              {inModifica && (
+                <button onClick={() => setInModifica(false)} className="rounded-lg px-4 py-2 text-sm font-medium border">
+                  Annulla
+                </button>
+              )}
+            </div>
+            <div className="flex items-center gap-2">
+              {!inModifica && puoScrivere && (
+                <button
+                  onClick={apriModifica}
+                  className="rounded-lg px-4 py-2 text-sm font-medium border flex items-center gap-1.5"
+                >
+                  <Pencil size={14} /> Modifica
+                </button>
+              )}
+              {!inModifica && puoConfermare && (
+                <button
+                  onClick={confermaPrenotazione}
+                  disabled={salvataggio}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ background: 'var(--hotel-navy)' }}
+                >
+                  Conferma prenotazione
+                </button>
+              )}
+              {!inModifica && dati.stato === 'confermata' && puoCheckIn && (
+                <button
+                  onClick={fasiCheckIn}
+                  disabled={salvataggio}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ background: 'var(--hotel-navy)' }}
+                >
+                  Check-in
+                </button>
+              )}
+              {!inModifica && puoCheckOut && (
+                <button
+                  onClick={() => setMostraCheckOut(true)}
+                  disabled={salvataggio}
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
+                  style={{ background: 'var(--hotel-navy)' }}
+                >
+                  Check-out
+                </button>
+              )}
+              {inModifica && (
                 <button
                   onClick={salvaModifica}
                   disabled={salvataggio}
-                  className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
+                  className="rounded-lg px-4 py-2 text-sm font-medium text-white"
                   style={{ background: 'var(--hotel-amber)' }}
                 >
                   {salvataggio ? 'Salvataggio...' : 'Salva'}
                 </button>
-                <button onClick={() => setInModifica(false)} className="flex-1 rounded-lg py-2 text-sm font-medium border">
-                  Annulla
-                </button>
-              </div>
+              )}
             </div>
-          )}
-        </div>
+          </div>
+        )}
       </div>
     </div>
 
@@ -1338,8 +1381,12 @@ function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
   const intestatario = soggiorno?.ospiti?.find(o => ['16', '17', '18'].includes(o.tipo_alloggiato)) || soggiorno?.ospiti?.[0];
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.5)' }}>
-      <div className="bg-white rounded-lg shadow-xl w-full max-w-md max-h-[90vh] overflow-y-auto">
+    // Drawer da destra (23/08/2026, revisione pannelli annidati) — era un
+    // modal centrato, ora coerente col pannello dettaglio prenotazione
+    // dietro (stesso bordo destro), non più un riquadro che salta al
+    // centro dello schermo. Vedi mockup discusso con il titolare.
+    <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="h-full w-full max-w-md bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
           <p className="font-semibold text-sm">Check-out</p>
           <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
@@ -1347,7 +1394,7 @@ function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
           </button>
         </div>
 
-        <div className="p-4 space-y-4">
+        <div className="flex-1 overflow-y-auto p-4 space-y-4">
           {loading && (
             <div className="flex items-center justify-center py-10 text-sm" style={{ color: 'var(--muted-foreground)' }}>
               <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
@@ -1445,22 +1492,26 @@ function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
               >
                 <Printer size={14} /> Stampa ricevuta di cortesia
               </button>
-
-              <div className="flex gap-2">
-                <button
-                  onClick={confermaCheckOut} disabled={salvataggio}
-                  className="flex-1 rounded-lg py-2 text-sm font-medium text-white disabled:opacity-60"
-                  style={{ background: 'var(--hotel-navy)' }}
-                >
-                  {salvataggio ? 'Conferma in corso...' : 'Conferma check-out'}
-                </button>
-                <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">
-                  Annulla
-                </button>
-              </div>
+              {/* Conferma/Annulla spostati nel footer fisso qui sotto
+                  (23/08/2026, revisione posizione bottoni). */}
             </>
           )}
         </div>
+
+        {dati && !loading && (
+          <div className="shrink-0 border-t px-4 py-3 flex items-center justify-between gap-2 bg-white">
+            <button onClick={onChiudi} className="rounded-lg px-4 py-2 text-sm font-medium border">
+              Annulla
+            </button>
+            <button
+              onClick={confermaCheckOut} disabled={salvataggio}
+              className="rounded-lg px-4 py-2 text-sm font-medium text-white disabled:opacity-60"
+              style={{ background: 'var(--hotel-navy)' }}
+            >
+              {salvataggio ? 'Conferma in corso...' : 'Conferma check-out'}
+            </button>
+          </div>
+        )}
       </div>
     </div>
   );
@@ -1522,13 +1573,18 @@ function ModalAssegnaGruppo({ prenotazioneId, onChiudi, onAssegnato }) {
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
-      <div className="w-full max-w-sm bg-white rounded-xl shadow-xl max-h-[85vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    // Drawer da destra (23/08/2026, revisione pannelli annidati) — era un
+    // modal centrato. Nessun footer con azione primaria qui: l'assegnazione
+    // avviene cliccando direttamente una riga risultato, non c'è un singolo
+    // "Conferma" da fissare in basso — il pattern posizione-fissa-bottoni
+    // si applica solo al mini-form "Nuovo gruppo" più sotto, dove resta.
+    <div className="fixed inset-0 z-[60] flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="h-full w-full max-w-sm bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
           <p className="font-semibold text-sm">Assegna a un gruppo</p>
           <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
         </div>
-        <div className="p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {errore && (
             <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
                  style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
@@ -1794,8 +1850,13 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
   }
 
   return (
-    <div className="fixed inset-0 z-[60] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
-      <div className="w-full max-w-md bg-white rounded-xl shadow-xl max-h-[90vh] overflow-y-auto" onClick={(e) => e.stopPropagation()}>
+    // Drawer da destra (23/08/2026, revisione pannelli annidati) — era un
+    // modal centrato. Nessun footer con azione primaria unica qui: ha due
+    // form interni indipendenti (pagamento, aggiungi camera), ognuno col
+    // proprio bottone di submit — non un singolo "Conferma" da fissare in
+    // basso, li lascio dove sono.
+    <div className="fixed inset-0 z-[60] flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="h-full w-full max-w-md bg-white shadow-xl flex flex-col" onClick={(e) => e.stopPropagation()}>
         <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
           <div>
             <p className="font-semibold text-sm">{dati?.nome || 'Gruppo'}</p>
@@ -1808,7 +1869,7 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
           <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
         </div>
 
-        <div className="p-4 space-y-3">
+        <div className="flex-1 overflow-y-auto p-4 space-y-3">
           {loading && (
             <div className="flex items-center justify-center py-10 text-sm" style={{ color: 'var(--muted-foreground)' }}>
               <Loader2 size={18} className="animate-spin mr-2" /> Caricamento...
@@ -3235,28 +3296,39 @@ function PopupStatoCamera({ camera, statoOggi, onChiudi, onSalvato }) {
             </div>
           )}
 
-          {/* Sola lettura — calcolate da soggiorni (modulo 5.1), non più toggle */}
+          {/* Sola lettura — calcolate da soggiorni (modulo 5.1), non più toggle.
+              Revisione colori (23/08/2026): Fermata/Partenza sono contesto
+              occupazione (arriva/riparte oggi), non stato di pulizia — prima
+              usavano verde/rosso, esattamente le stesse tinte del toggle
+              "Pronta" qui sotto e della scopetta sulla riga camera, con
+              significati diversi (verde = "il cliente resta" qui, ma
+              verde = "camera pulita" nell'icona a un click di distanza).
+              Ora neutre (grigio), il colore resta riservato solo allo stato
+              di pulizia in questo popup. */}
           <div className="flex gap-2">
             <div className="flex-1 py-2 rounded-lg text-xs font-medium border text-center"
                  style={{
-                   background: arrivo ? 'var(--status-green-text)' : 'var(--background)',
+                   background: arrivo ? 'var(--status-graydark-text)' : 'var(--background)',
                    color: arrivo ? 'white' : 'var(--muted-foreground)',
                  }}>
               Fermata
             </div>
             <div className="flex-1 py-2 rounded-lg text-xs font-medium border text-center"
                  style={{
-                   background: partenza ? 'var(--status-red-text)' : 'var(--background)',
+                   background: partenza ? 'var(--status-graydark-text)' : 'var(--background)',
                    color: partenza ? 'white' : 'var(--muted-foreground)',
                  }}>
               Partenza
             </div>
           </div>
 
+          {/* Pronta: ora verde (era blu) — allineata alla scopetta sulla riga
+              camera (verde = pronta, rosso = da pulire), stessa fonte unica
+              di significato per lo stato di pulizia in tutta la pagina. */}
           <button type="button" onClick={() => setPronta(p => !p)}
                   className="w-full py-2 rounded-lg text-xs font-medium border flex items-center justify-center gap-1.5"
                   style={{
-                    background: pronta ? 'var(--status-blue-text)' : 'var(--background)',
+                    background: pronta ? 'var(--status-green-text)' : 'var(--background)',
                     color: pronta ? 'white' : 'var(--muted-foreground)',
                   }}>
             {pronta ? <CheckCircle size={13} /> : <Circle size={13} />}
@@ -3501,6 +3573,16 @@ export default function PaginaPlanningCamere() {
   // Ricerca nella griglia (14/08/2026) — evidenzia/sfuma le barre, non le
   // nasconde: vedi corrispondeRicerca.
   const [ricercaGriglia, setRicercaGriglia] = useState('');
+  // Prefill da URL (23/08/2026, CMD+K) — stesso pattern di ?gruppo= sopra:
+  // un risultato di RicercaGlobale naviga qui con ?ricerca=<testo>, la
+  // griglia evidenzia subito senza dover ridigitare nel campo in pagina.
+  // Solo alla prima apertura (non sovrascrive se l'utente poi modifica il
+  // campo a mano), quindi niente [searchParams] nelle dipendenze.
+  useEffect(() => {
+    const r = searchParams.get('ricerca');
+    if (r) setRicercaGriglia(r);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
   const [rangeModo, setRangeModo] = useState('14');
   const [ancora, setAncora] = useState(oggi());
   const [righe, setRighe] = useState([]);
