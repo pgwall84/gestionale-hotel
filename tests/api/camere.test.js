@@ -447,6 +447,11 @@ describe('PATCH /api/camere/:id/tipo', () => {
 
   afterAll(async () => {
     const db = getPool();
+    // Fix 23/08/2026 (auto-collegamento vendita online, vedi describe più
+    // sotto): la PATCH .../tipo di questo blocco ora scrive anche in
+    // tipi_camera_camere — va ripulita prima di camere/tipi_camera, che non
+    // hanno ON DELETE CASCADE verso quella tabella (migration 050).
+    await db.query('DELETE FROM tipi_camera_camere WHERE camera_id = $1', [cameraTestId]);
     await db.query('DELETE FROM camere WHERE id = $1', [cameraTestId]);
     await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoTestId]);
   });
@@ -496,6 +501,92 @@ describe('PATCH /api/camere/:id/tipo', () => {
       .send({ tipo_camera_id: null });
     expect(res.status).toBe(200);
     expect(res.body.tipo_camera_id).toBeNull();
+  });
+});
+
+// ─── Auto-collegamento vendita online (fix 23/08/2026, code review 22/08) ─────
+// Prima, collegare una camera nuova (o riassegnata) a tipi_camera_camere —
+// la tabella di idoneità del Booking Engine Diretto — richiedeva sempre un
+// passaggio manuale: una camera restava invisibile online pur comparendo
+// normalmente in reception/planning. Copre entrambi i punti di ingresso
+// (crea() e aggiornaTipo()) e verifica che il collegamento resti sempre
+// solo ADDITIVO — mai una DELETE quando si rimuove la categoria.
+
+describe('Auto-collegamento vendita online (POST /api/camere e PATCH /:id/tipo)', () => {
+  const SUFFISSO = `_${Date.now().toString().slice(-6)}`;
+  let tipoTestId;
+  const camereCreate = [];
+
+  beforeAll(async () => {
+    const db = getPool();
+    const tipo = await db.query(`INSERT INTO tipi_camera (nome) VALUES ($1) RETURNING id`, [`TipoAutoLink${SUFFISSO}`]);
+    tipoTestId = tipo.rows[0].id;
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    // tipi_camera_camere non ha ON DELETE CASCADE (migration 050) — va
+    // ripulita PRIMA di camere/tipi_camera, altrimenti la DELETE sotto
+    // fallisce con un vincolo di chiave esterna violato.
+    if (camereCreate.length) {
+      await db.query('DELETE FROM tipi_camera_camere WHERE camera_id = ANY($1)', [camereCreate]);
+      await db.query('DELETE FROM camere WHERE id = ANY($1)', [camereCreate]);
+    }
+    await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoTestId]);
+  });
+
+  test('POST /api/camere con tipo_camera_id → collegata automaticamente a tipi_camera_camere', async () => {
+    const res = await request(app)
+      .post('/api/camere')
+      .set(authHeader.titolare())
+      .send({ numero: `TEST-AL${SUFFISSO}`, tipo_camera_id: tipoTestId });
+    expect(res.status).toBe(201);
+    camereCreate.push(res.body.id);
+
+    const db = getPool();
+    const idoneita = await db.query(
+      `SELECT 1 FROM tipi_camera_camere WHERE tipo_camera_id = $1 AND camera_id = $2`,
+      [tipoTestId, res.body.id]
+    );
+    expect(idoneita.rows.length).toBe(1);
+  });
+
+  test('PATCH /api/camere/:id/tipo → collega automaticamente, e rimuovere la categoria NON scollega (solo additivo)', async () => {
+    const creata = await request(app)
+      .post('/api/camere')
+      .set(authHeader.titolare())
+      .send({ numero: `TEST-AL2${SUFFISSO}` });
+    expect(creata.status).toBe(201);
+    camereCreate.push(creata.body.id);
+
+    const assegna = await request(app)
+      .patch(`/api/camere/${creata.body.id}/tipo`)
+      .set(authHeader.titolare())
+      .send({ tipo_camera_id: tipoTestId });
+    expect(assegna.status).toBe(200);
+
+    const db = getPool();
+    const idoneitaDopoAssegna = await db.query(
+      `SELECT 1 FROM tipi_camera_camere WHERE tipo_camera_id = $1 AND camera_id = $2`,
+      [tipoTestId, creata.body.id]
+    );
+    expect(idoneitaDopoAssegna.rows.length).toBe(1);
+
+    const rimuovi = await request(app)
+      .patch(`/api/camere/${creata.body.id}/tipo`)
+      .set(authHeader.titolare())
+      .send({ tipo_camera_id: null });
+    expect(rimuovi.status).toBe(200);
+    expect(rimuovi.body.tipo_camera_id).toBeNull();
+
+    // Il collegamento in tipi_camera_camere resta: non è mai una DELETE,
+    // per non spezzare un'eventuale associazione shared-inventory decisa
+    // a mano dal titolare.
+    const idoneitaDopoRimozione = await db.query(
+      `SELECT 1 FROM tipi_camera_camere WHERE tipo_camera_id = $1 AND camera_id = $2`,
+      [tipoTestId, creata.body.id]
+    );
+    expect(idoneitaDopoRimozione.rows.length).toBe(1);
   });
 });
 

@@ -54,6 +54,17 @@ const STATI_COLORI = {
   chiusa:     { bg: 'var(--status-graydark-bg)',  text: 'var(--status-graydark-text)',  label: 'Chiusa' },
 };
 
+// Trattamento (Modulo tariffe derivate, 20/08/2026) — nessuna etichetta per
+// 'bb' (default silenzioso, non serve segnalarlo), solo per le scelte
+// esplicite mezza pensione/pensione completa. Stessa mappa già in uso in
+// backend/lib/emailPrenotazioni.js (ETICHETTA_TRATTAMENTO) — duplicata qui
+// lato frontend perché quel file non è importabile dal browser, non perché
+// sia una fonte diversa: se cambia il testo, aggiornare in entrambi i posti.
+const ETICHETTA_TRATTAMENTO = {
+  mezza_pensione: 'Mezza pensione',
+  pensione_completa: 'Pensione completa',
+};
+
 const RANGE_OPZIONI = [
   { chiave: '7',    label: '7 giorni' },
   { chiave: '14',   label: '14 giorni' },
@@ -246,6 +257,14 @@ function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
       // (nessuna chiamata in più). \n rende righe separate nel tooltip nativo.
       title={
         `${soggiorno.ospite_nome} ${soggiorno.ospite_cognome}\n` +
+        // Tipo camera venduto + trattamento (fix 23/08/2026, code review
+        // 22/08, Tier 2) — stessi dati ora mostrati anche nel dettaglio
+        // prenotazione (PannelloDettaglio più sotto), qui in coda al nome
+        // così la prima riga del tooltip resta l'ospite, invariata.
+        (soggiorno.tipo_camera_venduto_nome ? `${soggiorno.tipo_camera_venduto_nome}` : '') +
+        (soggiorno.tipo_camera_venduto_nome && ETICHETTA_TRATTAMENTO[soggiorno.trattamento] ? ' — ' : '') +
+        (ETICHETTA_TRATTAMENTO[soggiorno.trattamento] || '') +
+        (soggiorno.tipo_camera_venduto_nome || ETICHETTA_TRATTAMENTO[soggiorno.trattamento] ? '\n' : '') +
         `${formatDataEstesa(soggiorno.data_arrivo)} → ${formatDataEstesa(soggiorno.data_partenza)}\n` +
         `${soggiorno.num_ospiti} ${soggiorno.num_ospiti === 1 ? 'ospite' : 'ospiti'} · Stato: ${colori.label}` +
         (soggiorno.tariffa_totale ? ` · €${Number(soggiorno.tariffa_totale).toFixed(2)}` : '') +
@@ -788,6 +807,17 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
                       <p style={{ color: 'var(--muted-foreground)' }}>
                         Camera {s.camera_numero}{s.piano != null ? ` — piano ${s.piano}` : ' — appartamento esterno'}
                       </p>
+                      {/* Tipo camera venduto + trattamento (fix 23/08/2026,
+                          code review 22/08, Tier 2) — prima il dettaglio non
+                          indicava affatto cosa era stato venduto per questa
+                          camera, solo il numero fisico. */}
+                      {(s.tipo_camera_venduto_nome || ETICHETTA_TRATTAMENTO[s.trattamento]) && (
+                        <p style={{ color: 'var(--muted-foreground)' }}>
+                          {s.tipo_camera_venduto_nome}
+                          {s.tipo_camera_venduto_nome && ETICHETTA_TRATTAMENTO[s.trattamento] ? ' — ' : ''}
+                          {ETICHETTA_TRATTAMENTO[s.trattamento] || ''}
+                        </p>
+                      )}
                       <p style={{ color: 'var(--muted-foreground)' }}>
                         {formatDataEstesa(s.data_arrivo)} → {formatDataEstesa(s.data_partenza)}
                       </p>
@@ -3552,22 +3582,40 @@ export default function PaginaPlanningCamere() {
     setFormNuovaPrenotazione({ camera_id: cameraId, data_arrivo: giorno, data_partenza: spostaData(giorno, 1) });
   }
 
-  const caricaGriglia = useCallback(async () => {
+  // silenzioso: true per i refresh in background (polling sotto) — non
+  // mostra spinner/errore, non deve disturbare la vista mentre l'operatore
+  // la sta guardando o lavorandoci sopra.
+  const caricaGriglia = useCallback(async ({ silenzioso = false } = {}) => {
     try {
-      setLoading(true);
-      setErrore(null);
+      if (!silenzioso) { setLoading(true); setErrore(null); }
       const dataInizio = giorni[0];
       const dataFine = spostaData(giorni[giorni.length - 1], 1); // esclusivo, coerente col backend
       const risposta = await api.get(`/prenotazioni/griglia?data_inizio=${dataInizio}&data_fine=${dataFine}`);
       setRighe(risposta.data);
     } catch (err) {
-      setErrore('Errore nel caricamento della griglia');
+      if (!silenzioso) setErrore('Errore nel caricamento della griglia');
     } finally {
-      setLoading(false);
+      if (!silenzioso) setLoading(false);
     }
   }, [giorni]);
 
   useEffect(() => { caricaGriglia(); }, [caricaGriglia]);
+
+  // Polling in background (19/08/2026, segnalato da Marco durante il primo
+  // test del Booking Engine Diretto: una prenotazione arrivata dal sito
+  // compariva solo dopo un refresh manuale). Ogni 25s, silenzioso — vedi
+  // sopra. Sospeso quando un pannello/modale è aperto (dettaglio
+  // prenotazione, nuova prenotazione, wizard gruppo, popup scopetta camera):
+  // un refresh a metà di una modifica sostituirebbe sotto i piedi
+  // dell'operatore i dati che sta guardando o compilando in quel momento.
+  // Si riattiva da solo alla chiusura, l'intervallo si ricrea ad ogni
+  // cambio di questi stati.
+  useEffect(() => {
+    const modaleApertoOra = !!(prenotazioneApertaId || formNuovaPrenotazione || wizardGruppoAperto || cameraStatoAperta);
+    if (modaleApertoOra) return;
+    const id = setInterval(() => { caricaGriglia({ silenzioso: true }); }, 25000);
+    return () => clearInterval(id);
+  }, [caricaGriglia, prenotazioneApertaId, formNuovaPrenotazione, wizardGruppoAperto, cameraStatoAperta]);
 
   function cambiaRange(nuovoModo) {
     if (nuovoModo === 'mese' && rangeModo !== 'mese') {

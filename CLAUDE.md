@@ -1272,6 +1272,108 @@ soggiorno. Gli addebiti extra restano sempre per-camera in entrambi i casi
 completo wizard gruppo + pagamento gruppo/camera. Dettaglio tecnico
 completo: `docs/DIARIO_SESSIONI.md`, voce 15/08/2026.
 
+**Sessioni 19-20/08/2026 — Booking Engine Diretto v2**: nuovo flusso di
+prenotazione self-service su `sito-hotel` (`/prenota`), caparra 30% via
+Stripe, saldo in hotel — dettaglio completo in `docs/DIARIO_SESSIONI.md`,
+voci 19/08 e 20/08. Punti che restano aperti, non ancora chiusi dal
+titolare: eseguire la suite di test aggiornata
+(`tests/api/bookingPubblico.test.js`, scritta ma mai eseguita da questo
+ambiente); popolare da `/tariffe` i range min/max dichiarati alla Regione
+(oggi nessun clamp attivo su nessun tipo camera derivato) e la percentuale
+reale di sconto bambini 3-11 anni (oggi seminata a 0%); verifica manuale
+end-to-end del selettore trattamento (B&B/mezza pensione/pensione
+completa) su `/prenota`; conferma dell'assunzione bambini 12-17 anni =
+adulto a tutti gli effetti. Tutto annotato anche in `docs/EVOLUTIVE.md`.
+
+**Sessione 22/08/2026 — Code review incrociata (tab Code) su
+gestionale-hotel + sito-hotel: triage e fix bug critici**. Il tab Code ha
+eseguito una review di sicurezza/correttezza su entrambi i repo e
+riportato 10 finding prioritari (fermandosi prima di una verifica formale
+per-finding con sub-agent dedicati, per risparmio token). Letto il report,
+dato un giudizio di priorità indipendente a Marco (non i primi due Tier di
+Code presi per buoni senza verifica) e poi via libera esplicito ("cominciamo
+a risolvere") a correggere. Lavorati i tre finding di Tier 1 (rischio
+economico/dati diretto):
+- **#4 — prezzo derivato preso da una riga non ordinata**: bug introdotto
+  dalla stessa sessione del redesign `/tariffe` (20/08) — `SchedaPrezzoTipologia`
+  permette di scegliere "Deriva da" indipendentemente per ogni periodo, ma
+  `calcolaPrezzoCameraPerNotte` (`backend/controllers/tariffeController.js`)
+  risolveva il tipo camera base UNA SOLA VOLTA da `regoleResult.rows[0]`
+  (query senza `ORDER BY`), assumendo che fallback e tutte le regole
+  per-periodo condividessero sempre la stessa base — falso appena si sceglie
+  una base diversa per periodi diversi sulla stessa tipologia derivata.
+  Corretto risolvendo la base PER REGOLA ABBINATA PER NOTTE, non più
+  globalmente; controllo anti-loop esteso a TUTTE le basi distinte in uso
+  (prima ne controllava una sola). Nuovo test di regressione in
+  `tests/api/bookingPubblico.test.js` (soggiorno a cavallo tra un fallback
+  su una base e un periodo su un'altra base, verifica il prezzo per notte
+  corretto in entrambi i tratti).
+- **#1 — race cron/webhook Stripe**: `backend/jobs/scadenzaHoldBookingEngine.js`
+  (ogni minuto, non chiama mai Stripe per scelta) può marcare una
+  prenotazione `'interrotta'` PRIMA che il webhook `payment_intent.succeeded`
+  di un pagamento riuscito nel frattempo venga elaborato — scenario
+  sequenziale realistico sulla finestra di ~60s del cron, non una vera race
+  a livello di lock DB. Prima, `stripeWebhookController.js` si fermava e
+  rispondeva 200 in ogni caso di stato diverso da `'opzione'`, assumendo
+  sempre un webhook duplicato — lasciando l'ospite addebitato su Stripe
+  senza prenotazione e senza rimborso in questo scenario specifico.
+  Corretto: in quel ramo ora si verifica se esiste ancora un pagamento
+  `'pending'` per quell'`external_payment_id`; se sì, si rimborsa via
+  `stripe.refunds.create`, si marca il pagamento `'rimborsato'`, si logga
+  per verifica manuale della camera e si notifica — senza mai provare a
+  far rivivere la prenotazione (stessa filosofia già scelta il 19/08/2026
+  per il caso "pagamento arrivato dopo scadenza" nello stesso file). Nuovo
+  test di regressione che simula la race (cron eseguito a mano, poi webhook
+  reale firmato) e verifica sia il rimborso sia l'idempotenza su una
+  seconda consegna dello stesso evento.
+- **#3 — tassa di soggiorno online solo intestatario**: VERIFICATO NON
+  RIPRODUCIBILE sullo stato attuale del codice. `bookingPubblicoController.prenota`
+  scrive già, per ogni prenotazione online, `num_ospiti` = headcount pieno
+  e `composizione_ospiti = {adulti, bambini_eta}` (estensione Booking Engine
+  v2 Fase A del 19/08/2026 — un giorno prima della review). `calcolaTassaSoggiorno`
+  (`backend/lib/emailPrenotazioni.js`) usa il ramo esatto (adulti+bambini
+  tassabili per età) ogni volta che trova `composizione_ospiti.bambini_eta`
+  come array — quindi per il canale `sito_diretto` è sempre il ramo esatto.
+  Il ramo di stima (`num_ospiti || 1`) resta solo per prenotazioni
+  telefoniche/storiche senza quel dato, già onestamente etichettato
+  "importo indicativo" (`esatta: false`) — comportamento voluto, non un bug.
+  Nessuna modifica fatta. Probabile causa: il finding si riferiva a una
+  versione del codice precedente al fix del 19/08, oppure Code non aveva
+  visto quell'estensione.
+
+**Verifica finale**: suite completa eseguita dal tab Code dopo i due fix —
+940/940 test verdi, 33/33 suite passate (69.9s), nessuna regressione,
+inclusi entrambi i test di regressione dedicati confermati contro il DB
+reale.
+
+Non toccati in questa sessione (Tier 2/3 del triage, in attesa di indicazione
+di Marco su come proseguire): email di conferma con nome ospite non
+sanificato (rischio HTML injection), chiamata Stripe dentro una transazione
+DB aperta nel webhook, l'assunzione fragile di migration 050 su "Singola
+sopravvive a 048", camera nuova non auto-collegata alla vendita online,
+percentuale caparra 30% duplicata tra sito e gestionale, planning-camere
+senza indicazione trattamento/tipo venduto, tripla query prezzo per
+tipologia invece di una (bb/mezza/pensione). Un ultimo item scartato da
+Code ("prezzo_notte: 0 trattato come 'nessun valore' via COALESCE") non è
+stato accettato come non-problema senza vedere il file:riga esatto citato
+da Code — resta da chiarire, non in task list. Verificato solo con
+`node -c` sui file backend toccati — **nessuna esecuzione reale della
+suite Jest da questo ambiente** (niente accesso DB dal sandbox Cowork,
+come da convenzione): Marco/tab Code devono eseguire
+`tests/api/bookingPubblico.test.js` per confermare i due nuovi test di
+regressione.
+
+Fuori da questo lavoro di code review, ricerca su richiesta di Marco:
+Numia S.p.A./PayWay (BCC) come possibile alternativa a Stripe/Nexi per il
+booking engine — conclusione: il Foglio Informativo pubblico mostra solo
+un tetto regolamentare (fino al 6%+1-2€, +3% per Card Not Present — proprio
+il caso delle prenotazioni online —, minimo 200€/mese), non il prezzo reale
+negoziato (Documento di Sintesi, mai pubblicato, va richiesto in filiale
+BCC); l'accesso API richiede un'istruttoria di approvazione, a differenza
+della documentazione aperta di Stripe/Nexi. Nessun modello (incluso Opus)
+può colmare questa lacuna: il dato è una cifra commerciale privata, non
+un limite di conoscenza del modello. Non ha comportato modifiche al codice.
+
 ## 17. DOCUMENTI DI PROGETTO
 
 Indice di dove si trova cosa, per evitare di ricreare doppioni:
@@ -1303,4 +1405,4 @@ HACCP in ADEMPIMENTI). Documento aggiornato al 13/08/2026 — **Audit HR/timbrat
 dipendenti (Fasi A/B/C, dettaglio sopra e in `docs/DIARIO_SESSIONI.md`):
 migration 032/033, "Applica turno standard", contratto/fascia oraria,
 foglio "Consulente" nel report mensile — non ancora verificati end-to-end
-dal titolare a fine sessione.** **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`.*
+dal titolare a fine sessione.** **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`. **19-20/08/2026 — Booking Engine Diretto v2**: prenotazione self-service su `sito-hotel` con caparra Stripe 30%, shared inventory (stessa camera fisica vendibile sotto più identità/prezzi), e modulo tariffe derivate (periodi stagionali configurabili dal titolare, derivazione percentuale periodizzata con clamp sul range dichiarato alla Regione, trattamento B&B/mezza pensione/pensione completa, regole bambini 0-2/3-11/12-17). Aperto a fine sessione: test scritti ma non eseguiti, range min/max e sconto bambini da popolare dal titolare, verifica end-to-end su `/prenota` non ancora fatta — dettaglio in `docs/DIARIO_SESSIONI.md` e `docs/EVOLUTIVE.md`. **22/08/2026 — triage code review (tab Code) + fix Tier 1**: corretti #4 (prezzo derivato — base risolta per notte, non più da una riga arbitraria) e #1 (race cron/webhook Stripe — rimborso automatico se il cron interrompe una prenotazione il cui pagamento arriva comunque a buon fine); #3 (tassa di soggiorno online) verificato NON riproducibile, già risolto dall'estensione `composizione_ospiti` del 19/08. **Suite completa confermata dal tab Code: 940/940 test verdi, 33/33 suite (69.9s), nessuna regressione.** Tier 2/3 del triage non affrontati, in attesa di indicazione. Dettaglio completo sopra e in `docs/DIARIO_SESSIONI.md`.*

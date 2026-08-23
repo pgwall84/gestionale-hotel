@@ -5,6 +5,7 @@
 const app  = require('./app');
 const { avviaJobPromemoriaEmail } = require('./jobs/promemoriaEmail');
 const { avviaJobInvioAlloggiatiWeb } = require('./jobs/invioAlloggiatiWeb');
+const { avviaJobScadenzaHoldBookingEngine } = require('./jobs/scadenzaHoldBookingEngine');
 const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
@@ -21,4 +22,8 @@ app.listen(PORT, () => {
   // stesso motivo, mai in app.js. Esclude sempre canale_origine=test_interno,
   // vedi commento in testa a jobs/invioAlloggiatiWeb.js.
   avviaJobInvioAlloggiatiWeb();
+
+  // Job pulizia blocchi scaduti Booking Engine Diretto (modulo 19/08/2026)
+  // — stesso motivo, mai in app.js.
+  avviaJobScadenzaHoldBookingEngine();
 });

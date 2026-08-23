@@ -1155,16 +1155,34 @@ segnate per una revisione congiunta futura, nessuna investigata/toccata):
    nel flusso comanda standard non è stata costruita, deprioritizzata dal
    titolare rispetto al bar.
 
-2. Tariffe per camera/canale di provenienza — domanda del titolare
-   ("serve un sistema che associa alla camera il prezzo") mai
-   completamente chiarita in questa sessione. Verificato cosa esiste già:
-   modulo 2.2 (stagionalità+pacchetti per TIPO camera/periodo) e modulo
-   2.3 Fase 1 (mappatura tipo_camera↔canale OTA, solo identificazione
-   canale per il channel manager, non prezzo differenziato). Non ancora
-   confermato dal titolare se intende tariffe differenziate per canale di
-   prenotazione (diretto/Booking/telefono), prezzo per singola camera
-   fisica invece che per categoria, o altro — chiarire prima di
-   pianificare qualunque cosa.
+2. Tariffe per camera/canale di provenienza — CHIARITA 19/08/2026 (era
+   rimasta vaga dal 10/08). Non è "prezzo differenziato per canale" né
+   "prezzo per singola camera fisica": è la UI di `/tariffe` da rendere più
+   semplice da leggere per il titolare — capire a colpo d'occhio quale
+   tariffa è impostata, per quale tipo camera, in quale periodo (oggi è una
+   lista di righe testuali, non c'è una vista calendario/timeline). Il
+   motore sotto (stagionalità per tipo camera, modulo 2.2) resta corretto e
+   invariato — è solo un problema di leggibilità/UX per chi la usa senza
+   essere uno sviluppatore. Da riprendere come evolutiva UI, non richiede
+   nessuna modifica di schema o logica di calcolo.
+
+   Collegata (stessa area, ma funzionalità diversa, discussa lo stesso
+   giorno): "cosa mostrare online in un periodo" — oggi `tipi_camera_camere`
+   (shared inventory, migration 050, vedi voce Booking Engine v2 sotto) è
+   una mappatura fissa, non legata a date. Il titolare vorrebbe poter, per
+   periodo: aprire temporaneamente la vendita online di un tipo oggi
+   riservato a reception (es. Matrimoniale su 15/16/19/20 in bassa
+   stagione, quando il rischio di cannibalizzazione è basso), o chiudere la
+   vendita online di un tipo che oggi è aperto (es. Singola in alta
+   stagione, per spingere le tariffe più alte). Confermato che è lo stesso
+   concetto di "stop-sell per tipo+periodo" già discusso quel giorno come
+   alternativa più semplice a un calendario di allotment completo (vedi
+   ricerca competitor nella conversazione — pooled inventory + stop-sell è
+   il pattern standard, non un allotment statico). Non implementata: nessun
+   bisogno operativo concreto e immediato al momento della richiesta, solo
+   segnata per quando servirà davvero. Se ripresa, naturale accorparla alla
+   stessa evolutiva UI di `/tariffe` sopra — stesso posto dove il titolare
+   già guarda per capire prezzi/periodi.
 
 3. ✅ [FATTO 14/08/2026] Monitor cucina (`/cucina`, SSE) non funzionava
    in produzione: il titolare segnalava "connessione in corso" senza mai
@@ -1665,3 +1683,117 @@ che conta, va salvata subito, non solo detta).
   errore), permessi (kpi()-style, non ristretto a soloTitolare).
   Anno fittizio 2099 in tutte le fixture, stesso principio di isolamento
   già usato altrove nel file.
+
+Booking Engine v2 — Tipi camera e tariffe, revisione con il titolare (19/08/2026):
+  Consolidamento Singola/Doppia uso singola (migration 048, eseguita con
+  successo — vedi docs/DIARIO_SESSIONI.md) ha sistemato solo la
+  duplicazione fisica delle 4 stanze (2, 7, 12, 21). Restano aperti, da
+  affrontare con il titolare quando la sessione lo consente:
+  - Policy di prezzo tra tipi camera: oggi un solo prezzo per la stanza
+    consolidata "Matrimoniale Piccola" indipendentemente dal numero di
+    occupanti (1 o 2 adulti) — il titolare ha deciso così per ora, ma ha
+    detto esplicitamente che la questione va rivista con calma.
+  - prezzoBase dei documenti Sanity (Matrimoniale 90€, Tripla/Quadrupla
+    110€, per persona/notte in mezza pensione) — dati dal titolare come
+    "quasi a caso, tranne i 90€": servono a valorizzare il campo Sanity
+    "Prezzo a partire da" per la pagina marketing /camere, NON sono usati
+    dal motore tariffe del gestionale (quello resta sempre la fonte reale
+    per il booking engine). Da aggiornare quando il titolare ha un listino
+    vero. Nessuna tariffa vera creata/modificata nella tabella `tariffe`
+    in questa sessione.
+  - Il campo Sanity `prezzoBase` non distingue "a persona" da "a camera" né
+    il tipo di pensione (mezza/completa) — oggi è solo un numero. Se in
+    futuro serve mostrarlo correttamente sul sito, va rivista la modellazione
+    (nuovo campo o testo esplicito accanto al prezzo).
+  - Matrimoniale Piccola non ha ancora un prezzoBase: il titolare non ha
+    dato un numero per questa tipologia, lasciato vuoto in Sanity apposta
+    (mai inventato) — vedi `backend/scripts/creaContenutiCamereMancanti.js`.
+
+Modulo tariffe derivate — periodi/trattamento/bambini (20/08/2026), aperto
+a fine sessione, non urgente ma da chiudere prima di fidarsi del clamp:
+  - Range min/max dichiarati alla Regione: predisposti (`regole_derivazione_
+    tariffe.prezzo_minimo/prezzo_massimo`), ma NESSUNO popolato — il clamp
+    di compliance è quindi inattivo su tutti i tipi derivati (Singola,
+    Doppia uso singola, Tripla, Quadrupla) finché il titolare non li
+    inserisce da `/tariffe` ▸ Regole di derivazione.
+  - Sconto bambini 3-11 anni sul supplemento trattamento: seminato a 0%
+    (nessuno sconto) con nota esplicita in `configurazione_bambini` — il
+    titolare non ha ancora dato la percentuale reale, solo un "x%"
+    generico in chat.
+  - Bambini 12-17 anni: nessuna regola specifica data dal titolare —
+    trattati oggi come un adulto a tutti gli effetti (capienza e
+    supplemento pieno), assunzione mia da riconfermare.
+  - ~~Suite di test~~ — **18/18 verdi, confermato dal titolare (tab Code),
+    nessuna correzione necessaria.** Punto chiuso.
+  - Verifica manuale end-to-end: **prima prenotazione reale fatta dal
+    titolare (20/08/2026)** — Matrimoniale Piccola, un periodo stagionale
+    creato e collegato alla tariffa (`tariffe.periodo_id`), "sembra
+    funzionare". Chiarito con il titolare cosa copre esattamente: solo B&B
+    (nessun trattamento selezionato). Matrimoniale Piccola NON è un tipo
+    derivato (tariffa propria in `tariffe`, non passa da
+    `regole_derivazione_tariffe`) — quindi questa prova verifica periodi
+    stagionali + collegamento tariffa↔periodo, ma NON il clamp sul range
+    dichiarato né il cambio di percentuale tra periodi (quelli riguardano
+    solo Singola/Doppia uso singola/Tripla/Quadrupla) né il supplemento
+    trattamento/sconto bambini (mai selezionato in questo test). Il
+    titolare ha detto esplicitamente di accontentarsi per ora — non
+    riproporre finché non lo riporta lui.
+  - UI `/tariffe` — redesign, chiuso (20/08/2026) dopo TRE tentativi, i
+    primi due bocciati. Primo tentativo (tendine): Periodi/Regole di
+    derivazione/Supplemento trattamento come sezioni separate da navigare
+    tra loro — bocciato ("non riesco a capire come utilizzare tutte queste
+    tendine"). Secondo tentativo: timeline dell'anno con trascinamento mese
+    per mese (`TimelinePeriodi.jsx`) — bocciato anche questo appena visto
+    ("non ci siamo... siamo sempre punto a capo"), mai arrivato a un test
+    reale. Terzo tentativo, implementato e confermato dal titolare su
+    mockup prima di toccare codice: ogni tipologia è una scheda
+    auto-contenuta (`SchedaPrezzoTipologia.jsx`/`SchedaTrattamento.jsx`)
+    con i periodi come ETICHETTE cliccabili (`ChipPeriodi.jsx`), "+ nuovo
+    periodo" apre un form inline (nome + due date) invece di un calendario
+    da trascinare; le tipologie camera sono una fila di etichette in alto,
+    una scheda visibile alla volta (non tutte impilate, per non ricreare
+    l'illeggibilità del primo tentativo da un'altra porta). Codice del
+    secondo tentativo (`TimelinePeriodi.jsx`, `PannelloPrezzoTipologia.jsx`,
+    `PannelloSupplementoTrattamento.jsx`) lasciato nel repository come stub
+    non referenziato invece che eliminato (la cancellazione richiede
+    conferma esplicita dell'utente, non necessaria per file già non
+    importati). Verificato solo con `esbuild`/`tsc --noEmit` (puliti) — NON
+    ancora verificato in UI dal titolare: in particolare il form "+ nuovo
+    periodo" e l'anteprima di calcolo sulla scheda derivata.
+  - Idea del titolare, deliberatamente rimandata (20/08/2026): sotto i
+    pannelli di configurazione, una vista tipo planning (come
+    `/planning-camere`) con righe = tipologie camera, colonne = mesi o
+    trimestri, celle = prezzo definito in quel periodo; al passaggio del
+    mouse tutte le info (min/max/percentuale per le derivate, solo il
+    prezzo per la madre — il tooltip NON è uniforme riga per riga, va
+    disegnato sapendo che il contenuto cambia per tipo di riga). Utile
+    soprattutto per vedere colpo d'occhio i buchi di copertura (mesi senza
+    prezzo configurato). Il titolare ha detto esplicitamente di andare
+    prima ai pannelli delle varie situazioni — non è ancora uno spec da
+    costruire, solo un'idea da tenere per dopo.
+  - Code review 22/08/2026 (tab Code) — Tier 1 (fix #4 e #1) chiuso il
+    22/08, **Tier 2/3 chiuso il 23/08/2026** (dettaglio completo
+    `docs/DIARIO_SESSIONI.md`, voce 23/08/2026): nome ospite non
+    sanificato nella mail di conferma (rischio HTML injection, era in
+    `inviaNotificaHoldScaduto`) — ✅ corretto; chiamata Stripe eseguita
+    dentro una transazione DB aperta — era in
+    `bookingPubblicoController.prenota()`, non nel webhook come diceva la
+    sintesi originale — ✅ corretta; assunzione di migration 050 "Singola
+    sopravvive sempre a 048" mai verificata esplicitamente — ✅ nuovo test
+    dedicato (`tests/api/migrazioneShareInventory.test.js`); camera nuova
+    non collegata automaticamente alla vendita online — ✅ auto-
+    collegamento additivo in `camereController.crea()`/`aggiornaTipo()`;
+    percentuale caparra 30% duplicata a mano tra `sito-hotel` e gestionale
+    — ✅ nuovo endpoint `GET /api/booking-pubblico/configurazione`, letto a
+    runtime da `BookingWidget.tsx`; `/planning-camere` senza indicazione di
+    trattamento/tipo camera venduto — ✅ aggiunto sia nel dettaglio
+    prenotazione sia nel tooltip della barra; tripla query di calcolo
+    prezzo per tipologia (bb/mezza pensione/pensione completa) — ✅ nuova
+    `calcolaTariffaPerTrattamenti` (prezzo camera calcolato una sola volta).
+    **Scritto e verificato solo con `node -c`/`esbuild` dal sandbox Cowork
+    — nessuna esecuzione reale della suite Jest da qui: resta da confermare
+    dal tab Code.** Item scartato da Code ma non confermato come
+    non-problema, ANCORA APERTO (non toccato in questa sessione):
+    `prezzo_notte: 0` trattato come "nessun valore" via COALESCE,
+    potenzialmente raggiungibile dalla nuova UI schede/chip — serve il
+    file:riga esatto citato da Code prima di chiudere o riaprire.

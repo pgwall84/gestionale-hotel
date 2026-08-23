@@ -11,6 +11,7 @@ const request = require('supertest');
 const app     = require('../../backend/app');
 const { authHeader } = require('../helpers/auth');
 const { getPool, chiudiPool } = require('../helpers/db');
+const { calcolaTariffa, calcolaTariffaPerTrattamenti } = require('../../backend/controllers/tariffeController');
 
 const SUFFISSO = `_${Date.now().toString().slice(-6)}`;
 let tipoCameraId;
@@ -107,6 +108,53 @@ describe('GET /api/tariffe/calcola', () => {
     expect(res.body.num_notti).toBe(3);
     expect(res.body.prezzo_totale).toBe(300);
     expect(res.body.notti_scoperte).toEqual([]);
+  });
+
+  // Regressione post-refactor (19/08/2026): calcola() ora chiama la
+  // funzione pura calcolaTariffa (estratta per essere riusata dal booking
+  // engine, tests/api/bookingPubblico.test.js) — stesso formato di risposta
+  // di prima, invariato.
+  test('continua a rispondere con lo stesso formato dopo il refactor di calcolaTariffa', async () => {
+    const res = await request(app)
+      .get(`/api/tariffe/calcola?tipo_camera_id=${tipoCameraId}&data_arrivo=2091-06-10&data_partenza=2091-06-13`)
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    expect(res.body).toHaveProperty('num_notti');
+    expect(res.body).toHaveProperty('prezzo_totale');
+    expect(res.body).toHaveProperty('notti_scoperte');
+  });
+});
+
+// ─── calcolaTariffaPerTrattamenti (fix code review 22/08/2026, Tier 2) ────────
+// Prima, GET /api/booking-pubblico/disponibilita chiamava calcolaTariffa una
+// volta per trattamento (3 volte per ogni tipo camera in lista), ricalcolando
+// da zero anche il prezzo camera — identico per i 3 trattamenti, dipende solo
+// da tipo/date, non dal trattamento. calcolaTariffaPerTrattamenti calcola il
+// prezzo camera una sola volta e lo riusa: qui si verifica che il risultato
+// per 'bb' resti IDENTICO sia chiamato da solo (calcolaTariffa) sia dentro un
+// batch con altri trattamenti (calcolaTariffaPerTrattamenti) — nessuna
+// interferenza tra i supplementi calcolati per gli altri trattamenti.
+
+describe('calcolaTariffaPerTrattamenti', () => {
+  test('il risultato per "bb" è identico chiamato da solo o dentro un batch con altri trattamenti', async () => {
+    // Riusa la fascia 100€/notte 2091-06-01..2091-06-30 creata nel describe
+    // precedente ("periodo coperto dal listino").
+    const soloBb = await calcolaTariffa(tipoCameraId, '2091-06-10', '2091-06-13', { trattamento: 'bb' });
+    expect(soloBb.prezzo_totale).toBe(300);
+
+    const batch = await calcolaTariffaPerTrattamenti(
+      tipoCameraId, '2091-06-10', '2091-06-13', ['bb', 'mezza_pensione', 'pensione_completa']
+    );
+    expect(batch.bb).toEqual(soloBb);
+    expect(Object.keys(batch).sort()).toEqual(['bb', 'mezza_pensione', 'pensione_completa'].sort());
+  });
+
+  test('un periodo scoperto resta scoperto (null) per ogni trattamento richiesto', async () => {
+    const batch = await calcolaTariffaPerTrattamenti(
+      tipoCameraId, '2092-01-01', '2092-01-03', ['bb', 'mezza_pensione']
+    );
+    expect(batch.bb.prezzo_totale).toBeNull();
+    expect(batch.mezza_pensione.prezzo_totale).toBeNull();
   });
 });
 

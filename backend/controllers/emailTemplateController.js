@@ -49,11 +49,14 @@ const aggiornaTemplate = async (req, res) => {
   }
 };
 
-// GET /api/email-template/footer — dati del footer comune a tutte le email.
+// GET /api/email-template/footer — dati del footer comune a tutte le email
+// + termini di cancellazione (Booking Engine v2, Fase C — 19/08/2026:
+// stessa riga singleton, non un template a parte perché non è legata a un
+// invio specifico ma mostrata sia in email che su /prenota prima del pagamento).
 const getFooter = async (req, res) => {
   try {
     const result = await pool.query(
-      'SELECT footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url, updated_at FROM impostazioni_email WHERE id = 1',
+      'SELECT footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url, termini_cancellazione, updated_at FROM impostazioni_email WHERE id = 1',
       []
     );
     res.json(result.rows[0] || {});
@@ -65,15 +68,15 @@ const getFooter = async (req, res) => {
 
 // PATCH /api/email-template/footer — aggiorna i dati del footer.
 const aggiornaFooter = async (req, res) => {
-  const { footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url } = req.body;
+  const { footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url, termini_cancellazione } = req.body;
   try {
     const result = await pool.query(
       `UPDATE impostazioni_email SET
          footer_indirizzo = $1, footer_telefono = $2, footer_email = $3,
-         footer_sito = $4, logo_url = $5, aggiornato_da = $6, updated_at = NOW()
+         footer_sito = $4, logo_url = $5, termini_cancellazione = $6, aggiornato_da = $7, updated_at = NOW()
        WHERE id = 1
-       RETURNING footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url, updated_at`,
-      [footer_indirizzo || null, footer_telefono || null, footer_email || null, footer_sito || null, logo_url || null, req.utente.id]
+       RETURNING footer_indirizzo, footer_telefono, footer_email, footer_sito, logo_url, termini_cancellazione, updated_at`,
+      [footer_indirizzo || null, footer_telefono || null, footer_email || null, footer_sito || null, logo_url || null, termini_cancellazione || null, req.utente.id]
     );
     res.json(result.rows[0]);
   } catch (err) {

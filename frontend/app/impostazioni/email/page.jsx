@@ -229,6 +229,37 @@ export default function PaginaTestiEmail() {
               {salvataggioFooter ? 'Salvataggio...' : 'Salva footer'}
             </button>
           </div>
+
+          {/* Termini di cancellazione (Booking Engine v2, Fase C — 19/08/2026).
+              Stessa riga singleton di impostazioni_email del footer sopra —
+              salvati insieme dallo stesso pulsante "Salva footer"/PATCH
+              /email-template/footer. Mostrati sia nella mail di conferma
+              (backend/lib/emailPrenotazioni.js) sia su /prenota del sito
+              prima del pagamento (GET pubblica /booking-pubblico/termini-
+              cancellazione). Testo semplice, come i corpi email sopra. */}
+          <div className="rounded-xl p-4 space-y-2" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
+            <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Termini di cancellazione</h3>
+            <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+              Mostrati nella mail di conferma prenotazione e sul sito, in /prenota, prima del pagamento della caparra.
+              Finché resta il testo segnaposto tra parentesi quadre, il Booking Engine Diretto non ha una vera policy di cancellazione da mostrare ai clienti.
+            </p>
+            <textarea
+              placeholder="Es: È possibile cancellare gratuitamente fino a 7 giorni prima dell'arrivo. Oltre questo termine la caparra non è rimborsabile."
+              value={footer.termini_cancellazione || ''}
+              onChange={e => setFooter(f => ({ ...f, termini_cancellazione: e.target.value }))}
+              rows={5}
+              className="w-full p-3 rounded-lg text-sm outline-none resize-y"
+              style={{ ...inputStyle, height: 'auto' }}
+            />
+            <button
+              onClick={salvaFooter}
+              disabled={salvataggioFooter}
+              className="text-xs font-medium px-3 py-1.5 rounded-lg text-white disabled:opacity-60"
+              style={{ background: 'var(--hotel-navy)' }}
+            >
+              {salvataggioFooter ? 'Salvataggio...' : 'Salva termini di cancellazione'}
+            </button>
+          </div>
         </div>
       )}
     </AppShell>

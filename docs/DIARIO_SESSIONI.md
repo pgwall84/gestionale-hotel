@@ -4413,3 +4413,733 @@ Non testato esplicitamente lo svuotamento fino all'ultima camera rimasta
 (quello lo blocca comunque il backend con 400, indipendentemente da quale
 sia "primo" — vedi `soggiornoController.annulla`), da tenere presente come
 prossimo scenario se emergesse un dubbio.
+
+## 19/08/2026 — Booking Engine Diretto v2: composizione ospiti, contenuti Sanity, tipologie camera reali, shared inventory
+
+Sessione lunga, in continuità diretta con il modulo Booking Engine Diretto
+(caparra 30% via Stripe, saldo in hotel) implementato in una sessione
+precedente. Tre fasi concordate all'inizio (A/B/C), poi un lavoro molto più
+grande emerso durante la Fase B mentre si preparavano i contenuti delle
+camere per Sanity: le tipologie camera nel gestionale non riflettevano la
+realtà fisica dell'hotel, e sistemarlo ha richiesto due migration
+strutturali in più.
+
+**Fase A — Composizione ospiti** (adulti + età di ogni bambino, non più un
+singolo numero `ospiti`): migration `046_composizione_ospiti_booking_engine.sql`
+(`soggiorni.composizione_ospiti JSONB`), `bookingPubblicoController.js`
+(`normalizzaComposizioneOspiti`, validazione capienza server-side),
+`BookingWidget.tsx` (selettore età per bambino). Riusata subito da
+`calcolaTassaSoggiorno` in `emailPrenotazioni.js` per un calcolo ESATTO
+della tassa di soggiorno (esenzione età) quando disponibile, con fallback
+onesto a "indicativo" quando non lo è. Bug reale trovato e corretto nello
+stesso giro: il ramo "ospite già esistente" di `prenota()` aggiornava solo
+il telefono, mai nome/cognome — chi prenotava di nuovo con la stessa email
+restava con il nome della prima prenotazione mai fatta.
+
+**Fase B — Contenuti camere (Sanity ↔ gestionale)**: nuovo campo
+`tipoCameraId` su `sanity/schemaTypes/documents/camera.ts`, script
+`backend/scripts/collegaSanityTipiCamera.js` (dry-run/`--applica`,
+abbinamento per nome normalizzato, mai un abbinamento indovinato — i casi
+senza corrispondenza restano da collegare a mano in Studio).
+`BookingWidget.tsx` arricchito con foto/descrizione/mq/servizi da Sanity
+via `tipoCameraId`, fallback alla card semplice se non collegato.
+
+**Fase C — Termini di cancellazione**: migration `047_termini_cancellazione.sql`
+(`impostazioni_email.termini_cancellazione`, stessa riga singleton del
+footer email), nuovo endpoint pubblico
+`GET /api/booking-pubblico/termini-cancellazione`, editor in
+Impostazioni ▸ Testi email, mostrati sia nella mail di conferma sia su
+`/prenota` prima del pagamento. Default = segnaposto esplicito
+`[DA COMPLETARE]`, mai un testo legale inventato.
+
+**Il vero lavoro della sessione — tipologie camera non allineate alla
+realtà.** Preparando i contenuti Fase B è emerso che il gestionale aveva 5
+tipi camera (Singola, Doppia uso singola, Matrimoniale, Tripla, Quadrupla)
+che non corrispondevano a come l'hotel vende davvero le stanze. Ricostruito
+con il titolare, con più correzioni in corsa (dettaglio completo nella
+conversazione, qui solo l'esito):
+
+- Camere 2, 7, 12, 21 (10mq, letto matrimoniale alla francese): vendibili
+  sia come Singola (1 persona) sia come Matrimoniale Piccola (2 persone) —
+  stessa stanza fisica, due prezzi diversi.
+- Tutte le altre camere "pure" (14mq): vendibili sia come Doppia uso
+  singola (1 persona) sia come Matrimoniale (2 persone) — stesso principio.
+- Camere 15, 16, 19, 20 (matrimoniale + letti a castello): vendibili come
+  Matrimoniale, Tripla (+30% sul prezzo Matrimoniale) o Quadrupla (+20%) —
+  ma SOLO Tripla/Quadrupla sul booking engine online, mai Matrimoniale:
+  decisione esplicita del titolare per non rischiare che una prenotazione
+  online economica "rubi" una stanza che valeva di più a una famiglia
+  (cannibalizzazione — vendibili come Matrimoniale solo da reception/
+  telefono, dove c'è un giudizio umano). Verificato sui competitor (Cloudbeds
+  Split Inventory, RoomBoss Alternative Configuration, Oracle OPERA
+  Component Rooms) che questo pattern — più tipi virtuali sulla stessa
+  camera fisica — è lo standard di settore per questo esatto problema.
+- L'appartamento (casa in affitto, fino a 5 persone) era erroneamente
+  l'unica stanza assegnata al tipo "Quadrupla" — se si fosse aggiunta una
+  tariffa senza accorgersene, sarebbe diventato prenotabile online come una
+  normale camera hotel. Sganciato per primo, prima di qualunque altra cosa.
+
+**Migration `048_consolida_matrimoniale_piccola.sql`**: primo tentativo,
+poi in parte superato dalla 050 (Doppia uso singola non era la stessa cosa
+di Matrimoniale Piccola, riconosciuto e corretto in corsa). Verifica
+automatica integrata (conta tariffe esistenti per decidere quale id tenere,
+si ferma con eccezione se il segnale è ambiguo) — bug trovato dal titolare:
+`GET DIAGNOSTICS` dentro un blocco `DO` legge il conteggio dell'ultima
+istruzione DENTRO quel blocco, non di uno statement esterno precedente. In
+048 l'`UPDATE` e il `GET DIAGNOSTICS` erano nello stesso blocco (corretto).
+In **`049_sgancia_appartamento_da_quadrupla.sql`** no — l'`UPDATE` era fuori
+dal blocco `DO`, quindi la verifica leggeva sempre 0 righe, l'eccezione
+scattava sempre, e il `COMMIT` finale faceva rollback anche dell'`UPDATE`
+riuscito. Nessun dato rimasto inconsistente (rollback atomico), ma la
+migration falliva silenziosamente. Corretto spostando `UPDATE` dentro il
+blocco — verificato che 050 non avesse lo stesso difetto (non ce l'aveva).
+
+**Migration `050_camere_idonee_e_supplementi.sql` — shared inventory
+vero.** Nuova tabella `tipi_camera_camere` (tipo_camera_id ↔ camera_id):
+quali camere fisiche possono soddisfare la ricerca di un dato tipo sulle
+rotte pubbliche del booking engine — sostituisce l'uguaglianza diretta su
+`camere.tipo_camera_id`, che restava un solo valore fisso per camera
+(inadatto a "stessa stanza, più identità"). `camere.tipo_camera_id` non
+toccato: resta l'etichetta fisica di default per planning/reception, non
+più la fonte di verità per la disponibilità online. Nuove colonne
+`tipi_camera.prezzo_base_tipo_id`/`supplemento_percentuale` (Tripla/
+Quadrupla non hanno più una tariffa fissa propria — calcolata sempre dal
+prezzo Matrimoniale corrente, così non si disallinea quando cambia).
+`soggiorni.tipo_camera_venduto_id`: registra quale identità è stata
+VENDUTA, indipendente dall'etichetta fisica della camera assegnata —
+necessario perché con lo shared inventory una prenotazione "Singola" può
+finire su una camera etichettata "Matrimoniale Piccola". Riattivato il tipo
+"Singola" (disattivato dalla 048), creato "Doppia uso singola". Capienze
+impostate esplicitamente per tutti i tipi coinvolti (uno dei sospetti
+iniziali del bug "non trova mai camere per 3/4 adulti", insieme alle
+tariffe/idoneità mancanti). Verificata da Marco: conteggi camere idonee
+esattamente come previsto (4/4/4/4/14/14), nessuna anomalia.
+
+**Codice applicativo aggiornato di conseguenza**: `tariffeController.
+calcolaTariffa` — nuovo ramo ricorsivo per i tipi con `prezzo_base_tipo_id`
+(guardia anti-loop inclusa); `bookingPubblicoController.disponibilita()`/
+`prenota()` — candidati camera via `tipi_camera_camere` invece che
+`camere.tipo_camera_id` diretto, `prenota()` scrive `tipo_camera_venduto_id`;
+`emailPrenotazioni.recuperaSoggiorni` — `COALESCE(tipo_venduto, tipo_fisico)`
+per il nome mostrato in mail, fallback per i soggiorni storici senza il
+nuovo campo. `BookingWidget.tsx`: rimosso l'hack `etichettaCamera` (relabeling
+dinamico "Singola"/"Matrimoniale Piccola" in base agli adulti) introdotto
+quando i due tipi erano ancora fusi in uno — non serve più, ora sono di
+nuovo due tipi distinti con prezzo proprio, la ricerca li restituisce già
+separati.
+
+**Prezzi reali**: listino ufficiale 2026 del titolare (solo pernottamento e
+colazione) — Singola 70-130€, Doppia uso singola 100-140€, Matrimoniale
+90-170€, supplemento 30%/20% su Tripla/Quadrupla dal prezzo Matrimoniale.
+Matrimoniale Piccola (80-160€) segnata esplicitamente dal titolare come
+"da riverificare". Mezza pensione/pensione completa (dati raccolti ma non
+implementati: il motore tariffe ha un solo prezzo per notte, non per
+persona/tipo di pensione) restano fuori scope, annotato in
+`docs/EVOLUTIVE.md` insieme al resto delle policy ancora da definire con
+calma (protezione anti-cannibalizzazione solo "tutto o niente" per ora, non
+una soglia parziale — accettato dal titolare come sufficiente per il primo
+giro).
+
+**Test**: `tests/api/bookingPubblico.test.js` esteso con un nuovo describe
+"Shared inventory (migration 050)" — due tipi sulla stessa camera fisica
+(prenotarne uno esaurisce anche l'altro), `tipo_camera_venduto_id` scritto
+correttamente, prezzo del tipo con supplemento calcolato dal tipo base.
+Bug trovato da Marco durante la prima esecuzione: la fixture PRINCIPALE del
+file (usata da tutti i test preesistenti) creava la camera di test solo con
+`camere.tipo_camera_id` diretto — non bastava più, il controller ora legge
+da `tipi_camera_camere`. Corretto aggiungendo la riga mancante nel
+`beforeAll` principale (stesso pattern già usato correttamente nel nuovo
+describe). **13/13 test verdi, confermato dal titolare.**
+
+**Da fare, non ancora chiuso**: script `backend/scripts/
+creaContenutiCamereMancanti.js` esteso con Singola/Doppia uso singola (in
+attesa che il titolare lo esegua con `--applica`); prezzi marketing Sanity
+di Tripla/Quadrupla (110€) non ricalcolati sulla formula reale (117/108) —
+cosmetico; verifica manuale end-to-end su `/prenota` non ancora fatta dal
+titolare con le tipologie reali.
+
+## 20/08/2026 — Modulo tariffe derivate: periodi stagionali, trattamento (B&B/mezza pensione/pensione completa), bambini
+
+**Contesto**: proseguimento diretto della sessione 19/08 — il titolare
+aveva chiesto come decidere quale prezzo vendere in un dato periodo, e
+quello ha portato a due richieste collegate: (1) rendere il listino più
+semplice da capire per periodo (evolutiva già segnata il 10/08, chiarita
+oggi — riguarda la leggibilità della UI, non un motore di calcolo nuovo);
+(2) aggiungere mezza pensione/pensione completa. Il titolare ha proposto
+lui stesso, dopo due giri di chiarimento, un modello "tariffa madre +
+derivazione" — un solo prezzo B&B inserito a mano (Matrimoniale/Doppia),
+tutto il resto calcolato — con due vincoli confermati esplicitamente: il
+supplemento varia per stagione (non una costante fissa come il +30%/+20%
+di ieri), e i range min/max del listino sono la dichiarazione ufficiale
+fatta alla Regione — mai superabili, non un suggerimento. Confermato anche
+il flusso utente online: data+persone → camera adeguata alla capienza →
+trattamento (in quest'ordine).
+
+**Periodi stagionali** (nuova tabella `periodi_stagionali`, vuota
+all'avvio): entità di riferimento condivisa (nome + date, es. "Alta
+stagione" luglio-agosto), decisa liberamente dal titolare — numero e
+confini dei periodi NON sono fissati nel codice, come richiesto
+esplicitamente ("questo lo decide il titolare nel gestionale impostandolo
+come vuole"). Vincolo anti-sovrapposizione stesso pattern già in uso su
+`tariffe` (`EXCLUDE USING gist`). `tariffe.periodo_id` nuovo, nullable —
+le fasce già inserite restano valide con le loro date dirette.
+
+**Derivazione periodizzata** (nuova tabella `regole_derivazione_tariffe`):
+generalizza (rendendola dipendente dal periodo) la coppia
+`tipi_camera.prezzo_base_tipo_id`/`supplemento_percentuale` introdotta il
+19/08 per Tripla/Quadrupla — da oggi quelle due colonne su `tipi_camera`
+sono STORICHE, non più lette dal codice (la migration 051 ha copiato i
+dati esistenti come righe di fallback `periodo_id = NULL`, nulla perso).
+Ogni regola ha anche `prezzo_minimo`/`prezzo_massimo` — il range
+dichiarato, popolato dal titolare da `/tariffe`, non indovinato in
+migration: nessun numero di listino è stato scritto a mano nel codice,
+proprio perché tocca la dichiarazione alla Regione e un errore lì non è
+accettabile. Finché il titolare non li compila, il clamp è semplicemente
+inattivo per quel tipo/periodo (non un default prudente — nessun vincolo
+applicato, dichiarato esplicitamente sia nel commento della migration sia
+nella UI). Il calcolo (`tariffeController.calcolaPrezzoCameraPerNotte`) è
+NOTTE PER NOTTE, non più un unico calcolo sull'intero soggiorno: un
+soggiorno che attraversa due periodi può avere percentuali diverse notte
+per notte, esattamente come richiesto. Clamp automatico + avviso testuale
+per ogni notte fuori range (mai un blocco 500 — il prezzo viene riportato
+al bordo, l'avviso resta visibile in `/tariffe` per l'admin). Guardia
+anti-loop difensiva: un tipo derivato non può derivare da un altro tipo
+già derivato (mai il caso nei dati reali, ma se capitasse la notte
+risulterebbe scoperta invece di un numero sbagliato).
+
+**Trattamento** (nuova dimensione, `soggiorni.trattamento`, default `'bb'`
+retrocompatibile): B&B/mezza pensione/pensione completa. Supplemento a
+persona per notte, in una nuova tabella `supplementi_trattamento`, per
+CATEGORIA camera ('singola' = capienza_max 1, 'doppia' = capienza_max 2+ —
+non per i 6 tipi singolarmente, coerente con come il titolare ha sempre
+dato i numeri) e per periodo, stesso meccanismo fallback/specifico delle
+regole di derivazione.
+
+**Bambini**, tre decisioni prese in chat (20/08) prima di scrivere
+codice: 0-2 anni non contano MAI ai fini della capienza_max (dormono in
+culla, sempre gratis su camera e trattamento); 3-11 anni contano
+pienamente come un adulto per la scelta della camera, ma hanno uno sconto
+sul supplemento trattamento — FISSO tutto l'anno (non periodizzato,
+scelta esplicita del titolare per semplicità), in una nuova tabella a riga
+singola `configurazione_bambini`, seminata a 0% con nota "DA CONFERMARE
+CON IL TITOLARE" (mai un numero indovinato); 12-17 anni trattati come un
+adulto a tutti gli effetti — nessuna regola specifica è stata data dal
+titolare, annotato come assunzione da riconfermare (anche in
+`docs/EVOLUTIVE.md`). `bookingPubblicoController.normalizzaComposizioneOspiti`
+ora calcola due conteggi distinti: `totaleOspiti` (invariato, headcount
+reale per tassa di soggiorno) e `ospitiChePesanoSuCapienza` (nuovo, esclude
+gli 0-2) — usati in punti diversi apposta, non un'unica variabile.
+
+**Bug auto-trovato e corretto prima di consegnare** (non segnalato da
+Marco stavolta): la riscrittura di `disponibilita()` cambia la forma della
+risposta da `prezzo_totale` singolo a `prezzi: {bb, mezza_pensione,
+pensione_completa}` — questo rompeva silenziosamente due punti del test
+suite esistente (`tests/api/bookingPubblico.test.js`, il test base di
+`GET disponibilita` e il test del supplemento nella describe "Shared
+inventory") oltre alla fixture di quella stessa describe, che impostava il
+supplemento SOLO sulle vecchie colonne `tipi_camera.prezzo_base_tipo_id`/
+`supplemento_percentuale` — non più lette dal nuovo `calcolaPrezzoCameraPerNotte`.
+Trovato rileggendo i consumer esistenti prima di dichiarare il lavoro
+finito, non durante un'esecuzione reale dei test (che restano da eseguire
+dal titolare/tab Code, come da workflow di questo progetto) — corretto
+aggiungendo la riga mancante in `regole_derivazione_tariffe` alla fixture
+e aggiornando le due asserzioni.
+
+**Codice applicativo**: `tariffeController.calcolaTariffa` riscritto —
+firma estesa con `{ trattamento, adulti, bambiniEta }`, nuovi campi di
+ritorno `prezzo_camera`/`supplemento_trattamento`/`avvisi` (in aggiunta a
+`num_notti`/`prezzo_totale`/`notti_scoperte`, retrocompatibili). Nuovo
+controller `tariffeDerivateController.js` + route `/api/tariffe-derivate/*`
+(derivazione, trattamento, configurazione-bambini) e
+`periodiStagionaliController.js` + `/api/periodi-stagionali` — stessa
+azione permesso `tariffe` di sempre, nessuna voce nuova in
+`shared/ruoli.js`. `bookingPubblicoController.disponibilita()`/`prenota()`:
+capienza su `ospitiChePesanoSuCapienza`, tre prezzi per tipo in un'unica
+risposta (nessuna chiamata di rete aggiuntiva quando l'ospite cambia
+trattamento sul sito), `prenota()` valida e salva il trattamento scelto.
+`emailPrenotazioni.js`: mostra il trattamento scelto (se diverso da B&B)
+accanto al nome camera, sia nell'elenco semplice sia nella tabella
+dettagliata. `/tariffe` (gestionale): 4 nuove sezioni — Periodi stagionali,
+Regole di derivazione, Supplemento trattamento, Bambini — oltre al
+listino esistente ora collegabile a un periodo. `BookingWidget.tsx`
+(sito-hotel): selettore trattamento dopo la scelta camera (mai prima,
+come da flusso confermato), capienza lato client allineata alla stessa
+regola bambini 0-2/3+ del backend, prezzo e caparra ricalcolati sul
+trattamento scelto — nessuna nuova chiamata di rete.
+
+**Test**: nuova describe "Tariffe derivate — periodi, clamp, trattamento,
+bambini" in `tests/api/bookingPubblico.test.js` — percentuale di
+derivazione diversa dentro/fuori un periodo, clamp sul massimo dichiarato
+con avviso, supplemento trattamento con sconto bambini, capienza 0-2
+esclusa/3+ inclusa, `prenota()` che salva il trattamento. **18/18 test
+verdi, confermato dal titolare** (5 nuovi + 13 preesistenti) — nessuna
+correzione necessaria, il codice del booking engine era già coerente con
+la migration 051. Log noise confermato invariato e atteso: sandbox Resend
+che rifiuta `@example.com`, firma webhook Stripe finta rifiutata (test
+intenzionale).
+
+**Da fare, non ancora chiuso**: migration 051 e suite di test entrambe
+confermate dal titolare — resta solo la parte che spetta a lui popolare da
+UI, non a un test automatico: il titolare deve popolare da `/tariffe` i
+range min/max dichiarati (oggi nessun clamp attivo su nessun tipo
+derivato), la percentuale reale di sconto bambini (oggi 0%, placeholder) e
+almeno un supplemento trattamento (senza il quale mezza pensione/pensione
+completa risultano sempre "non disponibile" su `/prenota`, pur avendo il
+motore di calcolo pronto); verifica manuale end-to-end del flusso
+trattamento su `/prenota` (sito) non ancora fatta; assunzione bambini
+12-17 = adulto a tutti gli effetti da
+riconfermare col titolare.
+
+## 20/08/2026 (seguito) — Redesign UI `/tariffe`: timeline visiva al posto
+delle tendine
+
+Stessa giornata del modulo tariffe derivate sopra: appena mostrata la prima
+versione dell'UI (`SezioneListino`/`SezioneDerivazione`/`SezioneTrattamento`
+come sezioni separate, ciascuna con le proprie tendine per tipo camera,
+periodo, tipo base), il titolare l'ha bocciata esplicitamente — "non
+riesco a capire come utilizzare tutte queste tendine... o l'usabilità per
+un albergatore è immediata o diventa complesso, lo è per me che l'ho
+progettato". Richiesta esplicita: guardare come si comportano i competitor
+(Cloudbeds prima, poi su richiesta anche Slope/Octorate/TeamSystem) e
+proporre una direzione diversa prima di toccare codice — coerente con
+plan-then-execute, nessuna riga scritta finché non confermata.
+
+Ricerca competitor (WebSearch + web_fetch, nessuna scrittura in questa
+fase): Cloudbeds espone una "derived rate plan" con un solo toggle +
+dropdown + percentuale, e gestisce la stagionalità con "intervalli"
+DENTRO lo stesso rate plan (non un'entità separata da referenziare altrove)
+— fonti: myfrontdesk.cloudbeds.com articoli "Rate Plans and Packages" e
+"Base Rates and Availability Matrix". Slope non ha aggiunto nulla sul
+fronte periodi (stessa logica madre/derivata già implementata, esempio
+statico senza stagionalità) — fonte: slope.it, "Come creare il tariffario
+per il tuo hotel". Octorate separa esplicitamente "piano tariffario"
+(trattamento + politiche cancellazione/incasso) da "regola di derivazione"
+(correzione prezzo tra tipologie), con avviso di non compilare la
+correzione prezzo in entrambi i posti per non sommarla due volte — fonte:
+community.octorate.com, "Piani tariffari e configurazione tariffe". Nessuno
+dei tre mostra un selettore visivo dei periodi diverso da un form con due
+date — un "Editor Avanzato" di Octorate citato in una ricerca precedente
+non è stato ritrovato/confermato in questo giro, quindi non è stato preso
+come riferimento.
+
+Sintesi proposta al titolare (mockup via `mcp__visualize__show_widget`,
+mai codice reale finché non confermato): un'unica schermata per tipologia,
+con una timeline dell'anno su cui si trascina per creare un periodo — il
+periodo nasce come conseguenza dell'uso, non come prerequisito da
+configurare altrove prima. Confermato ("già meglio di quanto abbiamo ora"),
+poi esteso a tutte le tipologie/categorie con tre decisioni chiarite via
+piano scritto: (1) il periodo creato è sempre condiviso tra madre/derivate/
+trattamento, mai privato di una tipologia; (2) se il trascinamento si
+sovrappone a un periodo esistente lo aggancia in automatico SENZA avviso
+(il titolare aveva prima chiesto un avviso con scelta, poi ci ha ripensato
+esplicitamente: "non mettere avvisi"); (3) la sezione "Periodi" (CRUD
+esplicito nome/date) resta ma secondaria, non più la prima cosa che si
+vede.
+
+Implementazione, confermata con "si" sul piano:
+- `frontend/components/tariffe/TimelinePeriodi.jsx` (nuovo) — striscia di
+  12 mesi, granularità mese (non giorno esatto, scelta deliberata per
+  restare semplice su tablet). Pointer Events (non mouse/touch separati)
+  per drag cross-device: pointerdown su un mese avvia il trascinamento,
+  pointermove legge il mese sotto il puntatore via
+  `document.elementFromPoint` + `data-mese` sulle celle (non pointerenter
+  per-cella, che su touch non si propaga tra elementi diversi), pointerup
+  lo finalizza. Colora i blocchi in base a due prop generiche
+  (`coloratiIds`: Set di periodo.id "configurati" nel contesto corrente;
+  `fallbackAttivo`: sfondo tinto su tutta la striscia se esiste una regola/
+  supplemento "sempre valida") — il componente non sa nulla di tariffe/
+  regole/supplementi, riceve solo ciò che deve colorare.
+- `frontend/components/tariffe/PannelloPrezzoTipologia.jsx` (nuovo) — due
+  modalità decise dal genitore in base ai dati (non da un elenco fisso di
+  nomi tipo camera): 'madre' mostra prezzo diretto per notte (upsert
+  manuale POST/PATCH, perché `/api/tariffe` non fa upsert lato server);
+  'derivata' mostra percentuale + min/max, sempre POST (upsert reale lato
+  server su tipo+periodo, già presente in `tariffeDerivateController.js`
+  dalla mattina). Per 'madre' non esiste il concetto di "sempre valida" —
+  semplificazione voluta: da questa UI in poi ogni prezzo diretto nasce
+  legato a un periodo, mai più a sole date libere (le vecchie fasce senza
+  periodo restano valide e modificabili dalla sezione Periodi secondaria).
+- `frontend/components/tariffe/PannelloSupplementoTrattamento.jsx` (nuovo)
+  — stessa timeline, selettore mezza pensione/pensione completa dentro il
+  pannello (la timeline è condivisa dai due trattamenti della stessa
+  categoria, non serve raddoppiarla).
+- `frontend/app/tariffe/page.jsx` — riscritto: `SezioneListino` +
+  `SezioneDerivazione` sostituite da un'unica `SezionePrezziTipologia`
+  (tendina tipologia — l'unica tendina rimasta, di navigazione non di
+  inserimento dati, il titolare l'ha accettata esplicitamente prima di
+  iniziare); `SezioneTrattamento` riscritta per usare la stessa timeline;
+  `SezionePeriodi` spostata in fondo dentro un `<details>` (collassata di
+  default, zero dipendenze nuove). `caricaBase()` ora carica tariffe/
+  regole di derivazione/supplementi trattamento SENZA filtro (una sola
+  chiamata ciascuna, tutto il dataset) invece che per-tipo ad ogni cambio
+  di tendina — dataset piccolo (poche tipologie/periodi), preferito a un
+  giro di rete ad ogni click sulla timeline.
+
+Creazione periodo dalla timeline: `window.prompt()` nativo per il nome
+subito dopo il trascinamento (nessun modale nuovo costruito, per restare
+nello scope) — se annullato, il trascinamento non produce nulla.
+
+Verificato solo con `esbuild` (sintassi, tutti e 4 i file puliti) e
+`npx tsc --noEmit` (intero frontend, zero errori). **Non ancora verificato
+in UI dal titolare** — in particolare: il trascinamento touch su tablet
+reale (Pointer Events testati solo per correttezza logica, mai su
+hardware), l'aggancio silenzioso in caso di sovrapposizione, e il flusso
+end-to-end di un nuovo periodo creato dalla timeline con conferma del nome
+via prompt. Dettaglio anche in `docs/EVOLUTIVE.md`.
+
+## 20/08/2026 (terzo tentativo) — Redesign UI `/tariffe`, chiuso: schede +
+etichette periodo al posto della timeline
+
+La timeline appena costruita è stata bocciata dal titolare non appena
+vista in UI ("non ci siamo, i tuoi mockup iniziali erano molto più
+chiari... siamo sempre punto a capo") — mai arrivata a un test reale. La
+lezione, esplicitata a me stesso prima di ripartire: ero passato dal
+mockup approvato direttamente al codice reale senza fartelo rivedere come
+mockup — da qui in avanti tornato su un mockup (`mcp__visualize__show_widget`)
+prima di ogni riga di codice, con conferma esplicita ad ogni passaggio.
+
+Iterazione sul mockup (nessun codice toccato in questa fase): prima
+versione a "etichette periodo cliccabili" dentro le due card Matrimoniale/
+Tripla già mostrate in mattinata — un errore di sintassi nello script del
+primo tentativo ha reso il widget silenzioso (si vedevano solo le
+intestazioni, niente contenuto), risolto riscrivendo lo script con
+`createElement`/`textContent` invece di stringhe HTML concatenate con
+virgolette annidate, più fragili da sbagliare. Confermato dal titolare
+("questo mi piace di più"). Poi due iterazioni di rifinitura, entrambe
+sul mockup prima del codice: rinominate le etichette "Min/Max Regione" in
+"Min/Max tariffa" (hanno senso solo sulla scheda derivata, non sulla
+madre, dove min/max non esistono); aggiunta la terza scheda "Supplemento
+trattamento" nello stesso stile e reso funzionante il flusso "+ nuovo
+periodo" (form inline nome+due date, il periodo creato compare come
+etichetta condivisa in tutte e tre le schede, vuoto finché non gli si
+imposta un valore in ciascuna — dimostrato apposta tenendo le tre schede
+impilate nel mockup, cosa che nella pagina vera NON succede, vedi sotto).
+
+Due domande del titolare prima di dare il via libera al codice, entrambe
+rispondono a punti non ovvi dell'architettura: (1) con 5 tipologie
+derivate/madre più trattamento e bambini, se le schede stessero tutte
+impilate sulla pagina vera si tornerebbe al problema di leggibilità del
+primo tentativo da un'altra porta — risposto proponendo una fila di
+etichette tipologia in alto (non più tendina) che mostra UNA scheda alla
+volta, stessa card riusata, accettato; (2) se una futura funzionalità di
+stop-sell per tipo/periodo starebbe in questa pagina — risposto che oggi
+non esiste da nessuna parte (nessuna tabella), che concettualmente ci
+starebbe (stesso bisogno tipologia+periodo) ma tocca `disponibilita()` nel
+booking pubblico, non il calcolo prezzo, quindi è un piano a parte quando
+il titolare vorrà affrontarlo — non toccato in questa sessione, solo
+annotato in `docs/EVOLUTIVE.md`.
+
+Implementazione, via libera con "inizia con questa parte così la
+chiudiamo":
+- `frontend/components/tariffe/ChipPeriodi.jsx` (nuovo) — riga di
+  etichette periodo riutilizzabile da tutte le schede: etichetta "Tutto
+  l'anno" opzionale (`allowFallback`, assente per la scheda madre — nessun
+  concetto di fallback per il prezzo diretto), un'etichetta per periodo,
+  "+ nuovo periodo" con form inline (nome + due `CampoData`). A differenza
+  della timeline bocciata, qui non c'è più un gesto di trascinamento da
+  agganciare in automatico in caso di sovrapposizione: se le date scritte
+  a mano si sovrappongono a un periodo esistente, il backend risponde 409
+  e l'errore viene mostrato così com'è — decisione esplicita, "niente
+  avvisi" valeva solo per il trascinamento che non esiste più.
+- `frontend/components/tariffe/SchedaPrezzoTipologia.jsx` (nuovo,
+  sostituisce `PannelloPrezzoTipologia.jsx` + l'uso di `TimelinePeriodi`)
+  — scheda auto-contenuta: gestisce da sola lo stato di selezione periodo/
+  fallback (non più nella pagina), mostra `ChipPeriodi` + form che cambia
+  forma da solo (prezzo diretto per la madre, percentuale+min/max per le
+  derivate, dedotto dai dati). Aggiunta rispetto al secondo tentativo:
+  anteprima di calcolo dal vivo sulla scheda derivata (prezzo base del
+  tipo madre nello stesso periodo → calcolato → eventuale clamp), ma SOLO
+  quando è selezionato un periodo specifico — con "Tutto l'anno" il
+  prezzo base cambia notte per notte secondo le fasce dirette, non esiste
+  un singolo numero onesto da mostrare, quindi l'anteprima resta nascosta
+  con una nota invece di mostrare un calcolo potenzialmente sbagliato.
+- `frontend/components/tariffe/SchedaTrattamento.jsx` (nuovo, sostituisce
+  `PannelloSupplementoTrattamento.jsx` + l'uso di `TimelinePeriodi`) —
+  stesso pattern, con i toggle categoria/trattamento sopra `ChipPeriodi`;
+  include già il proprio contenitore scheda (`SezioneTrattamento` come
+  wrapper separato non serve più, eliminata da `page.jsx`).
+- `frontend/app/tariffe/page.jsx` — `SezionePrezziTipologia` non usa più
+  una tendina: le tipologie camera sono una fila di etichette in alto,
+  UNA `SchedaPrezzoTipologia` visibile alla volta per la tipologia scelta
+  (risposta alla prima domanda del titolare sopra). `SezioneTrattamento`
+  tolta, sostituita dalla chiamata diretta a `SchedaTrattamento`
+  (contiene già la propria card). `SezionePeriodi` invariata, resta
+  secondaria e collassata.
+- `TimelinePeriodi.jsx`, `PannelloPrezzoTipologia.jsx`,
+  `PannelloSupplementoTrattamento.jsx` — non eliminati (la cancellazione
+  nella cartella dell'utente richiede conferma esplicita, non necessaria
+  per file già non importati da nessuna pagina) ma svuotati in stub con
+  commento "SUPERATO", per non lasciare codice morto silenzioso nel
+  repository.
+
+Verificato con `esbuild` (4 file nuovi/toccati, tutti puliti) e
+`npx tsc --noEmit` (intero frontend, zero errori). **Non ancora verificato
+in UI dal titolare** — in particolare il form "+ nuovo periodo" e
+l'anteprima di calcolo sulla scheda Tripla. L'idea del titolare di una
+vista planning (righe=tipologie, colonne=mesi, celle=prezzo) sotto queste
+schede resta annotata in `docs/EVOLUTIVE.md`, deliberatamente non
+affrontata in questa sessione su sua stessa indicazione.
+
+## 22/08/2026 — Code review incrociata (tab Code): triage e fix Tier 1 (#4, #1), verifica #3
+
+Il tab Code (sessione Claude Code separata di Marco) ha eseguito una review
+di sicurezza/correttezza su entrambi i repo (`gestionale-hotel` e
+`sito-hotel`) e riportato 10 finding prioritari più una lista di item
+scartati/minori, fermandosi esplicitamente prima di una Fase 2 di verifica
+formale per-candidato (sub-agent dedicato per voto CONFIRMED/PLAUSIBLE/
+REFUTED) per risparmiare token — riducendo così da ~30 candidati a 10
+finding riportati "a fiuto". Marco ha chiesto prima un giudizio indipendente
+sulle priorità ("Dimmi cosa ne pensi e quali azioni secondo te sono
+prioritarie senza iniziare alcuna operazione correttiva"), poi via libera
+esplicito a correggere ("cominciamo a risolvere, poi alla fine fammi
+riassunto"). Ri-prioritizzati i 10 finding in tre tier per rischio
+economico/dati diretto (non solo l'ordine "dal più grave" di Code, sempre
+verificando ogni claim sul codice reale prima di agire, non fidandosi solo
+della prosa del report).
+
+### Fix #4 — prezzo derivato preso da una riga non ordinata
+
+Bug **introdotto da questa stessa area di lavoro** il 20/08 (redesign UI
+`/tariffe`): `SchedaPrezzoTipologia.jsx` permette di scegliere "Deriva da"
+indipendentemente per ciascun periodo di una stessa tipologia derivata —
+ma il motore di calcolo lato server, `calcolaPrezzoCameraPerNotte`
+(`backend/controllers/tariffeController.js`), risolveva il tipo camera
+base UNA SOLA VOLTA leggendo `regoleResult.rows[0]` (query senza
+`ORDER BY`), assumendo implicitamente che fallback e tutte le regole
+per-periodo di una tipologia condividessero sempre la stessa base. Prima
+del redesign questa assunzione era sempre vera (un solo "Deriva da" per
+tipologia, impostabile solo globalmente); con la nuova UI è falsa non
+appena si sceglie una base diversa per periodi diversi sulla stessa
+tipologia — nel peggiore dei casi si addebita all'ospite un prezzo
+calcolato sulla base camera sbagliata.
+
+Corretto: la base viene ora risolta **per regola abbinata, notte per
+notte** (Map `periodo_id → regola`, fallback separato), non più
+globalmente una volta sola; il controllo anti-loop di derivazione (una
+tipologia non può derivare — direttamente o indirettamente — da se stessa)
+è stato esteso per coprire TUTTE le basi distinte effettivamente in uso
+dalle regole di quella tipologia, non solo la prima incontrata. Nuovo test
+di regressione in `tests/api/bookingPubblico.test.js`
+(`describe('Tariffe derivate — basi diverse tra fallback e periodo...')`):
+tre casi — soggiorno solo in fallback (base A), soggiorno solo dentro un
+periodo (base B), soggiorno a cavallo tra i due — verificano che il
+prezzo per notte usi sempre la base corretta tratto per tratto (il terzo
+caso, quello che prima avrebbe fallito silenziosamente, verifica
+esplicitamente `prezzo_totale = notte_fallback(base A) + notte_periodo(base B)`).
+
+### Fix #1 — race cron scadenza hold / webhook Stripe
+
+`backend/jobs/scadenzaHoldBookingEngine.js` (cron ogni minuto, per scelta
+di design non chiama mai Stripe — vedi commento in testa al file) può
+marcare una prenotazione online `'interrotta'` (e i suoi soggiorni
+cancellati) PRIMA che il webhook `payment_intent.succeeded` di un
+pagamento riuscito nel frattempo venga elaborato — uno scenario
+sequenziale realistico sulla finestra di ~60s del cron più la latenza di
+consegna Stripe (non una vera race a livello di lock DB istantaneo: il
+`SELECT ... FOR UPDATE` del webhook già impedisce l'interleaving
+simultaneo). Prima, il ramo `if (stato !== 'opzione')` di
+`stripeWebhookController.js` si limitava a fare COMMIT e rispondere 200 in
+OGNI caso di stato diverso da `'opzione'`, assumendo sempre un webhook
+duplicato o un caso già gestito — ma se il cron aveva già interrotto la
+prenotazione e il pagamento non era mai stato marcato `'completato'` né
+già rimborsato, l'ospite restava addebitato su Stripe con una prenotazione
+morta e nessun rimborso automatico.
+
+Corretto: in quel ramo si verifica ora esplicitamente se esiste ancora una
+riga `pagamenti` con quell'`external_payment_id` in stato `'pending'`; se
+sì, si marca `'rimborsato'`, si fa COMMIT, poi (fuori dalla transazione
+DB, come da pattern già in uso nello stesso file per la chiamata Stripe
+post-commit) si chiama `stripe.refunds.create`, si logga con
+`console.error` per verifica manuale dello stato camera, e si invia la
+stessa notifica già usata per il caso "hold scaduto" — deliberatamente
+SENZA tentare di far rivivere la prenotazione (la camera potrebbe essere
+già stata riassegnata), stessa filosofia già scelta il 19/08/2026 per il
+caso gemello "pagamento arrivato dopo la scadenza" nello stesso file.
+Nuovo test in `tests/api/bookingPubblico.test.js`
+(`'rimborsa anche se il cron ha già interrotto la prenotazione prima del
+webhook (race)'`): crea una prenotazione reale, conferma il PaymentIntent
+via API Stripe di test, esegue a mano le stesse due UPDATE del cron per
+simulare la race, poi invia il webhook firmato reale e verifica sia il
+rimborso sia che un secondo invio dello stesso evento (Stripe può
+reinviare) non generi un secondo rimborso.
+
+### #3 — tassa di soggiorno online "solo intestatario": verificato, NON riproducibile
+
+Finding di Code: la tassa di soggiorno stimata nella mail di conferma per
+le prenotazioni online conterebbe solo l'intestatario, non l'intera
+comitiva. Verifica sul codice attuale: `bookingPubblicoController.prenota`
+scrive già, per OGNI prenotazione fatta dal sito, `num_ospiti = totaleOspiti`
+(headcount pieno, non 1) e `composizione_ospiti = { adulti, bambini_eta }`
+sulla riga `soggiorni` — estensione fatta il 19/08/2026 (Booking Engine v2,
+Fase A), un giorno prima della review di Code. `calcolaTassaSoggiorno`
+(`backend/lib/emailPrenotazioni.js`, righe ~153-185) usa il ramo esatto
+(`adulti + bambiniTassabili`, con esenzione età reale) ogni volta che
+`composizione_ospiti.bambini_eta` è un array — condizione sempre vera per
+il canale `sito_diretto`. Il ramo di stima (`num_ospiti || 1`) resta
+raggiungibile solo da prenotazioni telefoniche/storiche prive di quel
+campo, ed è già onestamente etichettato come importo "indicativo"
+(`esatta: false`, mostrato in mail) — comportamento voluto e documentato
+nel commento in testa alla funzione, non un bug.
+
+Conclusione: nessuna modifica necessaria. Il finding molto probabilmente si
+riferiva a uno stato del codice precedente all'estensione del 19/08, o
+Code non l'aveva vista. Non riaprire finché non emerge un caso concreto
+riprodotto con dati reali.
+
+### Non affrontati in questa sessione (Tier 2/3 del triage)
+
+In attesa di indicazione di Marco su come proseguire: nome ospite non
+sanificato nella mail di conferma (rischio HTML injection); chiamata
+Stripe eseguita dentro una transazione DB aperta nel webhook (tiene la
+connessione impegnata durante una chiamata di rete esterna); l'assunzione
+di migration 050 che "Singola sopravvive sempre a 048" mai verificata
+esplicitamente; camera nuova non collegata automaticamente alla vendita
+online (serve un passaggio manuale in `tipi_camera_camere`); percentuale
+caparra 30% duplicata a mano tra `sito-hotel` e gestionale invece di una
+sola fonte; `/planning-camere` senza indicazione di trattamento/tipo
+camera venduto sulla barra; tripla query di calcolo prezzo per tipologia
+(bb/mezza pensione/pensione completa) invece di una sola parametrizzata.
+Un ultimo item scartato da Code ("`prezzo_notte: 0` trattato come 'nessun
+valore' via COALESCE, ora raggiungibile dalla nuova UI") non è stato
+accettato come non-problema senza il file:riga esatto citato da Code —
+resta da chiarire quando servirà, non messo in task list.
+
+### Verifica e limiti
+
+Fix scritti e verificati solo con `node -c` (sintassi) dal sandbox Cowork
+— nessun accesso al database da qui, per convenzione di progetto. Marco ha
+poi fatto eseguire l'intera suite dal tab Code: **940/940 test verdi,
+33/33 suite passate (69.9s), nessuna regressione** — inclusi entrambi i
+test di regressione dedicati (basi diverse per periodo, race cron/webhook),
+confermati contro il DB reale, non solo sintassi.
+
+### Fuori scope — ricerca Numia S.p.A./PayWay (BCC)
+
+Su richiesta di Marco, valutata Numia/PayWay (BCC, dove Hotel del Golfo ha
+già un conto) come alternativa a Stripe/Nexi per il booking engine. Il
+Foglio Informativo pubblico mostra solo un tetto regolamentare (fino al
+6% + 1-2€ a transazione, **+3% specifico per Card Not Present** — esattamente
+il caso delle prenotazioni online —, minimo 200€/mese di commissione
+indipendentemente dal volume), non il prezzo reale negoziato (Documento di
+Sintesi, mai pubblicato online, va richiesto in filiale). L'accesso alle
+API richiede un'istruttoria di approvazione, a differenza della
+documentazione tecnica aperta di Stripe/Nexi. Confronto dato a Marco:
+Stripe 1.5%+0.25€ (carte UE) / 3.25%+0.25€ (extra-UE), nessun fisso/mensile;
+Nexi XPay 0-14.90€/mese secondo piano + 1.20-1.35%+0.25-0.40€ a
+transazione. Detto esplicitamente a Marco che nessun modello (incluso
+Opus) può colmare la lacuna sul prezzo reale Numia: è una cifra
+commerciale privata mai pubblicata, non un limite di conoscenza del
+modello — l'unico modo per saperlo è chiedere in filiale BCC il Documento
+di Sintesi. Nessuna modifica al codice.
+
+Salvata anche una nuova regola comportamentale in memoria persistente, su
+richiesta esplicita di Marco nel contesto di questa domanda: avvisare
+sempre PRIMA di avviare un'attività (mia o del tab Code) che consumerebbe
+la stragrande maggioranza dei suoi token — non bastano più le stime dopo
+il via libera.
+
+## 23/08/2026 — Code review 22/08: chiusi tutti e 7 i finding Tier 2/3
+
+Continuazione della sessione 22/08/2026: i 7 finding Tier 2/3 rimasti
+aperti dopo i fix Tier 1 sono stati chiusi tutti in questa sessione, 4
+"puri" (nessuna decisione da Marco necessaria) seguiti da 3 su cui Marco
+ha dato indicazione esplicita prima di scrivere codice.
+
+### I 4 fix puri
+
+- **Nome ospite non sanificato**: non era nella mail di conferma vera e
+  propria (`inviaConfermaPrenotazione`, già protetta da
+  `renderizzaCorpoEmail`/`escapeTesto`) ma in `inviaNotificaHoldScaduto`
+  (`backend/lib/emailPrenotazioni.js`) — l'unica delle email del file a
+  interpolare `destinatario.nome` crudo nell'HTML, raggiungibile da un
+  ospite anonimo del Booking Engine Diretto (nome auto-inserito nel form
+  pubblico). Aggiunto `escapeTesto`, già importato nel file.
+- **Chiamata Stripe dentro una transazione DB aperta**: anche qui la
+  sintesi originale indicava "nel webhook", ma verificato sul codice reale
+  che in `stripeWebhookController.js` ogni chiamata Stripe era già
+  post-commit (corretto il 22/08 per il finding #1). Il caso vero era
+  `bookingPubblicoController.prenota()`: `stripe.paymentIntents.create`
+  girava tra BEGIN e COMMIT, tenendo impegnati connessione DB e lock
+  `FOR UPDATE SKIP LOCKED` sulla camera per l'intera round-trip verso
+  Stripe. Spostato dopo COMMIT (la camera resta comunque riservata dal
+  vincolo di esclusione su `soggiorni` + TTL dell'hold, non dal lock di
+  transazione); se la creazione del PaymentIntent fallisce, la
+  prenotazione viene liberata subito (non si aspetta la scadenza naturale
+  del hold); gestito anche il caso limite "PaymentIntent creato ma riga
+  `pagamenti` non scritta" (loggato per intervento manuale).
+- **Test dedicato sull'assunzione migration 048→050**: nuovo
+  `tests/api/migrazioneShareInventory.test.js`. A differenza del resto
+  della suite non usa fixture sintetiche — legge lo stato REALE di
+  `tipi_camera`/`camere`/`tipi_camera_camere`, perché è proprio quello
+  stato (non un caso inventato) che l'assunzione "dopo 048 esiste ancora
+  un tipo chiamato Singola" riguarda. Verifica anche che le 4 camere
+  fisiche consolidate (2/7/12/21) puntino tutte a "Matrimoniale Piccola" e
+  che il pool condiviso in `tipi_camera_camere` sia corretto.
+- **Tripla query di calcolo prezzo per tipologia**: `disponibilita()`
+  chiamava `calcolaTariffa` tre volte per ogni tipo camera in lista (una
+  per trattamento bb/mezza pensione/pensione completa), ripetendo tre
+  volte le stesse query di `calcolaPrezzoCameraPerNotte` — che NON dipende
+  dal trattamento. Nuova `calcolaTariffaPerTrattamenti` in
+  `tariffeController.js`: calcola il prezzo camera una sola volta e lo
+  riusa per tutti i trattamenti richiesti, restano per-trattamento solo le
+  chiamate a `calcolaSupplementoTrattamento` (quelle sì dipendono dal
+  trattamento). `calcolaTariffa` (usata da `/api/tariffe/calcola` e da
+  `prenota()`) ora è un wrapper sopra la nuova funzione, stesso
+  comportamento di prima. Test di equivalenza in `tests/api/tariffe.test.js`
+  (il risultato per "bb" deve restare identico chiamato da solo o dentro
+  un batch con altri trattamenti).
+
+### I 3 fix con decisione di Marco
+
+Marco ha scelto, senza ambiguità sulle prime due, con un chiarimento
+richiesto e ottenuto sulla terza:
+
+- **Camera nuova non collegata alla vendita online**: auto-collegamento
+  automatico. Nuova funzione `collegaVenditaOnline()` in
+  `camereController.js`, chiamata sia da `crea()` (se `tipo_camera_id` è
+  passato alla creazione) sia da `aggiornaTipo()` (PATCH `/:id/tipo`, il
+  percorso più comune: camera creata senza tipo, assegnato dopo).
+  Puramente ADDITIVO — mai una DELETE: una camera può essere idonea per
+  più tipi contemporaneamente (shared inventory, migration 050) e le
+  associazioni aggiuntive restano una decisione manuale del titolare;
+  rimuovere la categoria (`tipo_camera_id: null`) NON scollega
+  `tipi_camera_camere`, verificato con un test dedicato. Aggiornati anche
+  gli `afterAll` dei test esistenti su `PATCH /:id/tipo`: `tipi_camera_camere`
+  non ha `ON DELETE CASCADE` (migration 050), la DELETE su `camere` avrebbe
+  iniziato a fallire per vincolo di chiave esterna non pulendo prima
+  quella tabella.
+- **Percentuale caparra duplicata sito-hotel/gestionale**: endpoint del
+  gestionale, letto a runtime — stesso pattern già in uso per
+  `termini-cancellazione`. Nuovo `GET /api/booking-pubblico/configurazione`
+  (`{ percentuale_caparra: PERCENTUALE_CAPARRA }`), nessuna query DB,
+  nessun dato sensibile. `BookingWidget.tsx` lo legge nello stesso
+  `useEffect` di `terminiCancellazione`, con 0.3 come fallback locale SOLO
+  se la chiamata fallisce (mai bloccare la stima mostrata all'utente per
+  un problema di rete — l'importo autorevole resta comunque sempre quello
+  restituito da `POST /prenota`, mai questo valore lato client).
+- **`/planning-camere` senza indicazione trattamento/tipo venduto**:
+  chiesto chiarimento a Marco su dove (colonna camera vs barra
+  prenotazione) — risposta: nel dettaglio prenotazione (click) E nel
+  tooltip (hover), legati alla prenotazione, non alla riga camera.
+  `prenotazioniController.griglia()` e `.dettaglio()` non restituivano
+  affatto `trattamento`/tipo camera venduto — aggiunti a entrambe le
+  query con lo stesso criterio COALESCE(tcv.nome, tc.nome) già in uso in
+  `emailPrenotazioni.js` (preferisce sempre `tipo_camera_venduto_id`,
+  ricade sull'etichetta fisica di default solo per soggiorni storici senza
+  quel dato) — così mail, planning e dettaglio mostrano sempre lo stesso
+  tipo per lo stesso soggiorno. Frontend: nuova mappa
+  `ETICHETTA_TRATTAMENTO` (duplicata da quella di `emailPrenotazioni.js`,
+  non importabile lato browser — se cambia il testo va aggiornato in
+  entrambi i posti), aggiunta una riga nel pannello dettaglio per soggiorno
+  e una riga in coda al nome nel tooltip della barra. Nuovo test in
+  `tests/api/prenotazioni.test.js` (griglia + dettaglio, campo per campo).
+
+### Verifica e limiti
+
+Come per la sessione 22/08: scritto e verificato solo con `node -c`
+(backend) ed `esbuild` — verifica di sintassi/JSX, non di type-checking né
+di logica — sui file `.jsx`/`.tsx` toccati (`planning-camere/page.jsx`,
+`BookingWidget.tsx`) dal sandbox Cowork. **Nessun accesso al database,
+nessuna esecuzione della suite Jest da questo ambiente.** Marco esegue
+ora `git add`/`commit`/`push` + test completi dal tab Code — risultato non
+ancora confermato a fine sessione.

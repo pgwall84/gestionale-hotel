@@ -130,6 +130,11 @@ async function aggiornaTipo(req, res) {
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Camera non trovata.' });
     }
+    // Fix 23/08/2026 (code review 22/08, Tier 2) — vedi collegaVenditaOnline.
+    // Una camera assegnata a una categoria DOPO la creazione (percorso più
+    // comune: crea() senza tipo, poi lo si assegna da qui) deve risultare
+    // idonea alla vendita online tanto quanto una assegnata in creazione.
+    await collegaVenditaOnline(tipo_camera_id ?? null, result.rows[0].id);
     res.json(result.rows[0]);
   } catch (err) {
     if (err.code === '23503') {
@@ -230,6 +235,36 @@ async function oggi(req, res) {
 // Usa la chiave 'error' (inglese), come aggiornaTipo — codice nuovo, stessa
 // convenzione già adottata per quella funzione (vedi nota lì sopra).
 
+// Collega una camera al suo tipo_camera in tipi_camera_camere — la tabella
+// di idoneità letta dal Booking Engine Diretto (migration 050). Fix
+// 23/08/2026 (code review 22/08, Tier 2): prima questo collegamento andava
+// fatto SEMPRE a mano (script/SQL diretto) dopo aver creato o riassegnato
+// una camera, altrimenti restava invisibile alla vendita online pur
+// comparendo normalmente in reception/planning. Puramente ADDITIVO — mai
+// una DELETE: una camera può essere idonea per PIÙ tipi contemporaneamente
+// (shared inventory, es. camere 2/7/12/21 idonee sia a "Singola" sia a
+// "Matrimoniale Piccola", vedi migration 050) e quelle associazioni
+// aggiuntive restano sempre una decisione manuale del titolare in
+// Impostazioni▸Camere — qui si collega solo l'etichetta fisica di default
+// (camere.tipo_camera_id), mai si tocca o rimuove un collegamento esistente.
+// ON CONFLICT DO NOTHING: la coppia potrebbe già esistere (es. tipo
+// riassegnato allo stesso valore), non è un errore.
+async function collegaVenditaOnline(tipoCameraId, cameraId) {
+  if (!tipoCameraId) return;
+  try {
+    await pool.query(
+      `INSERT INTO tipi_camera_camere (tipo_camera_id, camera_id) VALUES ($1, $2) ON CONFLICT DO NOTHING`,
+      [tipoCameraId, cameraId]
+    );
+  } catch (err) {
+    // Best-effort: la camera/il tipo sono già stati creati/aggiornati con
+    // successo a questo punto — un problema qui non deve far fallire
+    // l'operazione principale, solo essere loggato per un collegamento
+    // manuale successivo.
+    console.error(`collegaVenditaOnline (tipo=${tipoCameraId}, camera=${cameraId}) — errore imprevisto:`, err.message);
+  }
+}
+
 // POST /api/camere — crea una nuova camera fisica.
 // `nome` è NOT NULL sullo schema reale (scoperto in verifica locale, non
 // documentato da nessuna migration — vedi nota sulla tabella `camere` non
@@ -255,6 +290,8 @@ async function crea(req, res) {
        RETURNING *`,
       [numeroPulito, nomeFinale, piano === '' || piano == null ? null : Number(piano), tipo_camera_id || null]
     );
+    // Fix 23/08/2026 (code review 22/08, Tier 2) — vedi collegaVenditaOnline.
+    await collegaVenditaOnline(tipo_camera_id || null, result.rows[0].id);
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23505') {

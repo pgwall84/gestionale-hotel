@@ -25,6 +25,8 @@ const soggiorniRoutes    = require('./routes/soggiorni');
 const gruppiRoutes       = require('./routes/gruppi');
 const tipiCameraRoutes   = require('./routes/tipiCamera');
 const tariffeRoutes      = require('./routes/tariffe');
+const periodiStagionaliRoutes = require('./routes/periodiStagionali');
+const tariffeDerivateRoutes = require('./routes/tariffeDerivate');
 const pacchettiRoutes    = require('./routes/pacchetti');
 const canaliOtaRoutes    = require('./routes/canaliOta');
 const tassaSoggiornoRoutes = require('./routes/tassaSoggiorno');
@@ -33,6 +35,8 @@ const emailTemplateRoutes = require('./routes/emailTemplate');
 const offerteEmailRoutes  = require('./routes/offerteEmail');
 const preCheckinRoutes         = require('./routes/preCheckin');
 const preCheckinPubblicoRoutes = require('./routes/preCheckinPubblico');
+const bookingPubblicoRoutes    = require('./routes/bookingPubblico');
+const stripeWebhookRoutes      = require('./routes/stripeWebhook');
 const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
 const ross1000Routes           = require('./routes/ross1000');
 const manutenzioneRoutes       = require('./routes/manutenzione');
@@ -71,6 +75,13 @@ app.use(cors({
   credentials: true,
 }));
 
+// Webhook Stripe (Booking Engine Diretto, modulo 19/08/2026) — DEVE stare
+// prima di express.json() globale: la route legge il body grezzo
+// (express.raw, dentro routes/stripeWebhook.js) per verificare la firma
+// della richiesta — un middleware express.json() a monte lo invaliderebbe,
+// facendo fallire sempre stripe.webhooks.constructEvent.
+app.use('/api/stripe/webhook', stripeWebhookRoutes);
+
 app.use(express.json());
 
 // Rate limit login: max 5 tentativi per IP ogni 15 minuti.
@@ -103,6 +114,8 @@ app.use('/api/soggiorni',    soggiorniRoutes);
 app.use('/api/gruppi',       gruppiRoutes);
 app.use('/api/tipi-camera',  tipiCameraRoutes);
 app.use('/api/tariffe',      tariffeRoutes);
+app.use('/api/periodi-stagionali', periodiStagionaliRoutes);
+app.use('/api/tariffe-derivate', tariffeDerivateRoutes);
 app.use('/api/pacchetti',    pacchettiRoutes);
 app.use('/api/canali-ota',   canaliOtaRoutes);
 app.use('/api/tassa-soggiorno', tassaSoggiornoRoutes);
@@ -114,6 +127,9 @@ app.use('/api/pre-checkin',          preCheckinRoutes);
 // evitare ambiguità di prefisso, anche se i path non si sovrappongono
 // (/api/pre-checkin/:id vs /api/pre-checkin-pubblico/:token).
 app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
+// Pubblica (nessun verificaToken), stesso principio di /api/pre-checkin-pubblico
+// — Booking Engine Diretto, modulo 19/08/2026.
+app.use('/api/booking-pubblico',     bookingPubblicoRoutes);
 app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
 app.use('/api/manutenzione',         manutenzioneRoutes);

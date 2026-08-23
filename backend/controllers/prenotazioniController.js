@@ -33,6 +33,17 @@ const TRANSIZIONI_VALIDE = {
 // prima di '2') — stesso pattern di guardia già usato in camereController.
 // c.tipo_camera_id (modulo 2.2) serve al form "Nuova prenotazione" per
 // chiamare GET /api/tariffe/calcola in base alla categoria della camera scelta.
+//
+// s.trattamento + tipo_camera_venduto_nome (fix 23/08/2026, code review
+// 22/08, Tier 2): prima la barra del planning non mostrava affatto cosa era
+// stato venduto per quella prenotazione — solo il nome/stato dell'ospite.
+// tipo_camera_venduto_nome preferisce SEMPRE s.tipo_camera_venduto_id
+// (identità realmente venduta, migration 050 — shared inventory) e ricade
+// sull'etichetta fisica di default della camera (c.tipo_camera_id) solo per
+// i soggiorni storici senza quel dato — stesso identico criterio già in uso
+// in backend/lib/emailPrenotazioni.js (recuperaSoggiorni/nomeCameraVisibile),
+// per non mostrare mai un tipo diverso tra mail e planning per lo stesso
+// soggiorno.
 async function griglia(req, res) {
   const { data_inizio, data_fine } = req.query;
   if (!data_inizio || !data_fine) {
@@ -43,6 +54,7 @@ async function griglia(req, res) {
       `SELECT c.id AS camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
               c.tipo_camera_id,
               s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
+              s.trattamento, COALESCE(tcv.nome, tc.nome) AS tipo_camera_venduto_nome,
               p.id AS prenotazione_id, p.stato AS prenotazione_stato, p.gruppo_id,
               o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
        FROM camere c
@@ -50,6 +62,8 @@ async function griglia(req, res) {
          AND daterange(s.data_arrivo, s.data_partenza, '[)') && daterange($1, $2, '[)')
        LEFT JOIN prenotazioni p ON p.id = s.prenotazione_id
        LEFT JOIN ospiti o ON o.id = s.ospite_id
+       LEFT JOIN tipi_camera tc ON tc.id = c.tipo_camera_id
+       LEFT JOIN tipi_camera tcv ON tcv.id = s.tipo_camera_venduto_id
        WHERE c.attivo = true
        ORDER BY c.piano NULLS LAST,
                 CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END,
@@ -205,11 +219,20 @@ async function dettaglio(req, res) {
       return res.status(404).json({ error: 'Prenotazione non trovata' });
     }
 
+    // s.trattamento + tipo_camera_venduto_nome (fix 23/08/2026, code review
+    // 22/08, Tier 2): stesso identico criterio COALESCE già in uso in
+    // backend/lib/emailPrenotazioni.js (recuperaSoggiorni) e nella griglia
+    // planning (prenotazioniController.griglia, sopra) — così il pannello
+    // dettaglio, la barra del planning e la mail mostrano sempre lo stesso
+    // tipo camera venduto per lo stesso soggiorno, mai uno diverso.
     const soggiorniResult = await pool.query(
       `SELECT s.id, s.camera_id, c.numero AS camera_numero, c.nome AS camera_nome, c.piano,
-              s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale, s.cancellato
+              s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale, s.cancellato,
+              s.trattamento, COALESCE(tcv.nome, tc.nome) AS tipo_camera_venduto_nome
        FROM soggiorni s
        JOIN camere c ON c.id = s.camera_id
+       LEFT JOIN tipi_camera tc ON tc.id = c.tipo_camera_id
+       LEFT JOIN tipi_camera tcv ON tcv.id = s.tipo_camera_venduto_id
        WHERE s.prenotazione_id = $1
        ORDER BY s.data_arrivo`,
       [req.params.id]

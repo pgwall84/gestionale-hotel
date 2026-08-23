@@ -236,6 +236,69 @@ describe('GET /api/prenotazioni/:id', () => {
   });
 });
 
+// ─── Trattamento + tipo camera venduto in griglia/dettaglio (fix 23/08/2026,
+// code review 22/08, Tier 2) ─────────────────────────────────────────────
+// Prima /griglia e GET /:id non restituivano affatto trattamento/tipo
+// camera venduto — il planning non aveva modo di mostrarli. crea() (POST
+// /api/prenotazioni, prenotazione manuale da reception) non accetta questi
+// due campi: si simula uno stato "come se venisse dal Booking Engine
+// Diretto" con un UPDATE diretto, stesso principio già usato altrove nella
+// suite per campi non impostabili via API.
+
+describe('Trattamento + tipo camera venduto in griglia/dettaglio', () => {
+  const SUFFISSO_TCV = `_${Date.now().toString().slice(-6)}`;
+  let tipoVendutoId;
+  let prenotazioneTcvId;
+  let soggiornoTcvId;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const tipo = await db.query(`INSERT INTO tipi_camera (nome) VALUES ($1) RETURNING id`, [`TipoVendutoTest${SUFFISSO_TCV}`]);
+    tipoVendutoId = tipo.rows[0].id;
+
+    const creata = await creaPrenotazione(authHeader.receptionist(), {
+      soggiorno: { data_arrivo: '2099-03-01', data_partenza: '2099-03-03' },
+    });
+    prenotazioneTcvId = creata.body.id;
+    soggiornoTcvId = creata.body.soggiorno.id;
+
+    await db.query(
+      `UPDATE soggiorni SET trattamento = 'mezza_pensione', tipo_camera_venduto_id = $2 WHERE id = $1`,
+      [soggiornoTcvId, tipoVendutoId]
+    );
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    // Il soggiorno di test (cancellato più avanti dall'afterAll di modulo,
+    // via prenotazioniCreate) referenzia ancora questo tipo tramite
+    // tipo_camera_venduto_id — va sganciato prima di poter cancellare il
+    // tipo, altrimenti la FK soggiorni_tipo_camera_venduto_id_fkey blocca la DELETE.
+    await db.query('UPDATE soggiorni SET tipo_camera_venduto_id = NULL WHERE tipo_camera_venduto_id = $1', [tipoVendutoId]);
+    await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoVendutoId]);
+  });
+
+  test('GET /api/prenotazioni/griglia include trattamento e tipo_camera_venduto_nome', async () => {
+    const res = await request(app)
+      .get('/api/prenotazioni/griglia?data_inizio=2099-03-01&data_fine=2099-03-05')
+      .set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const riga = res.body.find(r => r.soggiorno_id === soggiornoTcvId);
+    expect(riga).toBeDefined();
+    expect(riga.trattamento).toBe('mezza_pensione');
+    expect(riga.tipo_camera_venduto_nome).toBe(`TipoVendutoTest${SUFFISSO_TCV}`);
+  });
+
+  test('GET /api/prenotazioni/:id include trattamento e tipo_camera_venduto_nome per soggiorno', async () => {
+    const res = await request(app).get(`/api/prenotazioni/${prenotazioneTcvId}`).set(authHeader.receptionist());
+    expect(res.status).toBe(200);
+    const soggiorno = res.body.soggiorni.find(s => s.id === soggiornoTcvId);
+    expect(soggiorno).toBeDefined();
+    expect(soggiorno.trattamento).toBe('mezza_pensione');
+    expect(soggiorno.tipo_camera_venduto_nome).toBe(`TipoVendutoTest${SUFFISSO_TCV}`);
+  });
+});
+
 // ─── GET /api/prenotazioni/:id/conto (riepilogo economico, 14/08/2026) ──────
 
 describe('GET /api/prenotazioni/:id/conto', () => {
