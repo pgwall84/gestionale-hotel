@@ -5143,3 +5143,21 @@ di logica — sui file `.jsx`/`.tsx` toccati (`planning-camere/page.jsx`,
 nessuna esecuzione della suite Jest da questo ambiente.** Marco esegue
 ora `git add`/`commit`/`push` + test completi dal tab Code — risultato non
 ancora confermato a fine sessione.
+
+**Seguito stesso giorno — confermato da Marco/tab Code**: commit, push e
+suite di test eseguiti con successo. Un bug reale trovato durante
+l'esecuzione (nel test, non nel codice applicativo): causa confermata
+l'`afterAll` interno del describe `'Trattamento + tipo camera venduto in
+griglia/dettaglio'` (aggiunto in questa stessa sessione, vedi sopra)
+cancellava `tipi_camera` prima che l'`afterAll` esterno del file
+cancellasse la prenotazione/soggiorno che lo referenzia ancora tramite
+`tipo_camera_venduto_id` — ordine di pulizia sbagliato, introdotto insieme
+al nuovo test. Corretto azzerando il riferimento prima della DELETE.
+Riportato a Marco solo il fix su `prenotazioni.test.js` — non specificato
+se la stessa run ha incluso anche `camere.test.js`.
+
+**Chiusura definitiva stesso giorno**: confermato che la run era la suite
+completa. **gestionale-hotel: 34/34 suite, 952/952 test verdi**, fix
+cleanup FK applicato, commit `5892dd9` su `main`. **sito-hotel**: nessuna
+suite di test in questo repo, commit `a08e842` su `master`. Entrambi
+pushati. Nessuna regressione.

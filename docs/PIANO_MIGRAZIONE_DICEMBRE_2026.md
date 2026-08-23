@@ -1,5 +1,21 @@
 # Piano di migrazione — da TeamSystem a gestionale interno + sito, target dicembre 2026
 
+> ⚠️ **PARZIALMENTE SUPERATO (corretto 23/08/2026, non riscritto per
+> intero)**: questo piano è costruito attorno a WuBook come fornitore di
+> channel manager + booking engine (Fase 0.1, Fase 3, Fase 5). Il
+> 19/08/2026 WuBook/WooDoo è stato **scartato** (insieme a RoomCloud —
+> accettano solo fornitori certificati multi-cliente, non un hotel col
+> proprio gestionale): **Beds24** lo sostituisce per l'OTA (spec non
+> ancora scritta), e il **booking engine sul sito (4.1) è già stato
+> costruito senza WuBook**, direttamente con Stripe (caparra 30%,
+> 19-20/08/2026 — vedi `docs/EVOLUTIVE.md` "Booking Engine Diretto v2" e
+> `STATO_PROGETTO.md`). Ogni riferimento a WuBook qui sotto (Fase 0.1,
+> Fase 3, Fase 5, stime di settimane/costi legate) è quindi da
+> **verificare/riscrivere**, non da seguire alla lettera — serve una
+> revisione strutturale dedicata, non fatta in questa sessione. Il resto
+> del piano (Fase 1 Deploy VPS, Fase 6 A-Cube, Fase 7 fatturazione B2B)
+> non è toccato da questa correzione.
+
 Creato 07/08/2026, su richiesta del titolare dopo la decisione di procedere
 con A-Cube (sostituzione registratore Hugin RT-K50) e la conferma di voler
 avere **gestionale e sito completamente operativi entro fine dicembre 2026**.

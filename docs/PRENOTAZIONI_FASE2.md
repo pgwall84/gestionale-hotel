@@ -14,9 +14,17 @@ schema e della UI.
 
 ---
 
-## Stato al 31/07/2026
+## Stato — vedi STATO_PROGETTO.md, questa sezione era stale
 
-**Implementato e in uso:**
+⚠️ **Corretto il 23/08/2026**: questa sezione era rimasta ferma al
+31/07/2026 e diceva ancora "non costruito" per 2.4 e 2.5, completati
+rispettivamente il 01/08 e il 13/08/2026. Lo stato modulo-per-modulo,
+sempre aggiornato, vive ora in `STATO_PROGETTO.md` (root del repo) — non
+duplicarlo più qui. Questa sezione resta solo come descrizione tecnica di
+cosa il contratto API sotto (Parte A) copre e cosa no, non come fonte di
+stato.
+
+**Implementato e in uso (contratto API sotto, Parte A):**
 - Ospiti — anagrafica CRUD, documento sempre mascherato, svela-documento loggato
 - Prenotazioni — CRUD + state machine completa (opzione→confermata→check_in→check_out→chiusa, più interrotta)
 - Soggiorni + Soggiorno_ospiti — multi-camera, multi-ospite, vincolo capofamiglia
@@ -25,18 +33,21 @@ schema e della UI.
 - Vista griglia/planning (drag-and-drop, `/planning-camere`)
 - Form "Nuova prenotazione" (pulsante + click su cella vuota)
 - Pulsanti di transizione stato nel pannello dettaglio: check-in, conferma, check-out, annulla
-- **2.2 — Tariffe, stagionalità, pacchetti** (completato e verificato il
-  31/07/2026 — migration eseguita, 74 test automatici verdi, verifica
-  manuale end-to-end): categorie camera (`tipi_camera`), listino per
-  categoria con stagionalità (`tariffe`), pacchetti a prezzo fisso
-  (`pacchetti`), auto-calcolo tariffa nel form "Nuova prenotazione" con
-  override manuale sempre disponibile.
+- Tariffe, stagionalità, pacchetti (modulo 2.2): categorie camera
+  (`tipi_camera`), listino per categoria con stagionalità (`tariffe`),
+  pacchetti a prezzo fisso (`pacchetti`), auto-calcolo tariffa nel form
+  "Nuova prenotazione" con override manuale sempre disponibile.
 
-**Non ancora costruito** (roadmap Fase 2A/2B, tabella in CLAUDE.md Sezione 8):
-- 2.3 — Integrazione WuBook/WooDoo (channel manager, webhook, `canale_origine` diverso da `diretta` è già nello schema ma inerte). La mappatura vera e propria `tipi_camera.id ↔ canale ↔ codice_esterno` si farà qui — oggi `tipi_camera.note` è solo un appunto manuale.
-- 2.4 — Tassa di soggiorno
-- 2.5 — Alloggiati Web (invio schedine) — vedi note di dettaglio più sotto, già verificate sui manuali ufficiali
-- 2.6 — Export ROSS1000/ISTAT
+**Non copre** (contratto API di questo documento — per lo stato reale di
+questi moduli vedi `STATO_PROGETTO.md`, non questa lista):
+- 2.3 — Integrazione OTA/channel manager. **Il fornitore non è più WuBook/
+  WooDoo**: scartato il 19/08/2026 insieme a RoomCloud, entrambi accettano
+  solo fornitori certificati con portafoglio multi-cliente, non un singolo
+  hotel col proprio gestionale — scelto **Beds24** al suo posto (spec
+  separata, non ancora scritta). `canale_origine` diverso da `diretta` è
+  già nello schema ma inerte; la mappatura `tipi_camera.id ↔ canale ↔
+  codice_esterno` (`tipi_camera_canali`, fatta il 31/07) resta valida a
+  prescindere dal fornitore scelto.
 - Viste Ospiti/Pulizie/Conto ospite/Report (mockup originali punti 3-6, mai costruite — vedi Parte D)
 - Cron scadenza automatica "Opzione" (24-48h) — evolutiva separata, vedi `docs/EVOLUTIVE.md`
 

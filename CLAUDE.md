@@ -1,9 +1,11 @@
 # CLAUDE.md — Hotel del Golfo — Gestionale
 
-> Leggi questo file integralmente prima di fare qualsiasi cosa.
-> È il documento di riferimento permanente del progetto — deve restare
-> leggero. Storia dettagliata, backlog e contratti di modulo vivono in
-> file separati sotto `docs/` (indice in Sezione 17), non qui.
+> Leggi questo file E `STATO_PROGETTO.md` integralmente prima di fare
+> qualsiasi cosa — questo è la spec permanente, STATO_PROGETTO.md è la
+> fotografia di dove siamo oggi. È il documento di riferimento permanente
+> del progetto — deve restare leggero. Storia dettagliata, backlog e
+> contratti di modulo vivono in file separati sotto `docs/` (indice in
+> Sezione 17), non qui.
 
 ---
 
@@ -17,7 +19,7 @@ Gestionale interno per Hotel del Golfo (Liguria, Italia).
 
 **Obiettivo attuale (Fase 1):** completare i moduli mancanti e deployare in produzione affiancato a TeamSystem Hospitality.
 
-**Obiettivo futuro (Fase 2):** sostituire completamente TeamSystem Hospitality con questo gestionale + WuBook/WooDoo per le OTA.
+**Obiettivo futuro (Fase 2):** sostituire completamente TeamSystem Hospitality con questo gestionale + Beds24 per le OTA (fornitore cambiato il 19/08/2026, era WuBook/WooDoo — vedi `docs/EVOLUTIVE.md`).
 
 ---
 
@@ -364,10 +366,10 @@ ciascun modulo (bug trovati, decisioni prese, deviazioni dal piano):
 |----|--------|------|
 | 2.1 | Anagrafica ospiti completa | ✅ Fatto (senza OCR documenti; sezione Clienti `/clienti` aggiunta 01/08/2026 — nazionalità/documento codificati restano non editabili da UI fino al modulo 2.5) |
 | 2.2 | Planning camere — disponibilità (griglia + CRUD) + Tariffe, stagionalità, pacchetti all-inclusive | ✅ Fatto |
-| 2.3 | Integrazione WuBook/WooDoo — channel manager + webhook prenotazioni | Non iniziato, dipende da 2.2 |
+| 2.3 | Integrazione channel manager OTA — webhook prenotazioni | Fase 1 (mappatura camere↔canale) ✅. **Fornitore Beds24, non più WuBook** (cambiato 19/08/2026) — spec non ancora scritta, vedi `STATO_PROGETTO.md` |
 | 2.4 | Tassa di soggiorno custom — calcolo per notte/ospite, report Comune | ✅ Fatto (formato export per il Comune di Lerici non ancora noto — Excel generico adattabile) |
-| 2.5 | Alloggiati Web — SOAP diretto a `WS_ALLOGGIATI` | Fase 1b (tabelle di codifica + tendine scheda ospite) ✅ Fatto; Fase 2 (schedina + invio reale) non iniziata |
-| 2.6 | ROSS1000/ISTAT flussi turistici — export mensile verso Regione Liguria | Fase 1 (generazione XML per verifica manuale, nessun invio reale) ✅ Fatto — Fase 2 (invio reale al webservice) in attesa delle credenziali HTTP Basic di Regione Liguria |
+| 2.5 | Alloggiati Web — SOAP diretto a `WS_ALLOGGIATI` | Fase 1b ✅ Fatto. **Fase 2 (schedina + invio reale) già costruita e in uso controllato dal 13/08/2026** (Test validato dal vivo, invio dietro interruttore spento di default) — non "non iniziata", vedi `STATO_PROGETTO.md` |
+| 2.6 | ROSS1000/ISTAT flussi turistici — export mensile verso Regione Liguria | Fase 1 (XML) ✅ Fatto. **Fase 2 bloccata su un dubbio di canale (RIMOVCLI vs webservice), non su credenziali** — non toccare il generatore prima di risposta Regione Liguria, vedi `STATO_PROGETTO.md` e `docs/EVOLUTIVE.md` |
 
 Il modulo Prenotazioni (CRUD, state machine, griglia planning drag-and-drop,
 gruppi, pagamenti) è quindi **implementato e in uso** per la parte
@@ -386,8 +388,8 @@ operativa di base — contratto API, schema DB e UI in dettaglio:
 
 | N. | Modulo | Note |
 |----|--------|------|
-| 4.1 | Booking engine — Next.js legge disponibilità da WuBook, WuBook gestisce transazione | Dipende da 2.2 e sito 1.11 |
-| 4.2 | Welcome Book digitale — multilingua IT/EN/FR/DE, QR in camera, collegato al menu | ✅ Fatto (repo `sito-hotel`) |
+| 4.1 | Booking engine — Next.js legge disponibilità da WuBook, WuBook gestisce transazione | 🔶 Costruito come "Booking Engine Diretto v2" (19-20/08/2026, `sito-hotel`, caparra Stripe 30%) — verifica end-to-end e suite test ancora da confermare, vedi `STATO_PROGETTO.md` |
+| 4.2 | Welcome Book digitale — multilingua IT/EN/FR/DE, QR in camera, collegato al menu | ✅ Fatto (repo `sito-hotel`). **Esteso 16/08/2026** da 6 a 15 sezioni (redesign completo, committato) — mai documentato qui prima d'ora, vedi `sito-hotel/STATO_PROGETTO.md` |
 
 ### FASE 2D — Esperienza ospite avanzata
 
@@ -754,625 +756,34 @@ Dopo ogni modulo completato:
 2. Se emergono decisioni tecniche non ovvie, aggiungi una nota di sintesi in `docs/DIARIO_SESSIONI.md` (non qui — questo file resta la spec permanente)
 3. Se emergono gap noti non urgenti, aggiungili a `docs/EVOLUTIVE.md`
 4. Segnala se sono emerse dipendenze non previste
+5. Aggiorna `STATO_PROGETTO.md` (non la Sezione 16 qui, che resta un
+   pointer breve): fotografia di stato, non narrativa — il "come/perché"
+   resta nel diario. Se `STATO_PROGETTO.md` supera ~200 righe, le voci
+   più vecchie migrano nel diario come puntatore di una riga. **Non
+   cancellare mai voci ✅ da `docs/EVOLUTIVE.md` per "sfoltire"** — quasi
+   ogni voce porta limiti noti/decisioni ancora rilevanti, non solo
+   cronaca chiusa (verificato leggendolo integralmente il 23/08/2026,
+   vedi nota in `STATO_PROGETTO.md`)
 
 ---
 
 ## 16. STATO ATTUALE E PROSSIMO STEP
 
-*(Sezione aggiornata ad ogni sessione — è l'unica parte "storica" che
-resta qui, perché serve leggerla per prima ad ogni nuova sessione.
-Cronologia completa: `docs/DIARIO_SESSIONI.md`.)*
+Fotografia completa, per fase/modulo, verifiche pendenti e bloccati su
+terzi: **`STATO_PROGETTO.md`** (nuovo, 23/08/2026 — questa sezione prima
+pesava 617 righe/40 KB, sproporzionata rispetto al resto del file che
+deve restare leggero). Cronologia sessione-per-sessione (bug trovati,
+decisioni prese, deviazioni dal piano): `docs/DIARIO_SESSIONI.md`.
 
-**Fase 1**: quasi completa. Unico step rimasto: **1.10 — Deploy VPS**
-(Nginx, PM2, SSL, backup automatico) su Hetzner CX22 (~€75-90/anno).
-Prima del deploy, ripetere l'audit di sicurezza completo (Sezione 7).
-
-**Fase 2A**: modulo Prenotazioni con CRUD, state machine, griglia planning
-drag-and-drop, gruppi e pagamenti è implementato e in uso (dettaglio in
-`docs/PRENOTAZIONI_FASE2.md`). **2.2 — Tariffe, stagionalità, pacchetti**
-completato e verificato (74 test automatici verdi + verifica manuale
-end-to-end, 31/07/2026). Prima di **2.3 — integrazione WuBook/WooDoo**
-(channel manager OTA) è stato fatto un riordino IA preliminare (vedi sotto).
-**2.3 Fase 1 — mappatura camere↔canale OTA** completata (31/07/2026):
-tabella `tipi_camera_canali`, CRUD `/api/canali-ota`, sezione "Codici
-canale OTA" in `/tariffe`. Su richiesta esplicita del titolare, la sessione
-si è fermata qui: il resto di 2.3 (ricezione webhook, invio disponibilità/
-tariffe) resta bloccato sulla Fase 0 del piano (sottoscrizione WuBook, non
-ancora fatta).
-
-**Modulo 1.3 — Camere**: rinominata in UI "Stato Camere" (era "Camere"),
-spostata in sidebar sotto OSPITALITÀ, permessi di scrittura su
-fermata/partenza estesi da soloTitolare a admin/titolare/receptionist/
-portiere_notte (`shared/ruoli.js` sezione `camere`). Griglia planning
-(`/planning-camere`) ora integra una scopetta per riga camera (stato
-pulizia/note di oggi) con popup di gestione — 4 fix/miglioramenti in
-sessione unica, 31/07/2026, 23 test automatici verdi (dettaglio in
-`docs/DIARIO_SESSIONI.md`).
-
-**Impostazioni▸Camere (nuovo, 31/07/2026)**: nuova sezione sidebar
-"IMPOSTAZIONI" (admin/titolare) con voci Utenti (invariata) e Camere
-(`/impostazioni/camere`, nuova). Contiene: anagrafica camere fisiche (NUOVA
-— crea/modifica/attiva-disattiva, prima non esisteva in nessuna UI) più
-categorie camera e assegnazione categoria→camera (spostate da `/tariffe`,
-che ora contiene solo il listino). Mai una DELETE reale sulle camere — solo
-disattivazione, bloccata con 409 se la camera ha soggiorni in corso o
-futuri. Nuova azione permessi `camere.anagrafica` in `shared/ruoli.js`.
-Verificato in locale dal titolare: 19/19 suite e 472/472 test verdi (3 bug
-reali trovati e corretti durante la verifica, non anticipabili da codice —
-dettaglio completo in `docs/DIARIO_SESSIONI.md`).
-
-**Ultimo aggiornamento**: 31/07/2026 — modulo 2.2 (Tariffe/stagionalità/
-pacchetti) completato; 4 fix su Stato Camere e planning; riordino
-Impostazioni▸Camere con nuova anagrafica camere fisiche; 2.3 Fase 1
-(mappatura camere↔canale OTA) completata, verifica locale confermata dal
-titolare: 20/20 suite e 482/482 test verdi (vedi `docs/DIARIO_SESSIONI.md`
-per il dettaglio di tutti e quattro). Sessione fermata qui su richiesta
-esplicita del titolare — 2.3 resta bloccato sulla sottoscrizione WuBook per
-il resto (webhook, invio disponibilità/tariffe).
-
-**Sequenza di sviluppo 01/08/2026 (decisione esplicita del titolare)**: le
-prossime sessioni sviluppano prima tutti i moduli residui che NON
-richiedono un abbonamento/pagamento non ancora sottoscritto — **1.10
-Deploy VPS resta escluso ed è rimandato**, deviando dall'ordine di
-Sezione 8/13 ("mai Fase 2 prima del go-live Fase 1") per decisione
-esplicita del titolare. Ordine concordato: 2.4 → 2.6 → 2.5 → 4.2 → 5.1 →
-5.2 → 5.3 (solo parte non legata al booking engine, bloccato da WuBook).
-Omnitec è stato poi escluso dallo scope di 5.2 durante quella sessione (vedi
-sotto) — non è più un prerequisito di verifica. **2.4 —
-Tassa di soggiorno completato** (01/08/2026): tabelle
-`configurazione_tassa_soggiorno` (storico aliquote, mai sovrascritto) e
-`tasse_soggiorno` (calcolo per soggiorno, congelato dopo riscossione,
-migration 021); endpoint configurazione/calcolo/riscossione/report+export
-Excel; pagine `/impostazioni/tassa-soggiorno` (aliquote, admin/titolare) e
-`/tassa-soggiorno` (operativa, +receptionist); sezione `tassa_soggiorno` in
-`shared/ruoli.js` e `frontend/lib/ruoli.js`. 29/29 test verdi in locale
-(dettaglio in `docs/DIARIO_SESSIONI.md`). Formato del report richiesto dal
-Comune di Lerici resta da verificare — export Excel generico adattabile.
-
-**2.6 — Export ROSS1000/ISTAT: IN PAUSA** (01/08/2026). I due manuali
-caricati in `docs/` sono solo guide utente al portale, non il tracciato
-record (formato byte-esatto del file .txt/.xml) — quello va scaricato dal
-titolare dal portale ROSS1000 stesso (menù Manuali, login SPID struttura).
-Riprendere solo quando disponibile.
-
-**2.5 — Alloggiati Web: decisione presa, non ancora iniziato lo sviluppo**
-(01/08/2026). Confermato **SOAP diretto** a `WS_ALLOGGIATI` (non
-intermediario REST — nessun provider mai scelto, l'analisi già fatta è
-specifica per il SOAP diretto, gratuito). Rilette entrambe le fonti
-ufficiali (`MANUALEWS.pdf`, `MANUALEALBERGHI.pdf`): tracciato record 168
-caratteri confermato campo per campo (posizioni, obbligatorietà per
-tipo_alloggiato), metodi SOAP completi (`GenerateToken`, `Test`, `Send`,
-`Ricevuta`, `Tabella` per le tabelle di codifica, `GestioneAppartamenti_*`
-per la casa in affitto). Scoperto uno scope più ampio del previsto: i campi
-codificati in `ospiti` (migration 016) non hanno mai avuto una UI — vedi
-Clienti sotto. Split concordato: **Fase 1** = tabelle di codifica + UI
-scheda ospite (nessuna chiamata Test/Send, zero rischio); **Fase 2** =
-generatore schedina + client SOAP + invio reale, quando il titolare è
-pronto a testare con le sue credenziali (già disponibili, non ancora usate
-per cautela). Casa in affitto (Appartamento) rimandata a quando sarà
-registrata sul portale — questa fase copre solo le 20 camere hotel.
-
-**2.5 Fase 1b — tabelle di codifica + tendine scheda ospite: ✅ Fatto**
-(01/08/2026). Migration `022_alloggiati_codici.sql` (tabella generica
-`alloggiati_codici`, `tabella`+`codice` come chiave, `dati_extra JSONB` per
-non perdere colonne CSV non ancora mappate — la struttura esatta della
-tabella "Luoghi" non è documentata nei manuali, solo assunta: colonna 1 =
-codice, colonna 2 = descrizione). Client SOAP grezzo scritto a mano
-(`backend/lib/alloggiatiSoapClient.js`, niente nuova dipendenza — XML
-template + estrazione regex, sufficiente per `GenerateToken`/`Tabella` che
-hanno risposte piatte; `Test`/`Send` in Fase 2 avranno risposte annidate e
-potrebbero richiedere un parser XML vero). Nuovo controller/route
-`/api/alloggiati` (sincronizza/stato riservati ad admin/titolare, lettura
-codici anche a receptionist/portiere_notte). Pagina Impostazioni ▸
-Alloggiati Web con stato sincronizzazione e pulsante "Sincronizza ora".
-Componente riutilizzabile `SelettoreCodiceAlloggiati` usato sia nel form
-nuovo cliente (`/clienti`) sia nella scheda cliente (`/clienti/:id`, vista
-e modifica) per: stato/comune di nascita, cittadinanza, tipo documento,
-luogo di rilascio. Il numero documento resta a scrittura sola andata (la
-GET non lo restituisce mai in chiaro, solo mascherato). Non testata la
-sincronizzazione reale contro WS_ALLOGGIATI in questa sessione (nessuna
-credenziale disponibile nell'ambiente di sviluppo usato) — solo il ramo
-"credenziali mancanti → 400". Primo test reale rimandato a quando il
-titolare esegue "Sincronizza ora" in locale con le sue credenziali.
-14/14 test verdi in locale (`tests/api/alloggiati.test.js`).
-
-**Modulo 2.5 — correzione tabelle di codifica da documenti reali
-(02/08/2026)**: il titolare ha fornito 4 CSV reali (stati, comuni,
-documenti, tipo_alloggiato) e un manuale aggiuntivo
-(`MANUALEPASSAGGIO.pdf`, migrazione login portale) in `docs/alloggiati
-web/`. Confermata corretta la struttura `Luoghi`=Stati+Comuni insieme
-(enum ufficiale `TipoTabella` del manuale WS_ALLOGGIATI). Corretto il
-parser CSV (`rilevaSeparatore` in `alloggiatiSoapClient.js`: i CSV reali
-usano `,`, il manuale SOAP dichiara `;` — auto-rilevato invece di fisso).
-Nuovo script una tantum `backend/scripts/importaCodiciAlloggiatiCsv.js`
-(stesso upsert di "Sincronizza ora", rieseguibile senza rischi) ha
-popolato `alloggiati_codici` con i dati reali, sbloccando le tendine di
-`/clienti` senza aspettare le credenziali WS_ALLOGGIATI. Voci storiche
-(comuni fusi/rinominati, `DataFineVal` valorizzata) ora in fondo alla
-lista suggerimenti, non nascoste (`ORDINE_STORICO` in
-`alloggiatiController.js`). Resta MAI TESTATA la sincronizzazione SOAP
-reale (`GenerateToken`/`Tabella` contro il servizio vero) — dettaglio in
-`docs/EVOLUTIVE.md` e `docs/DIARIO_SESSIONI.md` (voce 02/08/2026).
-
-**Fix 01/08/2026 — testo libero per documento/nazionalità** (segnalato dal
-titolare, stessa sessione: dopo il primo test locale, i campi non si
-salvavano — causa: `alloggiati_codici` era ancora vuota, e la Fase 1b
-iniziale rendeva quei 5 campi compilabili SOLO scegliendo un codice
-sincronizzato, bloccando la registrazione di un documento se la
-sincronizzazione non era ancora stata fatta). Correzione architetturale,
-non solo un bug fix: la reception deve sempre poter registrare un
-documento a testo libero leggendolo dal documento fisico del cliente,
-indipendentemente da Alloggiati Web — il codice ufficiale è un aiuto per
-l'invio della schedina futura (Fase 2), mai un requisito per registrare
-l'ospite oggi. Migration `023_alloggiati_testo_libero.sql` (5 colonne
-`*_testo` companion alle `*_codice` esistenti). `SelettoreCodiceAlloggiati.jsx` ridisegnato:
-testo e codice controllati dal genitore, mai bloccante — digitando si
-azzera il codice già abbinato (un testo che cambia non garantisce più
-la corrispondenza), selezionando un suggerimento si abbinano testo e
-codice insieme (icona ✓ visibile solo allora). La vista sola lettura in
-`/clienti/:id` ora mostra direttamente `cliente.*_testo` — eliminato il
-componente `SoloLettura` che prima faceva un lookup di rete solo per
-mostrare una descrizione, non più necessario col testo salvato in chiaro.
-Punto aperto per il futuro (Fase 2, non ora): segnalare prima dell'invio
-schedina i campi con testo ma senza codice abbinato — annotato in
-`docs/EVOLUTIVE.md`. Segnata anche lì, come evolutiva futura non urgente,
-l'idea del titolare di acquisire il documento via fotocamera/OCR o
-lettore hardware dedicato per velocizzare il check-in (si sovrappone al
-modulo 5.2). **26/26 test verdi in locale (`anagrafica-ospiti.test.js`,
-esteso con 2 nuovi casi), confermato dal titolare: il testo libero si
-salva e resta visibile dopo il salvataggio.**
-
-**Sezione Clienti — completa il modulo 2.1** (01/08/2026, su richiesta del
-titolare, emersa discutendo compatibilità GDPR di un CRM clienti prima di
-2.5). `/api/ospiti` esisteva dalla migration 016 ma senza UI propria (solo
-autocomplete in "Nuova prenotazione"). Aggiunto: pagine `/clienti` (ricerca
-+ tabella con conteggio soggiorni) e `/clienti/[id]` (anagrafica
-modificabile, documento mascherato con svela audit-logged, toggle consenso
-marketing, storico soggiorni + totale speso). Nessuna migration, nessun
-nuovo permesso (riuso sezione `ospiti` di `shared/ruoli.js`, invariata) —
-solo una sottoquery `numero_soggiorni` in più nel controller esistente.
-24/24 test verdi in locale. Estesa nella stessa sessione con la Fase 1b di
-2.5 sopra: entrambe le pagine ora espongono anche i campi codificati
-(nazionalità/documento) tramite `SelettoreCodiceAlloggiati`.
-
-**4.2 — Welcome Book digitale: ✅ Fatto** (02/08/2026, repo `sito-hotel`,
-non in questo repo). Hub `/[locale]/benvenuto` con griglia di 6 pulsanti
-(Orari, WiFi, Regole della casa, Ristorante, Contatti, Lerici), ognuno con
-la propria sottopagina — ristrutturato da un primo tentativo a pagina
-unica a scorrimento dopo feedback del titolare (voleva pulsanti come i
-prodotti "welcome book" commerciali di riferimento). Contenuto gestito da
-un nuovo singleton Sanity `welcomeBook`; riusa dati già esistenti
-(`sezioneRistorante.linkMenu`, `infoHotel.telefono`/`orariReception` — quest'ultimo
-campo esisteva nello schema ma non era mai stato letto da nessuna query,
-ora sì) invece di duplicarli. Pagina fuori da sitemap e menu pubblico,
-`robots: noindex` su ogni sottopagina (contiene la password WiFi). Nuova
-dipendenza `lucide-react` per le icone dei pulsanti. QR stampabile
-generato puntando prima al dominio finale poi rigenerato con l'URL
-provvisorio Vercel (`https://sito-hotel-five.vercel.app`) non appena
-disponibile — da rigenerare un'ultima volta quando `hoteldelgolfolerici.com`
-sarà il dominio attivo. **Confermato dal titolare sul deploy Vercel reale:
-la griglia funziona bene da telefono.** Nota per il titolare: ha segnalato
-che vuole aggiungere altri pulsanti/sezioni più avanti — nessuna richiesta
-specifica ancora, da riprendere quando la porta.
-
-**Deploy Vercel di `sito-hotel`: primo deploy fatto in questa sessione**
-(02/08/2026) — repo GitHub `pgwall84/sito-hotel` collegato a Vercel dal
-titolare, env var minime impostate (`NEXT_PUBLIC_SANITY_PROJECT_ID`,
-`NEXT_PUBLIC_SANITY_DATASET`). URL provvisorio:
-`https://sito-hotel-five.vercel.app` — dominio finale
-`hoteldelgolfolerici.com` non ancora collegato.
-
-**5.1 — Check-in/check-out digitale + housekeeping: ✅ Fatto** (03/08/2026).
-Nessuna nuova state machine: le transizioni `check_in`/`check_out` esistevano
-già (modulo Prenotazioni Fase 2A). Aggiunto: pagina `/arrivi-partenze`
-(sidebar OSPITALITÀ) con liste Arrivi/Partenze di oggi e check-in/check-out
-a un click, riusando `GET /api/prenotazioni/griglia` e
-`PATCH /api/prenotazioni/:id/stato` — nessuna rotta backend nuova.
-Housekeeping: fermata/partenza in `/camere` (Stato Camere) e nel popup
-"scopetta" di `/planning-camere` non sono più impostabili a mano — calcolate
-sempre in tempo reale da `soggiorni` (partenza = soggiorno che finisce oggi;
-fermata = soggiorno in corso che non finisce oggi; gestito anche il
-turnover stesso giorno, entrambe vere insieme), sostituendo l'impostazione
-manuale come indicato in `docs/PRENOTAZIONI_FASE2.md` Parte D. Stesso
-calcolo applicato al KPI "movimenti camere" della Dashboard (prima leggeva
-`stato_camere`, ora `soggiorni` — le tre viste erano disallineate, ora
-condividono la stessa fonte). Solo `pronta` (pulizia fatta/da fare) e
-`note` restano scrivibili a mano. Permessi "segna pronta"
-(`POST /api/camere/pronta`) ristretti su indicazione del titolare: prima
-aperto a qualunque ruolo autenticato, ora tutti tranne cuoco (nuova azione
-`camere.pulizia` in `shared/ruoli.js`). 536/536 test verdi in locale
-confermati dal titolare (22 suite). Tre idee del titolare loggate in
-`docs/EVOLUTIVE.md`, non sviluppate ora: riordino più ampio del menu/
-sidebar (la sezione OSPITALITÀ è arrivata a 7 voci), una pagina
-"Prenotazioni" dedicata in forma di tabella (complementare alla griglia
-`/planning-camere`), una sezione marketing per invio email/SMS/WhatsApp.
-
-**Menu mobile — bottom nav disallineata dal menu desktop: corretto**
-(04/08/2026). Segnalato dal titolare: da telefono si vedevano solo 5 voci
-vecchie (Home/Personale/Timbratura/HACCP/Magazzino per il titolare) — la
-lista `VOCI_MOBILE` in `Sidebar.tsx` era statica e non aggiornata da quando
-sono cresciute le sezioni Ospitalità/Impostazioni. Nuova struttura: 4 icone
-rapide curate per ruolo + pulsante "Menu" che apre un pannello con tutte le
-voci consentite, letto dalla stessa fonte del desktop (`SEZIONI_MENU`) —
-non può più disallinearsi in futuro, solo le 4 icone rapide restano da
-curare a mano. **Provvisorio per esplicita richiesta del titolare**: sia le
-4 icone rapide per ruolo sia, più in generale, i permessi ruolo↔voci vanno
-rivisti quando il progetto sarà a regime (annotato anche in memoria
-persistente, non solo qui).
-
-**5.2 Fase A — Pre check-in digitale, scansione documento con OCR: ✅
-Chiuso** (04/08/2026, sessione di test reale con il titolare su Android/
-Galaxy S23). Riusato il pattern OCR già collaudato in `ztl/page.jsx`
-(tesseract.js lato client, mai streaming live — vedi motivazione HTTPS in
-`frontend/lib/ocrDocumento.js`), non una nuova infrastruttura: niente nuovo
-endpoint backend, solo migration `024_documento_scadenza.sql` +
-colonna in `anagraficaOspitiController.js` (fatte a inizio sessione).
-**Omnitec escluso dallo scope** su indicazione del titolare: è un sistema
-di chiavi elettroniche per le camere completamente separato, nessun
-collegamento possibile né richiesto.
-
-Il grosso del lavoro è stato iterare sull'affidabilità dell'OCR contro
-foto reali di una CIE, non prevedibile da codice:
-- `ScannerDocumento.jsx`: aggiunto uno step di ritaglio manuale (due
-  maniglie trascinabili) tra lo scatto e l'OCR — inquadrare a mano solo la
-  fascia MRZ con la fotocamera del telefono si è rivelato troppo impreciso;
-  ritagliare dopo lo scatto dà una risoluzione effettiva molto più alta
-  sulla parte che conta.
-- `ocrDocumento.js`: pre-elaborazione dell'immagine (bianco/nero puro con
-  soglia di Otsu, si adatta da sola alla luce di ogni foto — necessaria
-  perché le carte lucide/olografiche danno risultati molto incostanti
-  scatto per scatto); tre tentativi in sequenza (layout automatico → charset
-  ristretto alla MRZ + layout "sparse text" → modello Tesseract
-  specializzato sul font OCR-B, `public/tessdata/mrz.traineddata.gz`,
-  estratto dal pacchetto open source `web-mrz-reader` — solo il file del
-  modello, non l'intero pacchetto npm, che dipende da tesseract.js v5 e
-  sarebbe entrato in conflitto con la v7 già in uso per ZTL); parsing tollerante al
-  rumore OCR (fallback per righe TD1 troncate dai riempitivi '<' persi,
-  separatore cognome/nome riconosciuto anche se letto in modo imperfetto,
-  correzione delle confusioni cifra↔lettera nel campo nazionalità).
-
-Esito finale verificato su documento reale: cognome, sesso, data di
-nascita, data di scadenza e nazionalità si precompilano in modo affidabile;
-il nome a volte necessita una correzione manuale minore; il numero
-documento non viene mai precompilato, per scelta — è sulla riga MRZ più
-vicina al codice a barre, la meno leggibile in assoluto nei test, meglio
-lasciarla sempre a inserimento manuale che rischiare un dato sbagliato.
-Il form resta comunque sempre interamente compilabile a mano, come prima
-che esistesse lo scanner: l'OCR è un aiuto opzionale, non un requisito.
-Il titolare valuterà in futuro l'acquisto di un lettore ottico hardware
-dedicato (MRZ) se servirà maggiore affidabilità — nessuna azione da
-intraprendere ora, annotato in `docs/EVOLUTIVE.md`. **Fase B** (form
-self-service da remoto con token pubblico + email automatica via Resend)
-resta non iniziata, da riprendere quando il titolare vorrà.
-
-**5.3 — Email automatiche: ✅ Fatto** (04/08/2026, solo email — SMS
-escluso, provider a pagamento fuori dalla sequenza di moduli gratuiti).
-Provider Resend (free tier), dominio ancora di test. Tre email: conferma
-(fire-and-forget alla transizione di stato verso 'confermata'), promemoria
-pre-arrivo e richiesta recensione post-partenza (job giornaliero
-`backend/jobs/promemoriaEmail.js`, node-cron). Pulsante di test manuale
-riservato ad admin/titolare in `/planning-camere` (bypassa stato/date
-reali). **Estensione stessa giornata, su richiesta del titolare**: testi
-delle 3 email (oggetto+corpo, placeholder `{nome_ospite}`/
-`{elenco_soggiorni}`/`{hotel}`) ora editabili da Impostazioni▸Testi email,
-con footer comune (dati hotel, logo opzionale — richiede un URL pubblico
-esterno, il gestionale è ancora solo su LAN); nuova sezione sidebar
-MARKETING▸Offerte per inviare offerte dedicate a clienti specifici o a
-tutti quelli con consenso marketing, con storico invii. Filtro
-`consenso_marketing` sempre applicato lato backend, mai bypassabile dalla
-UI. Dettaglio tecnico completo: `docs/DIARIO_SESSIONI.md`, voce 04/08/2026.
-
-**5.2 Fase B — Pre check-in self-service da remoto: ✅ Fatto** (04-05/08/2026,
-verificato dal titolare in locale il 05/08/2026). Migration `027_pre_checkin.sql`
-(tabelle `pre_checkin_ospiti` e `nuclei_familiari`); `backend/lib/preCheckin.js`
-genera un token pubblico per soggiorno e lo invalida a ogni nuovo invio
-(comportamento di sicurezza intenzionale — un link vecchio smette sempre di
-funzionare, non un bug); route pubbliche non autenticate sotto
-`/pre-checkin-pubblico` (compilazione dati) e route reception autenticate
-per la coda e l'invio link; pagina pubblica `/pre-checkin/[token]` (form
-self-service, riusa lo stesso pattern OCR/tendine di `/clienti`) e pagina
-reception `/pre-checkin` (coda soggiorni + pulsante "invia link"). Riusa
-Resend già configurato per il modulo 5.3 — nessuna nuova infrastruttura
-email. Test `tests/api/pre-checkin.test.js`.
-
-**Estensioni trasversali sullo stesso form (stessa sessione)**:
-suggerimento provincia (`frontend/components/ui/SelettoreProvincia.jsx`,
-client-side, nessuna chiamata di rete — le sigle provinciali italiane non
-hanno una tabella ufficiale WS_ALLOGGIATI) applicato sia a `/clienti` che
-al pre check-in; campi stato/comune di **residenza** (diversi dal luogo di
-nascita, mai raccolti prima) aggiunti a `ospiti` e `pre_checkin_ospiti`
-(migration `029_ross1000.sql`) con lo stesso pattern testo libero + codice
-ufficiale già in uso — introdotti per il modulo 2.6 (sotto), ma raccolti
-anche qui su richiesta esplicita del titolare.
-
-**Planning-camere — due fix UX** (05/08/2026): vista di default passata da
-7 a 14 giorni; tooltip al passaggio del mouse sulle barre prenotazione
-esteso con intervallo date, numero ospiti, stato e tariffa. Inoltre, per
-evitare la confusione del titolare sul "link non valido" (comportamento
-corretto — un reinvio invalida sempre il precedente, vedi sopra): ora si
-chiede conferma prima di reinviare un link pre-checkin già mandato, con
-indicazione a schermo che risulta già inviato.
-
-**Bugfix — pagina Offerte, "errore interno"** (05/08/2026): query in
-`offerteEmailController.js` (`lista()`) usava `id` senza alias in una
-query con `LEFT JOIN users u` (anch'essa con colonna `id`) — errore
-PostgreSQL 42702 "riferimento alla colonna ambiguo". Corretto qualificando
-tutte le colonne con l'alias `o.`.
-
-**2.6 — Export ROSS1000/ISTAT, Fase 1: ✅ Fatto** (05/08/2026, verificato
-dal titolare in locale). Genera solo il file XML per verifica manuale —
-nessun invio reale (mancano le credenziali HTTP Basic di Regione Liguria,
-da richiedere all'Ufficio Turismo; endpoint
-`https://turismows.regione.liguria.it/ws/checkinV2?wsdl`). Tracciato
-ufficiale letto integralmente da `docs/ross1000/tracciato.pdf`: root
-`<movimenti>` con un `<movimento>` per giorno (apertura, camere/letti
-disponibili, camere occupate, arrivi/partenze/prenotazioni). Riusa le
-stesse tabelle di codifica di Alloggiati Web (Stati/Comuni/Tipi_Alloggiato,
-modulo 2.5) — grossa sinergia implementativa, nessuna tabella nuova per
-quello. Scoperta chiave che ha ridotto lo scope: i campi "obbligatori"
-`tipoturismo`/`mezzotrasporto` ammettono ufficialmente il valore "Non
-specificato", quindi non è stato necessario raccogliere nuovi dati dagli
-ospiti per quei due — valorizzati di default. Ospiti con dati davvero
-mancanti (sesso, cittadinanza, data di nascita, residenza) vengono esclusi
-dall'XML con un avviso esplicito invece di generare un file non conforme;
-gli avvisi mostrano nome ospite e numero camera (non l'id interno) dopo un
-miglioramento richiesto dal titolare durante il primo test. File
-principali: `backend/lib/ross1000Xml.js` (generatore), `ross1000Controller.js`
-+ `routes/ross1000.js` (`GET /api/ross1000/export`, admin/titolare),
-pagina `/impostazioni/ross1000` (range date, avvisi, anteprima e download
-XML), voce sidebar "Export ROSS1000". Test `tests/api/ross1000.test.js`.
-Modulo 2.6 Fase 2 (invio reale) resta bloccato sulle credenziali, stesso
-pattern di attesa già usato per Alloggiati Web Fase 2.
-
-**CampoData — selettore anno sui calendari (05/08/2026)**: segnalato dal
-titolare che il calendario nativo del browser costringe ad andare indietro
-mese per mese per cambiare anno (problema soprattutto sulle date di
-nascita, fino a 110 anni indietro). Nuovo componente
-`frontend/components/ui/CampoData.jsx` (input `type="date"` nativo + un
-`<select>` anno separato accanto) applicato a tutti e 30 i campi data del
-gestionale, in 14 file — range di anni tarato per contesto (nascita:
--110/oggi; scadenza documento: -1/+11, il massimo di validità legale in
-Italia per un documento appena rinnovato; scadenze HR, magazzino, archivio
-e altri campi operativi: range più stretti per contesto). Funziona, ma il
-titolare non è pienamente soddisfatto della soluzione esteticamente/UX —
-**annotato in `docs/EVOLUTIVE.md` come provvisorio**, da valutare in futuro
-un vero componente calendario custom.
-
----
-
-**Workflow git/test/deploy (06/08/2026, permanente)**: da questa sessione
-Cowork progetta e scrive il codice; il tab "Code" (Claude Code nativo sul
-PC del titolare) esegue git, test e deploy del sito — mai `git` dal
-sandbox Cowork su questi due repo. Vedi `docs/DIARIO_SESSIONI.md`,
-voce 06/08/2026, per il perché.
-
-**Sessione 06/08/2026**: chiuse 3 evolutive minori segnalate dal titolare.
-Ristorante — `DELETE /api/ristorante/config/:id` (mancava del tutto, non
-solo senza blocco): blocca se Standard, se attiva, o se ha tavoli
-associati. Magazzino — storico prezzi prodotto, alert scadenze
-progressivi, bozza ordine fornitori (fornitore inferito dall'ultimo
-carico, nessuna anagrafica fornitore su `prodotti`). Dashboard — 3 nuovi
-alert (opzioni prenotazione in scadenza 48h, documenti Alloggiati Web
-incompleti per gli arrivi di oggi, pre check-in in attesa di revisione);
-un quarto (export ROSS1000 in sospeso) rimandato dal titolare a dopo il
-go-live, non costruibile senza una tabella di log nuova. Corretto anche un
-bug reale preesistente: `frontend/lib/api.js` leggeva solo la chiave
-`error` (inglese) dalle risposte del backend, ma 22 controller su 40
-rispondono `errore` (italiano) — per metà del gestionale l'utente vedeva
-sempre "Errore {status}" generico invece del messaggio specifico. Dettaglio
-completo, incluso il lavoro sul sito (`sito-hotel`, pulsante WhatsApp) e
-l'approfondimento su Iubenda: `docs/DIARIO_SESSIONI.md`, voce 06/08/2026.
-
-**Sessione 13/08/2026**: audit completo del modulo HR/timbrature prima
-dell'uso reale con i dipendenti — checklist PDF di 20 scenari
-(`docs/CHECKLIST_USER_TEST_HR.pdf`), migration mancante
-`032_turni_standard.sql` scritta, gap di sicurezza chiuso (route HACCP
-senza restrizione di ruolo a livello di route), nuova funzionalità
-"Applica turno standard" (bulk su un mese, non sovrascrive turni già
-assegnati), 93/93 test verdi. Trovato e corretto un bug reale in
-produzione: 7 file frontend leggevano `NEXT_PUBLIC_API_URL` (build-time)
-invece di `getApiUrl()` (runtime) — violazione della regola di rete di
-Sezione 12; incluso un secondo bug indipendente mai notato prima
-(`tassa-soggiorno/page.jsx` senza il ramo produzione nel proprio calcolo
-URL locale). Corretto anche `/utenti`, non raggiungibile da un account
-admin per una guardia di accesso che controllava solo `ruolo ===
-'titolare'`.
-
-Eseguita poi, in tre fasi via chiarimenti col titolare, una richiesta più
-ampia di gestione dipendenti: **Fase A** — provisioning di 10 dipendenti
-reali + 7 account di test (uno per ruolo), login con nome utente al posto
-di una vera email (stessa colonna `email`, mai stata validata come tale
-lato backend — nessuna migration), self-service "Cambia password" (nuovo,
-`POST /api/auth/cambia-password`), ruolo `dipendente` riusato e mostrato
-in UI come "Lavapiatti" invece di un ottavo ruolo nuovo. **Fase B** —
-colonne `contratto_tipo`/`fascia_oraria` su `users` (migration
-`033_contratto_dipendenti.sql`), "Turni standard" propone un orario di
-default in base al contratto (indeterminato 07-15 o 23-07, part-time
-09-14) solo per chi non ha già un turno impostato. **Fase C** — nuovo
-foglio "Consulente" nell'export mensile esistente, griglia giorni 1-31 +
-straordinari per dipendente (soglia 8h/5h da contratto; "N/D" per
-chiamata/non impostato, mai una soglia inventata). Tutte e tre le fasi
-verificate solo con `tsc`/sintassi dal sandbox — **test automatici e
-verifica end-to-end reale (migration 033, export Excel, suite di test)
-restano da fare dal titolare/tab Code**, non confermati a fine sessione.
-
-**Seguito stesso giorno**, dopo il primo giro di prova del titolare: bug
-reale corretto nell'ordine delle colonne del foglio Consulente (chiavi
-oggetto JS numeriche riordinate prima delle testuali — ora `aoa_to_sheet`
-con intestazione esplicita); trovato e corretto (via libera esplicita del titolare) un bug preesistente
-più ampio: le ore di un turno notturno finivano nella colonna del giorno
-*dopo* quello di inizio, condiviso da tutti e tre i fogli — ora attribuite
-al giorno di entrata, con test di regressione dedicato. Sistemato anche lo
-scavalco di mese/anno (finestra di lettura allargata di un giorno per
-lato) — verificandolo, trovato un secondo bug preesistente più serio:
-`ultimoGiorno` passava da `toISOString()`, che sul server (fuso
-Europe/Rome) fa sempre slittare indietro di un giorno la data — **l'ultimo
-giorno di ogni mese è sempre stato invisibile al report**, anche senza
-nessun turno notturno di mezzo. Corretto con un helper che legge la data
-locale senza passare da UTC, applicato ovunque nel file c'era lo stesso
-pattern rischioso. Tre nuovi test di regressione. "Applica turno standard" passato da
-skip a sovrascrittura (decisione esplicita, inverte quella dell'11/08,
-con conferma UI aggiunta); fix UX sul form modifica dipendente invisibile
-in liste lunghe; nuovo script `seedTimbratureTest.js` per dati di test
-giugno-luglio 2026; nuovi test `tests/api/users.test.js` +
-estensione `hr.test.js` per contratto/fascia e foglio Consulente (trovato
-e corretto un bug di validazione vero scrivendoli). Sistemato anche lo
-scavalco di mese/anno (finestra di lettura allargata di un giorno per
-lato) — verificandolo, trovato un secondo bug preesistente più serio:
-`ultimoGiorno` passava da `toISOString()`, che sul server (fuso
-Europe/Rome) fa sempre slittare indietro di un giorno la data — **l'ultimo
-giorno di ogni mese è sempre stato invisibile al report**, anche senza
-nessun turno notturno di mezzo. Corretto con un helper che legge la data
-locale senza passare da UTC, applicato ovunque nel file c'era lo stesso
-pattern rischioso. Tre nuovi test di regressione. "Applica turno standard" passato da
-skip a sovrascrittura (decisione esplicita, inverte quella dell'11/08,
-con conferma UI aggiunta); fix UX sul form modifica dipendente invisibile
-in liste lunghe; nuovo script `seedTimbratureTest.js` per dati di test
-giugno-luglio 2026; nuovi test `tests/api/users.test.js` +
-estensione `hr.test.js` per contratto/fascia e foglio Consulente (trovato
-e corretto un bug di validazione vero scrivendoli). **Verificato dal
-titolare via tab Code: hr.test.js 100/100, users.test.js 10/10, suite
-completa 727/728 — l'unico fallimento è preesistente, scollegato da questa
-sessione (test-guardia Alloggiati Web, `.env` di sviluppo condiviso con
-quello di test, non un bug di oggi).** Dettaglio completo:
-`docs/DIARIO_SESSIONI.md`, voce 13/08/2026.
-
-**Sessione 15/08/2026**: due fix minori (blocco eliminazione configurazione
-sala già completo dal 06/08, solo `docs/EVOLUTIVE.md` era rimasto indietro;
-icona gruppo sulla barra in `/planning-camere`), riordino menu (gruppo
-PRINCIPALE eliminato da `Sidebar.tsx`, Timbratura/Personale in STRUTTURA,
-HACCP in ADEMPIMENTI, nuova icona Home persistente sulla bottom nav mobile
-per non isolare i ruoli senza quella scorciatoia), poi il pezzo grosso della
-sessione: **prenotazioni di gruppo complete**. Prima solo `gruppo_id`
-esisteva nello schema senza alcuna UI; ora: famiglia su più camere
-(`FormNuovaPrenotazione` resta aperto dopo il primo salvataggio in modalità
-"aggiungi un'altra camera", stesso intestatario, stessa prenotazione —
-`POST /api/prenotazioni/:id/soggiorni`, già esistente ma mai collegato a
-un bottone); comitiva su prenotazioni separate (`WizardGruppo`: dati gruppo
-→ loop "aggiungi camera", ogni camera con ospite proprio, `gruppo_id`
-condiviso); assegnazione a un gruppo esistente da un pannello già aperto
-(`ModalAssegnaGruppo`, nuovo `GET /api/gruppi?search=`); dettaglio gruppo
-con elenco camere/stati e pagamento — selettore esplicito "tutto il gruppo"
-(`POST /api/gruppi/:id/pagamenti`) o "solo questa camera"
-(`POST /api/prenotazioni/:id/pagamenti`), scelta lasciata alla reception su
-indicazione esplicita del titolare, nessuna nuova regola lato server (i due
-endpoint esistevano già entrambi, indipendenti). Nuovo endpoint
-`PATCH /api/soggiorni/:id/annulla` per disfare una singola camera di una
-famiglia multi-camera senza annullare l'intera prenotazione (mancava del
-tutto — scoperto disegnando il mockup con il titolare). `prenotazioni.aggiorna()`
-esteso per accettare `gruppo_id` in modo undefined-safe (CASE, non COALESCE:
-deve poter essere impostato a `null` esplicitamente per sganciare una camera
-dal gruppo). Verificato che l'aggregazione economica per famiglia multi-
-camera (conto unico, pagamento unico) funzionasse già senza modifiche:
-`conto()` e `pagamenti` erano già per `prenotazione_id`, non per singolo
-soggiorno. Gli addebiti extra restano sempre per-camera in entrambi i casi
-(`addebiti_extra.soggiorno_id`), invariato. Verificato con `tsc --noEmit`
-(intero frontend, zero errori) e `node -c` su tutti i file backend toccati
-— non ancora verificato in UI dal titolare, in particolare il flusso
-completo wizard gruppo + pagamento gruppo/camera. Dettaglio tecnico
-completo: `docs/DIARIO_SESSIONI.md`, voce 15/08/2026.
-
-**Sessioni 19-20/08/2026 — Booking Engine Diretto v2**: nuovo flusso di
-prenotazione self-service su `sito-hotel` (`/prenota`), caparra 30% via
-Stripe, saldo in hotel — dettaglio completo in `docs/DIARIO_SESSIONI.md`,
-voci 19/08 e 20/08. Punti che restano aperti, non ancora chiusi dal
-titolare: eseguire la suite di test aggiornata
-(`tests/api/bookingPubblico.test.js`, scritta ma mai eseguita da questo
-ambiente); popolare da `/tariffe` i range min/max dichiarati alla Regione
-(oggi nessun clamp attivo su nessun tipo camera derivato) e la percentuale
-reale di sconto bambini 3-11 anni (oggi seminata a 0%); verifica manuale
-end-to-end del selettore trattamento (B&B/mezza pensione/pensione
-completa) su `/prenota`; conferma dell'assunzione bambini 12-17 anni =
-adulto a tutti gli effetti. Tutto annotato anche in `docs/EVOLUTIVE.md`.
-
-**Sessione 22/08/2026 — Code review incrociata (tab Code) su
-gestionale-hotel + sito-hotel: triage e fix bug critici**. Il tab Code ha
-eseguito una review di sicurezza/correttezza su entrambi i repo e
-riportato 10 finding prioritari (fermandosi prima di una verifica formale
-per-finding con sub-agent dedicati, per risparmio token). Letto il report,
-dato un giudizio di priorità indipendente a Marco (non i primi due Tier di
-Code presi per buoni senza verifica) e poi via libera esplicito ("cominciamo
-a risolvere") a correggere. Lavorati i tre finding di Tier 1 (rischio
-economico/dati diretto):
-- **#4 — prezzo derivato preso da una riga non ordinata**: bug introdotto
-  dalla stessa sessione del redesign `/tariffe` (20/08) — `SchedaPrezzoTipologia`
-  permette di scegliere "Deriva da" indipendentemente per ogni periodo, ma
-  `calcolaPrezzoCameraPerNotte` (`backend/controllers/tariffeController.js`)
-  risolveva il tipo camera base UNA SOLA VOLTA da `regoleResult.rows[0]`
-  (query senza `ORDER BY`), assumendo che fallback e tutte le regole
-  per-periodo condividessero sempre la stessa base — falso appena si sceglie
-  una base diversa per periodi diversi sulla stessa tipologia derivata.
-  Corretto risolvendo la base PER REGOLA ABBINATA PER NOTTE, non più
-  globalmente; controllo anti-loop esteso a TUTTE le basi distinte in uso
-  (prima ne controllava una sola). Nuovo test di regressione in
-  `tests/api/bookingPubblico.test.js` (soggiorno a cavallo tra un fallback
-  su una base e un periodo su un'altra base, verifica il prezzo per notte
-  corretto in entrambi i tratti).
-- **#1 — race cron/webhook Stripe**: `backend/jobs/scadenzaHoldBookingEngine.js`
-  (ogni minuto, non chiama mai Stripe per scelta) può marcare una
-  prenotazione `'interrotta'` PRIMA che il webhook `payment_intent.succeeded`
-  di un pagamento riuscito nel frattempo venga elaborato — scenario
-  sequenziale realistico sulla finestra di ~60s del cron, non una vera race
-  a livello di lock DB. Prima, `stripeWebhookController.js` si fermava e
-  rispondeva 200 in ogni caso di stato diverso da `'opzione'`, assumendo
-  sempre un webhook duplicato — lasciando l'ospite addebitato su Stripe
-  senza prenotazione e senza rimborso in questo scenario specifico.
-  Corretto: in quel ramo ora si verifica se esiste ancora un pagamento
-  `'pending'` per quell'`external_payment_id`; se sì, si rimborsa via
-  `stripe.refunds.create`, si marca il pagamento `'rimborsato'`, si logga
-  per verifica manuale della camera e si notifica — senza mai provare a
-  far rivivere la prenotazione (stessa filosofia già scelta il 19/08/2026
-  per il caso "pagamento arrivato dopo scadenza" nello stesso file). Nuovo
-  test di regressione che simula la race (cron eseguito a mano, poi webhook
-  reale firmato) e verifica sia il rimborso sia l'idempotenza su una
-  seconda consegna dello stesso evento.
-- **#3 — tassa di soggiorno online solo intestatario**: VERIFICATO NON
-  RIPRODUCIBILE sullo stato attuale del codice. `bookingPubblicoController.prenota`
-  scrive già, per ogni prenotazione online, `num_ospiti` = headcount pieno
-  e `composizione_ospiti = {adulti, bambini_eta}` (estensione Booking Engine
-  v2 Fase A del 19/08/2026 — un giorno prima della review). `calcolaTassaSoggiorno`
-  (`backend/lib/emailPrenotazioni.js`) usa il ramo esatto (adulti+bambini
-  tassabili per età) ogni volta che trova `composizione_ospiti.bambini_eta`
-  come array — quindi per il canale `sito_diretto` è sempre il ramo esatto.
-  Il ramo di stima (`num_ospiti || 1`) resta solo per prenotazioni
-  telefoniche/storiche senza quel dato, già onestamente etichettato
-  "importo indicativo" (`esatta: false`) — comportamento voluto, non un bug.
-  Nessuna modifica fatta. Probabile causa: il finding si riferiva a una
-  versione del codice precedente al fix del 19/08, oppure Code non aveva
-  visto quell'estensione.
-
-**Verifica finale**: suite completa eseguita dal tab Code dopo i due fix —
-940/940 test verdi, 33/33 suite passate (69.9s), nessuna regressione,
-inclusi entrambi i test di regressione dedicati confermati contro il DB
-reale.
-
-Non toccati in questa sessione (Tier 2/3 del triage, in attesa di indicazione
-di Marco su come proseguire): email di conferma con nome ospite non
-sanificato (rischio HTML injection), chiamata Stripe dentro una transazione
-DB aperta nel webhook, l'assunzione fragile di migration 050 su "Singola
-sopravvive a 048", camera nuova non auto-collegata alla vendita online,
-percentuale caparra 30% duplicata tra sito e gestionale, planning-camere
-senza indicazione trattamento/tipo venduto, tripla query prezzo per
-tipologia invece di una (bb/mezza/pensione). Un ultimo item scartato da
-Code ("prezzo_notte: 0 trattato come 'nessun valore' via COALESCE") non è
-stato accettato come non-problema senza vedere il file:riga esatto citato
-da Code — resta da chiarire, non in task list. Verificato solo con
-`node -c` sui file backend toccati — **nessuna esecuzione reale della
-suite Jest da questo ambiente** (niente accesso DB dal sandbox Cowork,
-come da convenzione): Marco/tab Code devono eseguire
-`tests/api/bookingPubblico.test.js` per confermare i due nuovi test di
-regressione.
-
-Fuori da questo lavoro di code review, ricerca su richiesta di Marco:
-Numia S.p.A./PayWay (BCC) come possibile alternativa a Stripe/Nexi per il
-booking engine — conclusione: il Foglio Informativo pubblico mostra solo
-un tetto regolamentare (fino al 6%+1-2€, +3% per Card Not Present — proprio
-il caso delle prenotazioni online —, minimo 200€/mese), non il prezzo reale
-negoziato (Documento di Sintesi, mai pubblicato, va richiesto in filiale
-BCC); l'accesso API richiede un'istruttoria di approvazione, a differenza
-della documentazione aperta di Stripe/Nexi. Nessun modello (incluso Opus)
-può colmare questa lacuna: il dato è una cifra commerciale privata, non
-un limite di conoscenza del modello. Non ha comportato modifiche al codice.
+In sintesi: **Fase 1 chiusa** (deploy VPS in produzione, 09/08/2026).
+Fase 2A in corso — 2.1/2.2/2.4 fatti, 2.3 bloccato su sottoscrizione
+WuBook, 2.5 più avanti di quanto sembri (Fase 2 già in uso controllato),
+2.6 bloccato su un dubbio di canale con Regione Liguria (non su
+credenziali). 4.1 (booking engine) costruito come "Booking Engine Diretto
+v2" ma non ancora verificato end-to-end. 4.2, 5.1, 5.2, 5.3 tutti fatti.
+Ultima sessione (23/08/2026): chiusi i 7 finding Tier 2/3 della code
+review del 22/08 (dettaglio in `docs/DIARIO_SESSIONI.md`), scritta
+questa riorganizzazione documentale.
 
 ## 17. DOCUMENTI DI PROGETTO
 
@@ -1381,6 +792,7 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 | File | Contenuto |
 |---|---|
 | `CLAUDE.md` (questo file) | Identità, stack, ruoli, struttura, convenzioni, DB, sicurezza, roadmap — spec permanente |
+| `STATO_PROGETTO.md` | Fotografia dello stato attuale per fase/modulo, verifiche pendenti, bloccati su terzi — letto insieme a CLAUDE.md a inizio sessione |
 | `docs/PRENOTAZIONI_FASE2.md` | Contratto API + schema DB + UI del modulo Prenotazioni (Fase 2A), stato implementato/non implementato |
 | `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` | Piano di migrazione da TeamSystem al sistema interno, step-by-step con dipendenze e rischi, target dicembre 2026 |
 | `docs/confronto_costi_fase2.xlsx` | Tabella costi oggi vs a lavoro completo (Fase 2) |
@@ -1394,15 +806,8 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 
 ---
 
-*Documento aggiornato al 15/08/2026 — **Prenotazioni di gruppo complete**:
-famiglia su più camere (stessa prenotazione), comitiva su prenotazioni
-separate (WizardGruppo + gruppo_id), assegnazione a gruppo esistente,
-dettaglio gruppo con pagamento tutto-il-gruppo/singola-camera, nuovo
-`PATCH /api/soggiorni/:id/annulla` — verificato solo con tsc/node -c, non
-ancora in UI dal titolare (dettaglio sopra e in `docs/DIARIO_SESSIONI.md`).
-Riordino menu (PRINCIPALE eliminato, Timbratura/Personale in STRUTTURA,
-HACCP in ADEMPIMENTI). Documento aggiornato al 13/08/2026 — **Audit HR/timbrature + provisioning
-dipendenti (Fasi A/B/C, dettaglio sopra e in `docs/DIARIO_SESSIONI.md`):
-migration 032/033, "Applica turno standard", contratto/fascia oraria,
-foglio "Consulente" nel report mensile — non ancora verificati end-to-end
-dal titolare a fine sessione.** **1.10 Deploy VPS completato, incluso l'audit di sicurezza pre-produzione**: gestionale in produzione su netcup VPS Lite 1 G12s, HTTPS attivo su `hdgolfo-gestionale.com`, backup notturno locale programmato. **Fase 1 chiusa.** Guida operativa completa: `docs/DEPLOY_VPS_NETCUP.md`. Fase 2A: moduli 2.2 e 2.4 completati, sezione Clienti (modulo 2.1) aggiunta, 2.5 Fase 1b (tabelle di codifica + tendine scheda ospite) completata — Fase 2 (schedina + invio reale) da avviare quando pronto a testare con credenziali reali. **2.6 (Export ROSS1000/ISTAT) Fase 1 completata e verificata dal titolare** (generazione XML, nessun invio reale — in attesa credenziali Regione Liguria). 4.2 (Welcome Book digitale, repo sito-hotel) completato e in produzione su Vercel (dominio provvisorio). 5.1 (Check-in/check-out digitale + housekeeping) completato: stato camere in tempo reale da `soggiorni`, nuova pagina Arrivi/Partenze. **5.2 completato in entrambe le fasi**: Fase A (scansione documento con OCR) chiusa dopo test reali su CIE — Omnitec escluso dallo scope; **Fase B (pre check-in self-service da remoto con token pubblico) verificata dal titolare in locale il 05/08/2026**. 5.3 (email automatiche via Resend, solo email) completato ed esteso con gestione testi (Impostazioni▸Testi email) e offerte dedicate ai clienti (Marketing▸Offerte, rispetta sempre il consenso marketing). Estensioni trasversali della sessione del 05/08: suggerimento provincia su `/clienti` e pre check-in, campi di residenza (ospiti + pre-checkin, per il modulo 2.6), due fix UX su `/planning-camere` (vista 14 giorni di default, tooltip più ricchi, conferma prima di reinviare un link pre-checkin), bugfix pagina Offerte (colonna SQL ambigua), e un nuovo componente `CampoData` (selettore anno) applicato a tutti i 30 campi data del gestionale — funzionante ma segnalato dal titolare come soluzione UX non ideale, alternative da valutare in futuro (`docs/EVOLUTIVE.md`). Corretta anche la bottom nav mobile, disallineata dal menu desktop da tempo (assegnazione ruolo↔voci provvisoria, revisione in sospeso su richiesta del titolare). **06/08/2026**: workflow git/test/deploy spostato permanentemente sul tab Code (mai più git dal sandbox Cowork); chiuse 3 evolutive minori (DELETE configurazione sala ristorante, 3 evolutive magazzino — storico prezzi/scadenze/bozza ordine, 3 nuovi alert Dashboard — opzioni in scadenza/documenti Alloggiati Web/pre check-in); corretto un bug reale preesistente sulla propagazione dei messaggi di errore backend→frontend (`frontend/lib/api.js`, leggeva solo la chiave inglese `error` mentre 22 controller su 40 rispondono in italiano `errore`); su `sito-hotel` aggiunto un pulsante WhatsApp flottante (link diretto, nessuna API a pagamento — Telegram rimandato, l'hotel non ha un account). Dettaglio completo: `docs/DIARIO_SESSIONI.md`. **19-20/08/2026 — Booking Engine Diretto v2**: prenotazione self-service su `sito-hotel` con caparra Stripe 30%, shared inventory (stessa camera fisica vendibile sotto più identità/prezzi), e modulo tariffe derivate (periodi stagionali configurabili dal titolare, derivazione percentuale periodizzata con clamp sul range dichiarato alla Regione, trattamento B&B/mezza pensione/pensione completa, regole bambini 0-2/3-11/12-17). Aperto a fine sessione: test scritti ma non eseguiti, range min/max e sconto bambini da popolare dal titolare, verifica end-to-end su `/prenota` non ancora fatta — dettaglio in `docs/DIARIO_SESSIONI.md` e `docs/EVOLUTIVE.md`. **22/08/2026 — triage code review (tab Code) + fix Tier 1**: corretti #4 (prezzo derivato — base risolta per notte, non più da una riga arbitraria) e #1 (race cron/webhook Stripe — rimborso automatico se il cron interrompe una prenotazione il cui pagamento arriva comunque a buon fine); #3 (tassa di soggiorno online) verificato NON riproducibile, già risolto dall'estensione `composizione_ospiti` del 19/08. **Suite completa confermata dal tab Code: 940/940 test verdi, 33/33 suite (69.9s), nessuna regressione.** Tier 2/3 del triage non affrontati, in attesa di indicazione. Dettaglio completo sopra e in `docs/DIARIO_SESSIONI.md`.*
+*Ultimo aggiornamento: 23/08/2026 — riorganizzazione documentale: creato
+`STATO_PROGETTO.md` (fotografia di stato), questa Sezione 16 e questo
+trailer ridotti da ~900 righe combinate a poche righe di pointer. Stato
+dettagliato per modulo, verifiche pendenti, bloccati su terzi: vedi
+`STATO_PROGETTO.md`. Cronologia completa: `docs/DIARIO_SESSIONI.md`.*

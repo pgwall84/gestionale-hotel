@@ -208,12 +208,15 @@ Modulo Prenotazioni (Fase 2) — evolutive non ancora implementate:
   Viste Ospiti/Pulizie/Conto ospite/Report avanzati — mai costruite, vedi
   docs/PRENOTAZIONI_FASE2.md Parte D per la specifica completa.
 
+⚠️ **SUPERATO IN PARTE il 19/08/2026** — vedi correzione subito sotto
+l'elenco, non cancellato per tenere traccia di cosa è cambiato e perché.
+
 Decisioni strategiche già confermate per la Fase 2 (recuperate 26/07/2026 da
 appunti di sessioni precedenti, non ancora attuate — utili quando si
 riprendono i moduli 2.3/3.2/4.1):
-  - Channel manager: WuBook/WooDoo, ~21€/mese
-  - Booking engine: WuBook Opzione 3, ~27€/mese
-  - Pagamenti: Nexi (default) + Stripe (alternativa), entrambi via WuBook
+  - ~~Channel manager: WuBook/WooDoo, ~21€/mese~~ — SUPERATO, vedi sotto
+  - ~~Booking engine: WuBook Opzione 3, ~27€/mese~~ — SUPERATO, vedi sotto
+  - Pagamenti: Nexi (default) + Stripe (alternativa) — **non più "via WuBook"**, il booking engine diretto (sotto) usa già Stripe direttamente
   - Documenti commerciali: A-Cube API (sostituisce il registratore Hugin
     RT-K50 attuale, non integrabile via API)
   - Fatturazione B2B: Fatture in Cloud, da rivalutare con il commercialista
@@ -226,6 +229,36 @@ riprendono i moduli 2.3/3.2/4.1):
     tassa di soggiorno (modulo 2.4). Alloggiati Web (2.5): deciso SOAP
     diretto a WS_ALLOGGIATI, nessun intermediario — vedi voce dedicata
     sotto "Modulo 2.5" per lo stato reale.
+
+  ✅ **Correzione 19/08/2026 — WuBook/WooDoo scartato, Beds24 scelto per
+  l'OTA** (decisione presa durante la sessione di pianificazione del
+  Booking Engine Diretto v2, dettaglio in
+  `docs/superpowers/specs/2026-08-19-booking-engine-diretto-design.md`,
+  sezione "Contesto", confermato e completato dalla fonte più autorevole
+  `sito-hotel/SPEC_SITO_HOTEL.md` Sezione 10, aggiornata lo stesso giorno):
+  **WuBook/WooDoo e RoomCloud sono stati esclusi come canale per il
+  channel manager** — entrambi accettano solo fornitori certificati con
+  portafoglio multi-cliente (agenzie/software house), non un singolo
+  hotel col proprio gestionale interno come questo (**verificato
+  direttamente con WuBook**, non solo dedotto). Anche **Octorate** è stato
+  valutato ed escluso: dà accesso alle API solo comprando il suo
+  gestionale in bundle (~160€/mese, fuori scala per uso solo API). La mail di
+  richiesta preventivo (`docs/RICHIESTA_WUBOOK.md`, inviata il 10/08/2026)
+  è quindi **superata, non più da aspettare** — se arriva una risposta,
+  non cambia la decisione. **Beds24 scelto al suo posto** per la sola
+  sincronizzazione OTA (channel manager) — **spec e piano non ancora
+  scritti**, è deliberatamente fuori scope dal piano Booking Engine
+  Diretto v2 (quello copre solo la prenotazione diretta via Stripe,
+  costruita **senza passare da WuBook**). Il **booking engine sul sito
+  (modulo 4.1)** è quindi già risolto in un modo diverso da quanto scritto
+  sopra e in `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` (che parla ancora di
+  "calendario custom su API WuBook") — vedi "Booking Engine Diretto v2"
+  più sotto in questo file e `STATO_PROGETTO.md` per lo stato reale.
+  `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` non è stato riscritto per
+  intero per questa correzione (è un piano a settimane costruito attorno
+  a WuBook come blocco Fase 0 — servirebbe una revisione strutturale, non
+  un singolo paragrafo) — trattare quel documento con cautela su tutto ciò
+  che riguarda channel manager/booking engine finché non viene rifatto.
 
   ⚠️ **Verifica prezzi dal vivo (09/08/2026)**, prima di fidarsi di
   qualunque cifra sopra — controllati i siti reali dei fornitori, nessun
@@ -299,12 +332,14 @@ Tabella `camere` non tracciata da nessuna migration (scoperto 31/07/2026,
   della tabella reale trasformato in una migration retroattiva.
 
 Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
-  2.3 Integrazione WuBook/WooDoo channel manager OTA — la mappatura
+  2.3 Integrazione channel manager OTA — la mappatura
     tipo_camera.id ↔ canale ↔ codice_esterno è pronta (migration 020,
     tabella tipi_camera_canali, UI in /tariffe — 31/07/2026), sostituisce il
-    vecchio appunto manuale in tipi_camera.note. Restano da fare: Fase 0
-    (sottoscrizione WuBook — non ancora fatta dal titolare, bloccante),
-    poi ricezione prenotazioni via webhook, invio disponibilità/tariffe.
+    vecchio appunto manuale in tipi_camera.note, resta valida a prescindere
+    dal fornitore. **Fornitore Beds24, non più WuBook** (cambiato 19/08/2026,
+    vedi correzione dedicata sopra in questo file). Restano da fare: spec
+    Beds24 (non ancora scritta), poi ricezione prenotazioni via webhook,
+    invio disponibilità/tariffe.
   2.4 Tassa di soggiorno custom
   2.5 Alloggiati Web — Fase 2: NON PIÙ "non ancora avviato", superato
     dai fatti del 13/08/2026 — vedi voce dedicata "Modulo 2.5 — Fase 2,
@@ -922,6 +957,17 @@ Fase 3 (futuro):
     se conviene hardware one-off senza abbonamento (~400-650€ con HI144)
     o un sistema wireless con canone ricorrente ma integrazione più
     diretta nel gestionale.
+    ⚠️ **Punto normativo mai verificato (dalla ricerca 14/08/2026, recuperato
+    23/08/2026)**: gli stabilimenti che trattano prodotti di origine animale
+    con necessità di "riconoscimento" CE 853/2004 sono esclusi dalla
+    semplice notifica sanitaria (SCIA UNICA) e richiedono un'autorizzazione
+    separata — non verificato se il ristorante di Hotel del Golfo rientra in
+    questo caso (dipende da eventuali lavorazioni tipo trasformazione carne/
+    pesce in loco oltre alla normale cucina). Da chiarire con ASL5 Spezzino
+    o il consulente HACCP attuale, non deducibile da qui — nessuna mail
+    ancora scritta. Dettaglio completo (quadro normativo, Autorità
+    competente, formazione obbligatoria): `docs/RICERCA_HACCP_MERCATO_LEGALE.md`
+    §3.
   6.2 Agente AI interno per titolare e staff
   6.3 Revenue management (RevPAR, suggerimenti tariffari)
 
