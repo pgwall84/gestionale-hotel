@@ -35,7 +35,7 @@ Nexi/Stripe via WuBook) — dipendono in parte da 2.3.
 
 | Modulo | Stato reale | Dettaglio |
 |---|---|---|
-| 4.1 Booking engine | 🔶 Costruito come "Booking Engine Diretto v2" su `sito-hotel` (19-20/08, caparra 30% Stripe) — CLAUDE.md §8 non lo segna ancora. Aperto: suite `bookingPubblico.test.js` scritta ma mai eseguita, range min/max tariffe e sconto bambini 3-11 (oggi 0%) da popolare, verifica end-to-end `/prenota` non fatta | diario 19-20/08 |
+| 4.1 Booking engine | 🔶 Costruito come "Booking Engine Diretto v2" su `sito-hotel` (19-20/08, caparra 30% Stripe) — CLAUDE.md §8 non lo segna ancora. Dal 24/08 il prezzo legge anche `planning_tariffe_giorni` (Piano 4, vedi sotto), non più solo il motore `/tariffe`. Aperto: suite `bookingPubblico.test.js` scritta ma mai eseguita (e non aggiornata per il Piano 4), range min/max tariffe e sconto bambini 3-11 (oggi 0%) da popolare, verifica end-to-end `/prenota` non fatta, restrizioni min_stay/chiusure mai testate su una prenotazione reale | diario 19-20/08, 24/08 |
 | 4.2 Welcome Book | ✅ Fatto, in produzione su Vercel (dominio provvisorio) | diario 02/08 |
 
 ## Fase 2D — Esperienza ospite
@@ -88,39 +88,284 @@ testi editabili + Offerte (04/08).
   colore-stato-pulizia — dettaglio e motivazione in
   `docs/DIARIO_SESSIONI.md`. Resta comunque solo `esbuild` come verifica
   automatica (nessuna suite Jest dedicata ai colori, sono solo stile).
-- **Posizione fissa bottoni — pannello dettaglio prenotazione (23/08/2026,
-  fatta in Cowork, non nel tab Code)**: footer fisso in fondo al pannello
-  (primario a destra colore brand, annulla/distruttivo a sinistra),
-  condiviso tra modalità vista e modifica — dettaglio in
-  `docs/DIARIO_SESSIONI.md`. Solo `esbuild`, **zero verifica visiva**:
-  Marco deve controllare a video che ogni stato (opzione/confermata/
-  check-in/check-out/modifica) mostri il bottone giusto nel posto giusto.
-  Non toccati `PannelloCheckOut`/`ModalAssegnaGruppo`/
-  `ModalDettaglioGruppo` (bottoni ancora nel vecchio schema, in attesa
-  della decisione sui drawer annidati, vedi terzo pattern UI più sotto).
+- ✅ **Posizione fissa bottoni — pannello dettaglio prenotazione (23/08/2026,
+  fatta in Cowork, non nel tab Code) — CONFERMATA A VIDEO da Marco lo
+  stesso giorno**: footer fisso in fondo al pannello (primario a destra
+  colore brand, annulla/distruttivo a sinistra), condiviso tra modalità
+  vista e modifica — dettaglio in `docs/DIARIO_SESSIONI.md`.
+- **Pagamento misto non segnalato visivamente nel riepilogo economico
+  (segnalato da Marco 23/08/2026)**: `RiepilogoEconomico` (usata sia nel
+  pannello dettaglio sia in `PannelloCheckOut`) mostrava "Già pagato" come
+  un unico totale aggregato — lo spacchettamento per modalità di pagamento
+  esisteva già nei dati (`conto.pagamenti.voci[].metodo`, stessa fonte
+  della ricevuta di cortesia) ma era nascosto dentro un `<details>` chiuso
+  di default, mentre la ricevuta elenca ogni pagamento sempre visibile:
+  stessi dati, resa diversa, non un bug del backend. Fix: quando i metodi
+  distinti sono più di uno, accanto a "Già pagato" compare "(misto: X + Y)"
+  e il dettaglio pagamenti si apre già espanso. Solo `esbuild`, **zero
+  verifica visiva** — da controllare su una prenotazione reale con almeno
+  due pagamenti di modalità diversa.
+- **Piano 1 — Min/max cartellino, CHIUSO (24/08/2026)**: alert
+  bloccante-superabile (con log override in `audit_log`) quando un prezzo
+  scritto a mano esce dal min/max del cartellino — sia in `/tariffe` (tipo
+  madre) sia sulla `tariffa_totale` di prenotazione (4 punti in
+  `planning-camere/page.jsx`, uno in più dei 3 previsti dal piano scritto,
+  trovato leggendo il codice). Dettaglio completo, task per task, in
+  `docs/DIARIO_SESSIONI.md` 23/08/2026. **Confermato dal tab Code**:
+  migration 052 applicata, `npx jest --runInBand` sull'intera suite con
+  il fix del conflitto date in `tariffe.test.js` (2092→2095) — tutto
+  verde. Non ancora fatto, ma non bloccante: provare a video tutti i
+  punti 409→conferma→retry (incluso "utente annulla il confirm");
+  confermare la riga `audit_log` dopo un override.
+- **Piano 2 — Griglia statica `/tariffe`, implementato non verificato
+  (24/08/2026)**: sostituita la sezione "Prezzi per tipologia" (fila di
+  chip + una scheda alla volta) con una tabella statica — righe = tipi
+  camera, colonne = periodi stagionali + "Tutto l'anno" (solo righe
+  derivate) — celle cliccabili che aprono in un modal la stessa
+  `SchedaPrezzoTipologia` di sempre, invariata salvo un nuovo prop
+  opzionale `periodoIniziale`. `SchedaTrattamento` non toccata. Piano in
+  `docs/superpowers/plans/2026-08-24-tariffe-griglia-statica.md`,
+  dettaglio in `docs/DIARIO_SESSIONI.md` 24/08/2026. Verificato solo con
+  `esbuild --bundle --jsx=automatic` (nessun test frontend esiste in
+  questo repo, nessuna build Next reale, **zero verifica visiva** — da
+  fare dal tab Code: aprire `/tariffe`, controllare che la tabella si
+  popoli, che il click su una cella apra il modal sul periodo giusto, e
+  che il salvataggio/eliminazione dentro il modal si comporti come prima).
+- **Piano 3 — Planning tariffe giorno-per-giorno, implementato non
+  verificato (24/08/2026)**: nuova pagina `/planning-tariffe` — griglia
+  editabile giorno per giorno, prezzo e restrizioni (min stay, CTA, CTD,
+  stop-sell) per tipo camera E trattamento (Solo pernottamento/Mezza
+  pensione/Pensione completa), alimentata come "prezzo consigliato" dal
+  motore esistente di `/tariffe`, liberamente sovrascrivibile cella per
+  cella (doppio click) o in blocco (trascinamento + drawer). Nuova
+  tabella `planning_tariffe_giorni` (migration 053), nuovo controller/
+  route `/api/planning-tariffe`, riuso di `verificaLimitiListino` (Piano
+  1) per l'alert bloccante-superabile sul prezzo. Piano in
+  `docs/superpowers/plans/2026-08-24-planning-tariffe-giorno-per-giorno.md`,
+  dettaglio in `docs/DIARIO_SESSIONI.md` 24/08/2026. **Scope
+  deliberatamente ridotto**: NON è ancora la fonte di verità del prezzo
+  mostrato a un ospite reale (il motore `calcolaTariffaPerTrattamenti` del
+  booking engine non legge ancora questa tabella) e le restrizioni non
+  sono ancora collegate alla disponibilità reale delle prenotazioni —
+  entrambe rimandate a un piano separato, deliberatamente, per non
+  toccare un percorso di prezzo/disponibilità live senza un giro di
+  verifica reale. Verificato solo con `node -c` (backend) ed `esbuild
+  --bundle` (frontend, incluso `Sidebar.tsx` per la nuova voce di
+  navigazione) — nessun accesso a Postgres, nessuna build Next reale,
+  **zero verifica visiva/interattiva del drag-select** (richiede un
+  browser vero). Da fare dal tab Code: applicare la migration 053; aprire
+  `/planning-tariffe`; provare doppio click su una cella prezzo, click
+  singolo su una cella restrizioni, trascinamento su una riga → drawer;
+  confermare che il 409 su un prezzo fuori cartellino compaia e si superi
+  col confirm, come nei Piani 1-2. **SUPERATO 24/08/2026, stesso giorno,
+  vedi voce sotto**: il gap "non ancora la fonte di verità del prezzo
+  mostrato a un ospite" è stato chiuso su richiesta esplicita del
+  titolare — non era più un rimando volontario a un piano futuro.
+- **Piano 4 — sincronizzazione booking engine ↔ planning-tariffe,
+  implementato non verificato (24/08/2026, stesso giorno del Piano 3,
+  su richiesta esplicita del titolare dopo aver notato "prezzi delle
+  camere in vendita a caso")**: `bookingPubblicoController.disponibilita()`
+  e `prenota()` non usano più `calcolaTariffaPerTrattamenti`/
+  `calcolaTariffa` "nude" (`tariffeController.js`) — usano due nuove
+  funzioni in `planningTariffeController.js`
+  (`calcolaTariffaPerTrattamentiConPlanning`/`calcolaTariffaConPlanning`)
+  che controllano PRIMA un override in `planning_tariffe_giorni` per ogni
+  notte+trattamento e ricadono sul motore vecchio solo per le notti senza
+  override — stesso principio di merge già usato da `griglia()`, non
+  riusato 1:1 per non far dipendere il pannello di pianificazione dal
+  percorso di prenotazione live e viceversa (vedi commento sulla funzione
+  nel file). Aggiunta anche l'applicazione reale delle restrizioni
+  (min_stay/chiuso_arrivo/chiuso_partenza/stop_sell) sia in ricerca sia in
+  `prenota()` (409 col motivo specifico se violate) — prima non erano MAI
+  controllate dal booking engine. **[Ipotesi, da riconfermare col
+  titolare]**: le restrizioni sono lette per tipo_camera+trattamento+data
+  (unica granularità che esiste nello schema `planning_tariffe_giorni`,
+  non esiste un concetto di restrizione unica per camera indipendente dal
+  trattamento); `min_stay`/`chiuso_arrivo` verificati sulla riga della
+  prima notte del soggiorno, `chiuso_partenza` sulla riga dell'ultima
+  notte, `stop_sell` blocca se vero su qualunque notte — convenzione
+  scelta qui in assenza di una specifica esplicita, va verificata la
+  prima volta che il titolare imposta una di queste restrizioni su date
+  realmente prenotabili sul sito.
+  **Bug correlato corretto nello stesso intervento**: `disponibilita()`
+  avvolgeva il calcolo prezzo di TUTTI i tipi camera in un solo
+  `Promise.all`/try-catch — se anche un solo tipo camera aveva una
+  configurazione tariffaria rotta (es. la catena di derivazione
+  Quadrupla←Tripla segnalata da Marco lo stesso giorno, mai corretta nel
+  DB da questo sandbox — nessun accesso Postgres), l'eccezione lanciata da
+  `calcolaPrezzoCameraPerNotte` faceva rispondere 500 "Errore interno" a
+  TUTTA la ricerca disponibilità del sito, per qualunque data, non solo al
+  prezzo di quel tipo. Ora ogni tipo camera è isolato nel proprio
+  try/catch: un tipo rotto viene escluso dai risultati, il resto della
+  ricerca funziona comunque. **Questo non sostituisce la correzione
+  manuale della riga Quadrupla←Tripla nel DB, che Marco deve ancora
+  fare.**
+  File toccati: `backend/controllers/planningTariffeController.js`
+  (nuove funzioni), `backend/controllers/bookingPubblicoController.js`
+  (`disponibilita()`/`prenota()` aggiornate, import del motore vecchio
+  rimosso), `sito-hotel/components/booking/BookingWidget.tsx` (nuovo
+  campo opzionale `motivi_non_disponibile`, mostrato al posto del
+  messaggio generico "non disponibile" quando un trattamento è bloccato
+  da una restrizione — testo in italiano non tradotto per le altre 3
+  lingue del sito, stesso limite già presente per gli altri messaggi di
+  errore di questo widget, non una regressione introdotta qui).
+  Verificato solo con `node -c` (i due file backend) ed `esbuild --bundle
+  --jsx=automatic` (il file frontend, 79.5kb, pulito) — **nessun accesso a
+  Postgres, nessuna query reale eseguita, nessuna build Next reale, zero
+  verifica end-to-end del flusso di prenotazione/pagamento Stripe**. Da
+  fare dal tab Code, PRIMA di considerare il flusso davvero pronto:
+  aprire `/prenota`, cercare disponibilità su date con e senza override in
+  `/planning-tariffe`, confermare che il prezzo mostrato coincida con
+  quello del pannello; impostare una restrizione di test (es. min_stay) su
+  date future non ancora prenotate e verificare che il sito la rispetti
+  davvero (sia in ricerca sia provando a forzare una prenotazione più
+  breve via `prenota()`); eseguire (mai fatto finora, vedi riga 4.1 sopra)
+  la suite `bookingPubblico.test.js` se ancora valida dopo questo cambio.
+- **Piano 4bis — override su tipo madre non arrivava ai tipi derivati,
+  corretto (24/08/2026, poche ore dopo il Piano 4)**: Marco ha riprovato
+  su 28-29 agosto e trovato **2 problemi reali**. (1) **Bug di codice,
+  corretto**: il Piano 4 controllava un override planning-tariffe solo sul
+  tipo camera richiesto — per un tipo DERIVATO (Tripla/Quadrupla) il
+  prezzo del tipo BASE veniva comunque risolto dal vecchio prezzo diretto
+  in tabella `tariffe`, mai da planning-tariffe. L'override 150€ su
+  Matrimoniale non arrivava a Tripla/Quadrupla. Corretto con due nuove
+  funzioni planning-aware in `planningTariffeController.js`
+  (`calcolaPrezzoCameraPerNotteConPlanning`/`prezzoBasePerNotteConPlanning`,
+  duplicate apposta, non toccano `/tariffe` né `griglia()`); serviva
+  esportare anche `calcolaPrezzoDirettoPerNotte` da `tariffeController.js`
+  (non lo era, modifica additiva). **Non risolve da sola** l'osservazione
+  di Marco "Quadrupla più economica di Tripla" — [Ipotesi] è una
+  percentuale di derivazione impostata al contrario in `/tariffe`, da
+  controllare e correggere lì, il codice non decide quale percentuale sia
+  quella giusta. (2) **Non è un bug — dato mancante**: mezza
+  pensione/pensione completa non selezionabili per nessuna tipologia su
+  quella data. [Probabile, non verificabile da qui] manca una riga in
+  `supplementi_trattamento` (sezione "Trattamenti" di `/tariffe`,
+  categoria doppia) che copra il periodo di quella data — planning-tariffe
+  non c'entra, quella tabella non contiene supplementi trattamento.
+  Verificato solo con `node -c`. Dettaglio completo:
+  `docs/DIARIO_SESSIONI.md`, voce "Piano 4bis" del 24/08.
+- **Piano 3 — 3 fix dopo prima verifica a video, implementati non
+  verificati (24/08/2026)**: (1) **bug reale corretto** — `caricaGriglia`
+  in `/planning-tariffe` passava `{params:{...}}` a `api.get`, ma
+  `frontend/lib/api.js` tratta il secondo argomento come header, non come
+  query axios-style: la query string non partiva mai, causa esatta del
+  400 "tipo_camera_id, data_da e data_a sono obbligatori" visto da Marco.
+  Corretto costruendo la query string a mano (`URLSearchParams`), stesso
+  pattern già in uso in `planning-camere/page.jsx`; (2) aggiunto
+  l'intervallo date sotto il nome periodo nelle colonne di `/tariffe`
+  (solo markup); (3) tentativo di fix layout su `/planning-camere`
+  (pulsante "Nuova prenotazione" che torna a capo) restringendo
+  ulteriormente il campo ricerca (`w-40`→`w-28`) e i gap della toolbar
+  (`gap-2`→`gap-1.5`) — **NON verificabile da qui, nessun browser reale
+  disponibile**: potrebbe non bastare alla larghezza finestra reale di
+  Marco. Dettaglio completo in `docs/DIARIO_SESSIONI.md` 24/08/2026.
+  Verificato solo con `esbuild --bundle` sui 3 file toccati.
+  **Aggiornamento stesso giorno — secondo bug reale trovato dopo il fix
+  1**: risolto il 400, `/planning-tariffe` dava poi 500 "errore
+  interno". Causa: `calcolaPrezzoCameraPerNotte` (usata da
+  `planningTariffeController.griglia`) non era nell'elenco
+  `module.exports` di `backend/controllers/tariffeController.js` —
+  destrutturata come `undefined`, `TypeError` al primo uso, mai emerso
+  prima perché il bug 1 impediva alla richiesta di arrivare fin qui.
+  Aggiunta all'export (riga sola, nessuna logica toccata). Verificato
+  solo `node -c` — **nessun accesso a Postgres da qui**, il resto della
+  funzione `griglia()` non è stato eseguito realmente nemmeno ora.
+  Dettaglio in `docs/DIARIO_SESSIONI.md` 24/08/2026. Da fare dal tab
+  Code: aprire `/planning-tariffe` e confermare che la griglia si
+  popoli senza errore 400; aprire `/tariffe` e controllare l'intervallo
+  date sotto ogni periodo; aprire `/planning-camere` e verificare che
+  "Nuova prenotazione" resti sulla stessa riga — se ancora a capo, serve
+  la larghezza finestra/zoom esatti per un secondo giro mirato.
+  **Aggiornamento stesso giorno — riscrittura per aderenza al mockup, 6
+  punti**: Marco vede la griglia a video e la respinge ("non è venuto
+  come nel mockup"), riscrittura strutturale completa da tipologia-alla-
+  volta a tutte-le-tipologie-impilate come nel mockup di riferimento:
+  sigla giorno settimana, popover restrizioni riscritto in
+  `position:fixed` (era `absolute` dentro un contenitore
+  `overflow-x-auto`, causa reale del clipping), menu ⚡ propagazione
+  riga/colonna reintrodotto, drawer "✎ Modifica" multi-tipologia
+  reintrodotto, freccine collassa tipologia/trattamento reintrodotte.
+  Dettaglio punto-per-punto in `docs/DIARIO_SESSIONI.md` 24/08/2026.
+  Verificato solo `esbuild --bundle` (46.3kb, pulito) — **nessuna
+  verifica a video di questa riscrittura**, la più grande del Piano 3
+  finora: da fare dal tab Code con attenzione a popover restrizioni in
+  ogni posizione di scroll, valorizzazione min-stay (diagnosi solo
+  probabile) e che propagazione/drawer producano le stesse PATCH di
+  prima.
+  **Aggiornamento stesso giorno — 5 piccoli dettagli dopo conferma
+  Marco**: badge restrizioni ricolorati come la legenda (blu/ambra/
+  viola invece di grigio uniforme); ordinamento tipologie richiesto da
+  Marco (Matrimoniale, Matrimoniale uso singola, Tripla, Quadrupla,
+  Doppia uso singola, Singola) implementato in modo fail-safe tramite
+  mappatura nome→priorità con alias — **[Ipotesi] non verificabile da
+  qui**: la migration 048 ha consolidato "Singola"/"Doppia uso singola"
+  in una riga sola rinominata "Matrimoniale Piccola", non è confermabile
+  da questo sandbox se oggi esistano ancora come tipi attivi distinti,
+  quindi un nome non riconosciuto finisce in coda invece di sparire o
+  far crashare la pagina; etichetta trattamento "Solo pernottamento" →
+  "Camera e colazione" (solo testo, non tocca il valore DB `bb`); frecce
+  ‹/› laterali che scorrono la griglia di 15 colonne già caricate
+  (distinte dalle ‹/› di toolbar, che invece ricaricano dal backend).
+  Dettaglio in `docs/DIARIO_SESSIONI.md` 24/08/2026. Verificato solo
+  `esbuild --bundle` (49.8kb, pulito) — **zero verifica visiva**, in
+  particolare il punto ordine-tipologie va confermato a video con
+  priorità perché basato su un'ipotesi sullo stato reale dei tipi
+  camera in produzione.
+  **Aggiornamento stesso giorno — bug reale trovato su /tariffe
+  (Piano 1/2)**: Marco segnala popup "Il prezzo undefined€ esce dal
+  range dichiarato (—–—€)" su qualsiasi prezzo provi a impostare, OK
+  non risolve, popup torna. Causa reale confermata leggendo il codice:
+  `SchedaPrezzoTipologia.jsx` trattava QUALSIASI 409 di `/api/tariffe`
+  come violazione min/max, ma quell'endpoint risponde 409 anche per un
+  motivo diverso (sovrapposizione date tra fasce, vincolo Postgres
+  23P01) il cui corpo non ha `minimo`/`massimo`/`valore` — da cui
+  "undefined" e il loop (il flag `confermato` sblocca solo il controllo
+  min/max, non il conflitto date). Aggiunto lo stesso guardrail già
+  presente in 4 punti di `planning-camere/page.jsx`
+  (`err.response?.data?.minimo !== undefined`): ora un 409 diverso
+  mostra il messaggio vero del backend nel banner rosso invece del
+  popup rotto. **[Probabile] non confermabile da qui** (nessun accesso
+  a Postgres): la causa di fondo è probabilmente una fascia tariffaria
+  pre-esistente (da prima che esistessero i periodi stagionali, date
+  dirette non allineate) che collide con il nuovo periodo — con questo
+  fix il messaggio vero sarà visibile al primo tentativo, da lì si potrà
+  individuare la fascia in conflitto dal tab Code.
+  **Aggiornamento stesso giorno — freccine vista Mese segnalate
+  assenti, nessun difetto trovato**: riletto il file consegnato
+  direttamente dal dispositivo (non una cache locale) — il markup delle
+  frecce è presente e non condizionato al modo 14gg/Mese, dovrebbe
+  comparire in entrambe le viste. Controllato anche `AppShell.tsx` per
+  clipping CSS: offset delle frecce (-4px) ben dentro il padding
+  dell'area principale, non dovrebbe uscirne. Nessun difetto individuato
+  nel codice da questo sandbox — ipotesi più probabile è build/cache
+  Next.js non aggiornata lato Marco, da verificare con un refresh
+  forzato del browser o riavvio del dev server prima di trattarlo come
+  bug. Dettaglio in `docs/DIARIO_SESSIONI.md` 24/08/2026.
 
 ## Pattern UI competitor — stato dei 4 punti (23/08/2026)
 
 Discussione con il titolare su 4 pattern UI dei PMS competitor. Ordine di
 lavoro deciso insieme, non tutti e 4 hanno la stessa priorità.
 
-1. Drawer laterale (pannello principale) — ✅ già così da prima di questa
+Tutti e 4 confermati a video da Marco il 23/08/2026, incluso il punto 4
+con una ricerca reale eseguita contro Postgres (non solo apertura pannello
+— nome/numero camera cercato ha restituito la riga giusta).
+
+1. ✅ Drawer laterale (pannello principale) — già così da prima di questa
    discussione.
-2. Posizione fissa bottoni — ✅ fatto oggi sul pannello principale, vedi
-   riga sopra in "Verifiche pendenti".
-3. ✅ Drawer coerenti sui pannelli annidati — **fatto oggi** dopo il
-   mockup: `PannelloCheckOut`/`ModalAssegnaGruppo`/`ModalDettaglioGruppo`
-   ora drawer da destra come il pannello principale (dettaglio in
-   `docs/DIARIO_SESSIONI.md`). Solo `esbuild`, **zero verifica visiva**.
-4. ✅ CMD+K (ricerca universale) — **fatto oggi**. Nuovo endpoint
-   `GET /api/ricerca?q=` (ospiti/camere/prenotazioni, non "fatture" —
-   modulo non costruito), componente `RicercaGlobale.tsx` montato in
-   `AppShell`, apribile da `Cmd+K`/`Ctrl+K` o dal pulsante centrato in
-   Topbar. Dettaglio completo in `docs/DIARIO_SESSIONI.md`. **Verifica
-   più debole di oggi**: solo `node -c`/`esbuild`, **le query SQL nuove
-   non sono mai state eseguite contro Postgres reale** (nessun accesso DB
-   da questo ambiente) — è il punto con più rischio residuo dei quattro,
-   va testato per primo.
+2. ✅ Posizione fissa bottoni — fatto e confermato sul pannello principale.
+3. ✅ Drawer coerenti sui pannelli annidati — fatto dopo il mockup:
+   `PannelloCheckOut`/`ModalAssegnaGruppo`/`ModalDettaglioGruppo` ora
+   drawer da destra come il pannello principale (dettaglio in
+   `docs/DIARIO_SESSIONI.md`).
+4. ✅ CMD+K (ricerca universale) — endpoint `GET /api/ricerca?q=`
+   (ospiti/camere/prenotazioni, non "fatture" — modulo non costruito),
+   componente `RicercaGlobale.tsx` montato in `AppShell`, apribile da
+   `Cmd+K`/`Ctrl+K` o dal pulsante centrato in Topbar. Dettaglio completo
+   in `docs/DIARIO_SESSIONI.md`. **Confermato con ricerca reale** — le
+   query SQL restituiscono risultati corretti da Postgres, non solo
+   verifica di sintassi.
 
 ## Decisioni in sospeso da Marco (nessun blocco tecnico, solo sua scelta)
 

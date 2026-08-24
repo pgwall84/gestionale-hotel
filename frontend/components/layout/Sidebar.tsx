@@ -39,7 +39,7 @@ import {
   CalendarDays, BookOpen, Car, Archive, Settings,
   Clock, LogOut, LogIn, ChefHat, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3,
+  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3, CalendarRange,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -79,6 +79,10 @@ const SEZIONI_MENU = [
     voci: [
       { href: '/camere', icona: BedDouble, testo: 'Stato Camere', ruoli: [...AT,'receptionist','cameriere','portiere_notte'] },
       { href: '/tariffe',   icona: Euro, testo: 'Tariffe',   ruoli: [...AT,'receptionist'] },
+      // Planning tariffe giorno-per-giorno (Piano 3, 24/08/2026) — stessi
+      // ruoli di lettura di /tariffe, icona distinta (CalendarRange) per
+      // non confondersi con /planning-camere (CalendarDays, altro gruppo).
+      { href: '/planning-tariffe', icona: CalendarRange, testo: 'Planning tariffe', ruoli: [...AT,'receptionist'] },
       { href: '/pacchetti', icona: Gift, testo: 'Pacchetti', ruoli: [...AT,'receptionist'] },
     ],
   },

@@ -210,6 +210,98 @@ describe('PATCH /api/soggiorni/:id', () => {
   });
 });
 
+// ─── PATCH /api/soggiorni/:id — min/max cartellino (23/08/2026) ──────────────
+// Setup dedicato: cameraTestId/cameraTestId2 (in cima al file) non hanno
+// tipo_camera_id, quindi verificaLimitiListino non troverebbe mai un min/max
+// da controllare — qui serve una camera con un vero tipo_camera_id e una
+// fascia in `tariffe` con prezzo_minimo/prezzo_massimo per le date del test.
+
+describe('PATCH /api/soggiorni/:id — min/max cartellino', () => {
+  let tipoCameraLimitiId;
+  let cameraLimitiId;
+  const prenotazioniLimiti = [];
+
+  beforeAll(async () => {
+    const db = getPool();
+    const tipo = await db.query(`INSERT INTO tipi_camera (nome) VALUES ($1) RETURNING id`, [`TipoLimitiSogg${SUFFISSO}`]);
+    tipoCameraLimitiId = tipo.rows[0].id;
+    const camera = await db.query(
+      `INSERT INTO camere (numero, nome, piano, tipo_camera_id) VALUES ($1, 'Camera Test Limiti Soggiorni', 9, $2) RETURNING id`,
+      [`TEST-SOGG-LIM${SUFFISSO}`, tipoCameraLimitiId]
+    );
+    cameraLimitiId = camera.rows[0].id;
+    await db.query(
+      `INSERT INTO tariffe (tipo_camera_id, data_inizio, data_fine, prezzo_notte, prezzo_minimo, prezzo_massimo)
+       VALUES ($1, '2094-01-01', '2094-03-31', 100, 100, 300)`,
+      [tipoCameraLimitiId]
+    );
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM soggiorno_ospiti WHERE soggiorno_id IN (SELECT id FROM soggiorni WHERE camera_id = $1)', [cameraLimitiId]);
+    await db.query('DELETE FROM soggiorni WHERE camera_id = $1', [cameraLimitiId]);
+    if (prenotazioniLimiti.length) {
+      await db.query('DELETE FROM prenotazioni WHERE id = ANY($1)', [prenotazioniLimiti]);
+    }
+    await db.query('DELETE FROM tariffe WHERE tipo_camera_id = $1', [tipoCameraLimitiId]);
+    await db.query('DELETE FROM camere WHERE id = $1', [cameraLimitiId]);
+    await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoCameraLimitiId]);
+  });
+
+  async function creaPrenotazioneLimiti(dataArrivo, dataPartenza, tariffaTotale) {
+    const res = await request(app)
+      .post('/api/prenotazioni')
+      .set(authHeader.receptionist())
+      .send({
+        canale_origine: 'diretta',
+        soggiorno: {
+          camera_id: cameraLimitiId, ospite_id: ospiteTestId,
+          data_arrivo: dataArrivo, data_partenza: dataPartenza,
+          tariffa_totale: tariffaTotale,
+        },
+      });
+    if (res.status === 201) prenotazioniLimiti.push(res.body.id);
+    return res;
+  }
+
+  test('tariffa_totale fuori range, senza conferma → 409', async () => {
+    const creata = await creaPrenotazioneLimiti('2094-01-10', '2094-01-12', 200);
+    expect(creata.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/soggiorni/${creata.body.soggiorno.id}`)
+      .set(authHeader.receptionist())
+      .send({ tariffa_totale: 999999 });
+    expect(res.status).toBe(409);
+    expect(res.body).toHaveProperty('minimo');
+    expect(res.body).toHaveProperty('massimo');
+  });
+
+  test('tariffa_totale fuori range, con confermato:true → 200', async () => {
+    const creata = await creaPrenotazioneLimiti('2094-02-10', '2094-02-12', 200);
+    expect(creata.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/soggiorni/${creata.body.soggiorno.id}`)
+      .set(authHeader.receptionist())
+      .send({ tariffa_totale: 999999, confermato: true });
+    expect(res.status).toBe(200);
+    expect(Number(res.body.tariffa_totale)).toBe(999999);
+  });
+
+  test('PATCH senza tariffa_totale (es. drag-and-drop che sposta solo le date) → nessun controllo, comportamento invariato', async () => {
+    const creata = await creaPrenotazioneLimiti('2094-03-10', '2094-03-12', 200);
+    expect(creata.status).toBe(201);
+
+    const res = await request(app)
+      .patch(`/api/soggiorni/${creata.body.soggiorno.id}`)
+      .set(authHeader.receptionist())
+      .send({ data_arrivo: '2094-03-11', data_partenza: '2094-03-13' });
+    expect(res.status).toBe(200);
+  });
+});
+
 // ─── PATCH /api/soggiorni/:id/annulla ─────────────────────────────────────────
 // 15/08/2026 — annulla UNA camera di una prenotazione famiglia multi-camera
 // senza toccare le altre. Nasce dal wizard "aggiungi un'altra camera (stessa

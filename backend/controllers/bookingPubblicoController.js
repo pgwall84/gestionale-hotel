@@ -5,7 +5,16 @@
 // docs/superpowers/specs/2026-08-19-booking-engine-diretto-design.md.
 
 const pool = require('../config/db');
-const { calcolaTariffa, calcolaTariffaPerTrattamenti } = require('./tariffeController');
+// Sincronizzazione con planning-tariffe (24/08/2026, segnalato dal
+// titolare): il prezzo mostrato/prenotato qui non usa più direttamente
+// calcolaTariffa/calcolaTariffaPerTrattamenti "nude" (tariffeController.js)
+// — usa le varianti *ConPlanning in planningTariffeController.js, che
+// controllano prima un override giorno-per-giorno in
+// planning_tariffe_giorni e ricadono sul motore vecchio solo per le notti
+// senza override. Vedi commento su calcolaTariffaPerTrattamentiConPlanning
+// per il dettaglio del merge e le assunzioni sulle restrizioni
+// (min_stay/chiuso_arrivo/chiuso_partenza/stop_sell).
+const { calcolaTariffaPerTrattamentiConPlanning, calcolaTariffaConPlanning } = require('./planningTariffeController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
 const stripe = require('../lib/stripeClient');
 
@@ -106,31 +115,54 @@ async function disponibilita(req, res) {
     // Fix 23/08/2026 (code review 22/08, Tier 2): usa
     // calcolaTariffaPerTrattamenti invece di 3 chiamate separate a
     // calcolaTariffa — il prezzo camera (identico per i 3 trattamenti) si
-    // calcola una sola volta per tipo camera invece di tre, vedi commento
-    // su calcolaTariffaPerTrattamenti in tariffeController.js.
+    // calcola una sola volta per tipo camera invece di tre.
+    // Aggiornato 24/08/2026: calcolaTariffaPerTrattamentiConPlanning
+    // (planningTariffeController.js) al posto della versione "nuda" —
+    // legge prima planning_tariffe_giorni, ricade sul motore vecchio solo
+    // per le notti senza override. Ogni tipo camera è isolato nel proprio
+    // try/catch: un tipo con una configurazione tariffaria rotta (es. una
+    // catena di derivazione a più livelli non supportata, vedi Piano 2 del
+    // 24/08/2026 su /tariffe) viene escluso dai risultati invece di far
+    // rispondere 500 all'INTERA ricerca — prima di oggi un solo tipo
+    // camera mal configurato bastava a rompere ogni ricerca disponibilità
+    // del sito, non solo il prezzo di quel tipo.
     const tipiConPrezzo = await Promise.all(
       tipiResult.rows.map(async (tipo) => {
-        const risultati = await calcolaTariffaPerTrattamenti(
-          tipo.id, data_arrivo, data_partenza, TRATTAMENTI_VALIDI, { adulti: adultiValidati, bambiniEta }
-        );
-        const { bb, mezza_pensione: mezzaPensione, pensione_completa: pensioneCompleta } = risultati;
-        return {
-          id: tipo.id,
-          nome: tipo.nome,
-          capienza_max: tipo.capienza_max,
-          num_notti: bb.num_notti,
-          prezzi: {
-            bb: bb.prezzo_totale,
-            mezza_pensione: mezzaPensione.prezzo_totale,
-            pensione_completa: pensioneCompleta.prezzo_totale,
-          },
-          notti_scoperte: bb.notti_scoperte,
-          avvisi: bb.avvisi,
-        };
+        try {
+          const risultati = await calcolaTariffaPerTrattamentiConPlanning(
+            tipo.id, data_arrivo, data_partenza, TRATTAMENTI_VALIDI, { adulti: adultiValidati, bambiniEta }
+          );
+          const { bb, mezza_pensione: mezzaPensione, pensione_completa: pensioneCompleta } = risultati;
+          const prezzoSeDisponibile = (r) => (r.restrizioni.bloccato ? null : r.prezzo_totale);
+          return {
+            id: tipo.id,
+            nome: tipo.nome,
+            capienza_max: tipo.capienza_max,
+            num_notti: bb.num_notti,
+            prezzi: {
+              bb: prezzoSeDisponibile(bb),
+              mezza_pensione: prezzoSeDisponibile(mezzaPensione),
+              pensione_completa: prezzoSeDisponibile(pensioneCompleta),
+            },
+            notti_scoperte: bb.notti_scoperte,
+            avvisi: bb.avvisi,
+            // Motivo specifico (min_stay/chiusura/stop_sell) quando un
+            // trattamento risulta non disponibile per restrizione invece
+            // che per assenza di prezzo — null se non bloccato.
+            motivi_non_disponibile: {
+              bb: bb.restrizioni.motivo,
+              mezza_pensione: mezzaPensione.restrizioni.motivo,
+              pensione_completa: pensioneCompleta.restrizioni.motivo,
+            },
+          };
+        } catch (errTipo) {
+          console.error(`disponibilita: calcolo prezzo fallito per tipo camera ${tipo.id} (${tipo.nome}), escluso dai risultati:`, errTipo.message);
+          return null;
+        }
       })
     );
 
-    res.json(tipiConPrezzo.filter(t => t.prezzi.bb !== null));
+    res.json(tipiConPrezzo.filter(t => t && t.prezzi.bb !== null));
   } catch (err) {
     console.error('disponibilita booking pubblico error:', err);
     res.status(500).json({ error: 'Errore interno' });
@@ -141,7 +173,7 @@ async function disponibilita(req, res) {
 // Crea una prenotazione con blocco camera breve (opzione, TTL 15 minuti) e
 // genera il PaymentIntent Stripe per il 30% di caparra. SICUREZZA:
 // tariffa_totale non è mai accettata dal client — sempre ricalcolata qui
-// via calcolaTariffa. Il blocco (verifica disponibilità + riserva) è
+// via calcolaTariffaConPlanning. Il blocco (verifica disponibilità + riserva) è
 // atomico nella stessa transazione: due richieste concorrenti sulla stessa
 // camera/date non possono superare entrambe il controllo (backstop finale:
 // il vincolo excl_soggiorni_camera_overlap a livello DB, tradotto in 409 da
@@ -193,9 +225,21 @@ async function prenota(req, res) {
       [CANALE_ORIGINE_BOOKING_ENGINE]
     );
 
-    const tariffa = await calcolaTariffa(tipo_camera_id, data_arrivo, data_partenza, {
+    // Aggiornato 24/08/2026: calcolaTariffaConPlanning al posto di
+    // calcolaTariffa "nuda" — stesso motore ora usato da disponibilita(),
+    // per non poter mai prenotare a un prezzo diverso da quello mostrato in
+    // ricerca. Include anche l'enforcement delle restrizioni
+    // (min_stay/chiuso_arrivo/chiuso_partenza/stop_sell impostate in
+    // /planning-tariffe) — prima di oggi queste non erano mai controllate
+    // qui, un ospite poteva prenotare anche in violazione di un minimo
+    // notti o una chiusura arrivo/partenza impostati dal titolare.
+    const tariffa = await calcolaTariffaConPlanning(tipo_camera_id, data_arrivo, data_partenza, {
       trattamento: trattamentoValidato, adulti: adultiValidati, bambiniEta,
     });
+    if (tariffa.restrizioni.bloccato) {
+      await client.query('ROLLBACK');
+      return res.status(409).json({ error: tariffa.restrizioni.motivo || 'Questa combinazione di date e trattamento non è disponibile.' });
+    }
     if (tariffa.prezzo_totale === null) {
       await client.query('ROLLBACK');
       return res.status(409).json({ error: 'Non è disponibile una tariffa per queste date (camera o trattamento scelto).' });

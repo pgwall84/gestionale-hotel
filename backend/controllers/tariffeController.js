@@ -4,6 +4,7 @@
 // (shared/ruoli.js, sezione 'tariffe').
 
 const pool = require('../config/db');
+const { logAudit } = require('./auditController');
 
 // GET /api/tariffe?tipo_camera_id= — elenco fasce, filtro opzionale per categoria
 async function lista(req, res) {
@@ -13,7 +14,8 @@ async function lista(req, res) {
     let query = `
       SELECT t.id, t.tipo_camera_id, tc.nome AS tipo_camera_nome,
              t.nome_stagione, t.data_inizio, t.data_fine, t.prezzo_notte,
-             t.periodo_id, per.nome AS periodo_nome
+             t.periodo_id, per.nome AS periodo_nome,
+             t.prezzo_minimo, t.prezzo_massimo
       FROM tariffe t
       JOIN tipi_camera tc ON tc.id = t.tipo_camera_id
       LEFT JOIN periodi_stagionali per ON per.id = t.periodo_id
@@ -315,7 +317,7 @@ async function calcola(req, res) {
 // altri tipi — non obbligatorio, le fasce senza periodo restano valide con
 // solo data_inizio/data_fine come sempre.
 async function crea(req, res) {
-  const { tipo_camera_id, nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id } = req.body;
+  const { tipo_camera_id, nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id, prezzo_minimo, prezzo_massimo, confermato } = req.body;
   if (!tipo_camera_id || !data_inizio || !data_fine || !prezzo_notte) {
     return res.status(400).json({ error: 'tipo_camera_id, data_inizio, data_fine e prezzo_notte sono obbligatori.' });
   }
@@ -325,12 +327,28 @@ async function crea(req, res) {
   if (Number(prezzo_notte) <= 0) {
     return res.status(400).json({ error: 'Il prezzo per notte deve essere maggiore di zero.' });
   }
+
+  const min = prezzo_minimo === undefined || prezzo_minimo === null || prezzo_minimo === '' ? null : Number(prezzo_minimo);
+  const max = prezzo_massimo === undefined || prezzo_massimo === null || prezzo_massimo === '' ? null : Number(prezzo_massimo);
+  const fuoriRange = (min !== null && Number(prezzo_notte) < min) || (max !== null && Number(prezzo_notte) > max);
+  if (fuoriRange && !confermato) {
+    return res.status(409).json({
+      errore: 'Il prezzo esce dal min/max dichiarato per il cartellino.',
+      minimo: min, massimo: max, valore: Number(prezzo_notte),
+    });
+  }
+
   try {
     const result = await pool.query(
-      `INSERT INTO tariffe (tipo_camera_id, nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id)
-       VALUES ($1, $2, $3, $4, $5, $6) RETURNING *`,
-      [tipo_camera_id, nome_stagione || null, data_inizio, data_fine, prezzo_notte, periodo_id || null]
+      `INSERT INTO tariffe (tipo_camera_id, nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id, prezzo_minimo, prezzo_massimo)
+       VALUES ($1, $2, $3, $4, $5, $6, $7, $8) RETURNING *`,
+      [tipo_camera_id, nome_stagione || null, data_inizio, data_fine, prezzo_notte, periodo_id || null, min, max]
     );
+    if (fuoriRange) {
+      await logAudit(req.utente.id, 'override_limite_listino', 'tariffe', result.rows[0].id, req, {
+        valore_inserito: Number(prezzo_notte), minimo: min, massimo: max,
+      });
+    }
     res.status(201).json(result.rows[0]);
   } catch (err) {
     if (err.code === '23P01') { // exclusion_violation — sovrapposizione date
@@ -350,23 +368,44 @@ async function crea(req, res) {
 // COALESCE, stesso principio già usato altrove nel progetto per gruppo_id
 // (docs/DIARIO_SESSIONI.md, 15/08/2026) quando serve poter tornare a NULL.
 async function aggiorna(req, res) {
-  const { nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id } = req.body;
+  const { nome_stagione, data_inizio, data_fine, prezzo_notte, periodo_id, prezzo_minimo, prezzo_massimo, confermato } = req.body;
   try {
+    const attuale = await pool.query('SELECT prezzo_notte, prezzo_minimo, prezzo_massimo FROM tariffe WHERE id = $1', [req.params.id]);
+    if (!attuale.rows.length) {
+      return res.status(404).json({ error: 'Fascia tariffaria non trovata.' });
+    }
+    const prezzoFinale = prezzo_notte !== undefined && prezzo_notte !== null ? Number(prezzo_notte) : Number(attuale.rows[0].prezzo_notte);
+    const min = prezzo_minimo !== undefined ? (prezzo_minimo === null || prezzo_minimo === '' ? null : Number(prezzo_minimo)) : (attuale.rows[0].prezzo_minimo !== null ? Number(attuale.rows[0].prezzo_minimo) : null);
+    const max = prezzo_massimo !== undefined ? (prezzo_massimo === null || prezzo_massimo === '' ? null : Number(prezzo_massimo)) : (attuale.rows[0].prezzo_massimo !== null ? Number(attuale.rows[0].prezzo_massimo) : null);
+    const fuoriRange = (min !== null && prezzoFinale < min) || (max !== null && prezzoFinale > max);
+    if (fuoriRange && !confermato) {
+      return res.status(409).json({
+        errore: 'Il prezzo esce dal min/max dichiarato per il cartellino.',
+        minimo: min, massimo: max, valore: prezzoFinale,
+      });
+    }
+
     const result = await pool.query(
       `UPDATE tariffe
-       SET nome_stagione = COALESCE($2, nome_stagione),
-           data_inizio   = COALESCE($3, data_inizio),
-           data_fine     = COALESCE($4, data_fine),
-           prezzo_notte  = COALESCE($5, prezzo_notte),
-           periodo_id    = CASE WHEN $6 THEN periodo_id ELSE $7 END,
-           updated_at    = now()
+       SET nome_stagione  = COALESCE($2, nome_stagione),
+           data_inizio    = COALESCE($3, data_inizio),
+           data_fine      = COALESCE($4, data_fine),
+           prezzo_notte   = COALESCE($5, prezzo_notte),
+           periodo_id     = CASE WHEN $6 THEN periodo_id ELSE $7 END,
+           prezzo_minimo  = CASE WHEN $8 THEN prezzo_minimo ELSE $9 END,
+           prezzo_massimo = CASE WHEN $10 THEN prezzo_massimo ELSE $11 END,
+           updated_at     = now()
        WHERE id = $1
        RETURNING *`,
       [req.params.id, nome_stagione || null, data_inizio || null, data_fine || null, prezzo_notte || null,
-       periodo_id === undefined, periodo_id === undefined ? null : periodo_id]
+       periodo_id === undefined, periodo_id === undefined ? null : periodo_id,
+       prezzo_minimo === undefined, prezzo_minimo === undefined ? null : (prezzo_minimo === '' ? null : prezzo_minimo),
+       prezzo_massimo === undefined, prezzo_massimo === undefined ? null : (prezzo_massimo === '' ? null : prezzo_massimo)]
     );
-    if (!result.rows.length) {
-      return res.status(404).json({ error: 'Fascia tariffaria non trovata.' });
+    if (fuoriRange) {
+      await logAudit(req.utente.id, 'override_limite_listino', 'tariffe', req.params.id, req, {
+        valore_inserito: prezzoFinale, minimo: min, massimo: max,
+      });
     }
     res.json(result.rows[0]);
   } catch (err) {
@@ -392,4 +431,11 @@ async function elimina(req, res) {
   }
 }
 
-module.exports = { lista, calcola, calcolaTariffa, calcolaTariffaPerTrattamenti, crea, aggiorna, elimina };
+// calcolaPrezzoCameraPerNotte esportata dal 24/08/2026: riusata da
+// planningTariffeController.griglia (Piano 3) per il "prezzo consigliato"
+// giorno per giorno — mancava da questo elenco, causa reale del 500
+// "Errore interno" su GET /api/planning-tariffe/griglia (TypeError:
+// calcolaPrezzoCameraPerNotte non è una funzione, destrutturata come
+// undefined) rimasto mascherato finché il bug separato sul frontend
+// (query string mai inviata) impediva alla richiesta di arrivare fin qui.
+module.exports = { lista, calcola, calcolaTariffa, calcolaTariffaPerTrattamenti, calcolaPrezzoCameraPerNotte, calcolaPrezzoDirettoPerNotte, calcolaSupplementoTrattamento, crea, aggiorna, elimina };

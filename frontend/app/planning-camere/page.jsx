@@ -391,6 +391,21 @@ function RigaCamera({ camera, giorni, rigaGrid, oggiStr, puoTrascinare, puoGesti
 // (PannelloCheckOut) — stesso contenuto, stessa fonte dati
 // (GET /api/prenotazioni/:id/conto), nessuna duplicazione di JSX.
 function RiepilogoEconomico({ conto, contoErrore }) {
+  // Pagamento misto (23/08/2026) — Marco ha segnalato che se un ospite paga
+  // in parte con una modalità e in parte con un'altra, qui non si vedeva:
+  // il totale "Già pagato" era un unico numero aggregato, e lo spacchettamento
+  // per modalità esisteva già (conto.pagamenti.voci[].metodo, stessa fonte
+  // dati della ricevuta di cortesia) ma era nascosto dentro un <details>
+  // chiuso di default — bisognava clic su "Dettaglio pagamenti" per notarlo.
+  // La ricevuta invece elenca ogni voce di pagamento sempre visibile, per
+  // questo lì il pagamento misto si vedeva e qui no: stessi dati, resa
+  // diversa. Fix: segnale visivo accanto a "Già pagato" quando i metodi
+  // distinti sono più di uno, e dettaglio pagamenti aperto di default in
+  // quel caso (resta chiudibile, non è un cambio di dati).
+  const metodiPagamentoDistinti = conto
+    ? [...new Set(conto.pagamenti.voci.map(p => p.metodo).filter(Boolean))]
+    : [];
+  const pagamentoMisto = metodiPagamentoDistinti.length > 1;
   return (
     <div className="text-sm rounded-lg border p-3 space-y-2">
       <p className="font-medium flex items-center gap-1.5"><CreditCard size={14} /> Riepilogo economico</p>
@@ -416,7 +431,13 @@ function RiepilogoEconomico({ conto, contoErrore }) {
               <span>€{conto.tassa_soggiorno.dovuta.toFixed(2)}</span>
             </div>
             <div className="flex justify-between">
-              <span>Già pagato</span><span>− €{conto.pagamenti.totale.toFixed(2)}</span>
+              <span>
+                Già pagato
+                {pagamentoMisto && (
+                  <span className="italic"> (misto: {metodiPagamentoDistinti.join(' + ')})</span>
+                )}
+              </span>
+              <span>− €{conto.pagamenti.totale.toFixed(2)}</span>
             </div>
             {conto.tassa_soggiorno.riscossa > 0 && (
               <div className="flex justify-between">
@@ -431,7 +452,7 @@ function RiepilogoEconomico({ conto, contoErrore }) {
             </span>
           </div>
           {conto.pagamenti.voci.length > 0 && (
-            <details className="text-xs pt-1">
+            <details className="text-xs pt-1" open={pagamentoMisto}>
               <summary className="cursor-pointer" style={{ color: 'var(--muted-foreground)' }}>
                 Dettaglio pagamenti ({conto.pagamenti.voci.length})
               </summary>
@@ -1809,7 +1830,11 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
   // gruppo_id valorizzato subito (non /prenotazioni/:id/soggiorni, quello è
   // per la famiglia): ogni camera qui è una prenotazione a sé, coerente con
   // com'è già modellato il resto del gruppo.
-  async function aggiungiCameraGruppo() {
+  // confermato: default false — retry ricorsivo con true dopo che l'utente
+  // conferma esplicitamente l'override in caso di 409 per min/max cartellino
+  // (Piano 1, 23/08/2026) — distinto dal 409 "camera già occupata" (chiave
+  // `error`, non `errore`/`minimo`/`massimo`), gestito subito sotto invariato.
+  async function aggiungiCameraGruppo(confermato = false) {
     setErroreCamera(null);
     if (!cameraId) return setErroreCamera('Seleziona una camera.');
     if (!ospiteSelezionato) return setErroreCamera('Seleziona o crea un ospite.');
@@ -1830,6 +1855,7 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
           data_partenza: dataPartenza,
           num_ospiti: Number(numOspiti) || 1,
           tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+          confermato,
         },
       });
       setUltimoOspiteUsato(ospiteSelezionato);
@@ -1839,6 +1865,13 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
       await carica();
       onCambiato();
     } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.minimo !== undefined) {
+        const { minimo, massimo, valore } = err.response.data;
+        if (confirm(`La tariffa ${valore}€ esce dal range dichiarato per il cartellino (${minimo ?? '—'}–${massimo ?? '—'}€). Confermi comunque?`)) {
+          return aggiungiCameraGruppo(true);
+        }
+        return;
+      }
       if (err.response?.status === 409) {
         setErroreCamera(err.message || 'Camera già occupata in queste date.');
       } else {
@@ -2013,7 +2046,7 @@ function ModalDettaglioGruppo({ gruppoId, elencoCamere, onChiudi, onCambiato }) 
                     </div>
                   </div>
                   <div className="flex gap-2">
-                    <button type="button" onClick={aggiungiCameraGruppo} disabled={salvandoCamera}
+                    <button type="button" onClick={() => aggiungiCameraGruppo()} disabled={salvandoCamera}
                             className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
                       {salvandoCamera ? 'Aggiunta...' : 'Aggiungi camera'}
                     </button>
@@ -2258,7 +2291,11 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
     }
   }
 
-  async function invia() {
+  // confermato: default false — retry ricorsivo con true dopo che l'utente
+  // conferma esplicitamente l'override in caso di 409 per min/max cartellino
+  // (Piano 1, 23/08/2026) — distinto dal 409 "camera già occupata" (chiave
+  // `error`, non `errore`/`minimo`/`massimo`), gestito subito sotto invariato.
+  async function invia(confermato = false) {
     setErroreGenerale(null);
     if (!cameraId) return setErroreGenerale('Seleziona una camera.');
     if (!ospiteSelezionato) return setErroreGenerale('Seleziona o crea un ospite.');
@@ -2280,6 +2317,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
           num_ospiti: Number(numOspiti) || 1,
           tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
           pacchetto_id: pacchettoId ? Number(pacchettoId) : null,
+          confermato,
         },
       });
       // Non si chiude più subito: resta aperto in modalità "famiglia su più
@@ -2296,6 +2334,13 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
       }]);
       setUltimeDateFamiglia({ arrivo: dataArrivo, partenza: dataPartenza });
     } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.minimo !== undefined) {
+        const { minimo, massimo, valore } = err.response.data;
+        if (confirm(`La tariffa ${valore}€ esce dal range dichiarato per il cartellino (${minimo ?? '—'}–${massimo ?? '—'}€). Confermi comunque?`)) {
+          return invia(true);
+        }
+        return;
+      }
       if (err.response?.status === 409) {
         setErroreGenerale(err.message || 'Camera già occupata in queste date.');
       } else {
@@ -2308,7 +2353,16 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
 
   // Aggiunge un'altra camera alla stessa prenotazione/famiglia (stesso
   // ospite intestatario, nessun autocomplete qui — vedi commento sopra).
-  async function aggiungiCameraAllaFamiglia() {
+  // confermato: default false — retry ricorsivo con true dopo che l'utente
+  // conferma esplicitamente l'override in caso di 409 per min/max cartellino
+  // (Piano 1, 23/08/2026) — non tra le tre funzioni indicate dal piano (che
+  // si limitava a POST /api/prenotazioni), ma stesso endpoint modificato dal
+  // Task 4 (POST /api/prenotazioni/:id/soggiorni, aggiungiSoggiorno) e stessa
+  // tariffa_totale scritta a mano: senza questa gestione l'utente vedrebbe
+  // qui un 409 generico non gestito. Distinto dal 409 "camera già occupata"
+  // (chiave `error`, non `errore`/`minimo`/`massimo`), gestito subito sotto
+  // invariato.
+  async function aggiungiCameraAllaFamiglia(confermato = false) {
     setErroreAggiunta(null);
     if (!aggiuntaApertaCameraId) return setErroreAggiunta('Seleziona una camera.');
     if (!aggiuntaArrivo || !aggiuntaPartenza) return setErroreAggiunta('Inserisci le date di arrivo e partenza.');
@@ -2324,6 +2378,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
           data_partenza: aggiuntaPartenza,
           num_ospiti: Number(aggiuntaNumOspiti) || 1,
           tariffa_totale: aggiuntaTariffa === '' ? null : Number(aggiuntaTariffa),
+          confermato,
         },
       });
       const cameraScelta = elencoCamere.find(c => String(c.camera_id) === String(aggiuntaApertaCameraId));
@@ -2340,6 +2395,13 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
       setAggiuntaNumOspiti(1);
       setAggiuntaTariffa('');
     } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.minimo !== undefined) {
+        const { minimo, massimo, valore } = err.response.data;
+        if (confirm(`La tariffa ${valore}€ esce dal range dichiarato per il cartellino (${minimo ?? '—'}–${massimo ?? '—'}€). Confermi comunque?`)) {
+          return aggiungiCameraAllaFamiglia(true);
+        }
+        return;
+      }
       if (err.response?.status === 409) {
         setErroreAggiunta(err.message || 'Camera già occupata in queste date.');
       } else {
@@ -2572,7 +2634,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
 
           <div className="flex gap-2 pt-2">
             <button
-              onClick={invia}
+              onClick={() => invia()}
               disabled={salvataggio}
               className="flex-1 rounded-lg py-2 text-sm font-medium text-white"
               style={{ background: 'var(--hotel-amber)' }}
@@ -2664,7 +2726,7 @@ function FormNuovaPrenotazione({ iniziale, elencoCamere, onChiudi, onCreato }) {
               <div className="flex gap-2">
                 <button
                   type="button"
-                  onClick={aggiungiCameraAllaFamiglia}
+                  onClick={() => aggiungiCameraAllaFamiglia()}
                   disabled={salvandoAggiunta}
                   className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white"
                   style={{ background: 'var(--hotel-navy)' }}
@@ -2977,7 +3039,11 @@ function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
     setErroreCamera(null);
   }
 
-  async function aggiungiCameraGruppo() {
+  // confermato: default false — retry ricorsivo con true dopo che l'utente
+  // conferma esplicitamente l'override in caso di 409 per min/max cartellino
+  // (Piano 1, 23/08/2026) — distinto dal 409 "camera già occupata" (chiave
+  // `error`, non `errore`/`minimo`/`massimo`), gestito subito sotto invariato.
+  async function aggiungiCameraGruppo(confermato = false) {
     setErroreCamera(null);
     if (!cameraId) return setErroreCamera('Seleziona una camera.');
     if (!ospiteSelezionato) return setErroreCamera('Seleziona o crea un ospite.');
@@ -2998,6 +3064,7 @@ function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
           data_partenza: dataPartenza,
           num_ospiti: Number(numOspiti) || 1,
           tariffa_totale: tariffaTotale === '' ? null : Number(tariffaTotale),
+          confermato,
         },
       });
       const cameraScelta = elencoCamere.find(c => String(c.camera_id) === String(cameraId));
@@ -3014,6 +3081,13 @@ function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
       setMostraFormCamera(false);
       resetFormCamera();
     } catch (err) {
+      if (err.response?.status === 409 && err.response?.data?.minimo !== undefined) {
+        const { minimo, massimo, valore } = err.response.data;
+        if (confirm(`La tariffa ${valore}€ esce dal range dichiarato per il cartellino (${minimo ?? '—'}–${massimo ?? '—'}€). Confermi comunque?`)) {
+          return aggiungiCameraGruppo(true);
+        }
+        return;
+      }
       if (err.response?.status === 409) {
         setErroreCamera(err.message || 'Camera già occupata in queste date.');
       } else {
@@ -3211,7 +3285,7 @@ function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
                   </div>
                 </div>
                 <div className="flex gap-2">
-                  <button type="button" onClick={aggiungiCameraGruppo} disabled={salvandoCamera}
+                  <button type="button" onClick={() => aggiungiCameraGruppo()} disabled={salvandoCamera}
                           className="flex-1 rounded-lg py-1.5 text-xs font-medium text-white" style={{ background: 'var(--hotel-navy)' }}>
                     {salvandoCamera ? 'Aggiunta...' : 'Aggiungi camera'}
                   </button>
@@ -4081,19 +4155,21 @@ export default function PaginaPlanningCamere() {
   return (
     <AppShell titolo="Prenotazioni camere" sottotitolo="Vista griglia / planning">
       <div className="space-y-3">
-        {/* Toggle vista + selettore range + navigazione — mai a capo (bug
-            segnalato dal titolare 23/08/2026: con la vista 14 giorni la
-            riga si allargava abbastanza da mandare i pulsanti a capo,
-            finendo parzialmente sotto il resto della pagina). flex-nowrap
-            invece di flex-wrap: tutti i gruppi restano fissi (shrink-0),
-            solo il campo di ricerca si restringe per assorbire lo spazio
-            mancante — mai scorrimento orizzontale, su richiesta esplicita
-            del titolare. */}
-        <div className="flex items-center justify-between flex-nowrap gap-2">
-          <div className="flex items-center gap-2 flex-nowrap min-w-0">
+        {/* Toggle vista + selettore range + navigazione.
+            Riga fitta con molti controlli (toggle vista, toggle range,
+            ricerca, navigazione date, esporta, nuova prenotazione, nuovo
+            gruppo) — gap-2→gap-1.5 e campo ricerca ristretto ulteriormente
+            (24/08/2026, fix regressione: "nuova prenotazione" tornava a
+            capo) per riguadagnare spazio orizzontale e restare su una sola
+            riga più a lungo prima che flex-wrap intervenga. Non verificato
+            visivamente da qui — vedi disclaimer in STATO_PROGETTO.md: se
+            continua ad andare a capo alla larghezza finestra del titolare,
+            serve il valore esatto per iterare ulteriormente. */}
+        <div className="flex items-center justify-between flex-wrap gap-1.5">
+          <div className="flex items-center gap-1.5 flex-wrap">
             {/* Griglia/Elenco (14/08/2026) — stessa voce di sidebar, due modi
                 di consultare la stessa realtà, non una pagina nuova. */}
-            <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white shrink-0">
+            <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
               <button
                 onClick={() => setVista('griglia')}
                 className="flex items-center gap-1.5 px-3 py-1.5 rounded-md text-xs font-medium transition-colors"
@@ -4117,7 +4193,7 @@ export default function PaginaPlanningCamere() {
             </div>
 
             {vista === 'griglia' && (
-              <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white shrink-0">
+              <div className="flex items-center gap-1 rounded-lg border p-0.5 bg-white">
                 {RANGE_OPZIONI.map(opt => (
                   <button
                     key={opt.chiave}
@@ -4138,14 +4214,14 @@ export default function PaginaPlanningCamere() {
                 vedi corrispondeRicerca. Ambito diverso dalla lente globale
                 della Sidebar (navigazione, non filtro sui dati di questa pagina). */}
             {vista === 'griglia' && (
-              <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 bg-white flex-1 min-w-[5rem]">
-                <Search size={14} className="shrink-0" style={{ color: 'var(--muted-foreground)' }} />
+              <div className="flex items-center gap-1.5 rounded-lg border px-2.5 py-1.5 bg-white">
+                <Search size={14} style={{ color: 'var(--muted-foreground)' }} />
                 <input
                   type="text"
                   value={ricercaGriglia}
                   onChange={(e) => setRicercaGriglia(e.target.value)}
                   placeholder="Cerca ospite o camera..."
-                  className="text-xs outline-none w-full min-w-0"
+                  className="text-xs outline-none w-28"
                 />
                 {ricercaGriglia && (
                   <button onClick={() => setRicercaGriglia('')} style={{ color: 'var(--muted-foreground)' }}>
@@ -4157,7 +4233,7 @@ export default function PaginaPlanningCamere() {
           </div>
 
           {vista === 'griglia' && (
-            <div className="flex items-center gap-2 shrink-0">
+            <div className="flex items-center gap-2">
               <button onClick={vaiIndietro} className="p-1.5 rounded-lg border bg-white"><ChevronLeft size={16} /></button>
               <div className="min-w-32 text-center">
                 {/* Mese/anno aggiunto il 31/07/2026 — prima non c'era da nessuna
@@ -4173,7 +4249,7 @@ export default function PaginaPlanningCamere() {
             </div>
           )}
 
-          <div className="flex items-center gap-2 shrink-0">
+          <div className="flex items-center gap-2">
             {/* Esporta PDF (14/08/2026) — planning mensile o elenco
                 prenotazioni, indipendente dalla vista attiva (Griglia/
                 Elenco): un titolare in griglia può comunque voler

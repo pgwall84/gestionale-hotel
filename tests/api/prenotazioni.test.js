@@ -429,6 +429,90 @@ describe('POST /api/prenotazioni', () => {
   });
 });
 
+// ─── POST /api/prenotazioni — min/max cartellino (23/08/2026) ────────────────
+// Setup dedicato: cameraTestId (in cima al file) non ha tipo_camera_id, quindi
+// verificaLimitiListino non troverebbe mai un min/max da controllare — qui
+// serve una camera con un vero tipo_camera_id e una fascia in `tariffe` con
+// prezzo_minimo/prezzo_massimo per le date del test.
+
+describe('POST /api/prenotazioni — min/max cartellino', () => {
+  let tipoCameraLimitiId;
+  let cameraLimitiId;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const tipo = await db.query(`INSERT INTO tipi_camera (nome) VALUES ($1) RETURNING id`, [`TipoLimitiPren${SUFFISSO}`]);
+    tipoCameraLimitiId = tipo.rows[0].id;
+    const camera = await db.query(
+      `INSERT INTO camere (numero, nome, piano, tipo_camera_id) VALUES ($1, 'Camera Test Limiti Prenotazioni', 9, $2) RETURNING id`,
+      [`TEST-PREN-LIM${SUFFISSO}`, tipoCameraLimitiId]
+    );
+    cameraLimitiId = camera.rows[0].id;
+    await db.query(
+      `INSERT INTO tariffe (tipo_camera_id, data_inizio, data_fine, prezzo_notte, prezzo_minimo, prezzo_massimo)
+       VALUES ($1, '2093-01-01', '2093-03-31', 100, 100, 300)`,
+      [tipoCameraLimitiId]
+    );
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    await db.query('DELETE FROM soggiorno_ospiti WHERE soggiorno_id IN (SELECT id FROM soggiorni WHERE camera_id = $1)', [cameraLimitiId]);
+    await db.query('DELETE FROM soggiorni WHERE camera_id = $1', [cameraLimitiId]);
+    await db.query('DELETE FROM tariffe WHERE tipo_camera_id = $1', [tipoCameraLimitiId]);
+    await db.query('DELETE FROM camere WHERE id = $1', [cameraLimitiId]);
+    await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoCameraLimitiId]);
+  });
+
+  test('tariffa_totale sopra il massimo dichiarato, senza conferma → 409', async () => {
+    const res = await request(app)
+      .post('/api/prenotazioni')
+      .set(authHeader.receptionist())
+      .send({
+        canale_origine: 'diretta',
+        soggiorno: {
+          camera_id: cameraLimitiId, ospite_id: ospiteTestId,
+          data_arrivo: '2093-01-10', data_partenza: '2093-01-12',
+          tariffa_totale: 999999,
+        },
+      });
+    expect(res.status).toBe(409);
+    expect(res.body).toHaveProperty('minimo');
+    expect(res.body).toHaveProperty('massimo');
+  });
+
+  test('tariffa_totale sopra il massimo, con confermato:true → 201', async () => {
+    const res = await request(app)
+      .post('/api/prenotazioni')
+      .set(authHeader.receptionist())
+      .send({
+        canale_origine: 'diretta',
+        soggiorno: {
+          camera_id: cameraLimitiId, ospite_id: ospiteTestId,
+          data_arrivo: '2093-02-10', data_partenza: '2093-02-12',
+          tariffa_totale: 999999, confermato: true,
+        },
+      });
+    expect(res.status).toBe(201);
+    prenotazioniCreate.push(res.body.id);
+  });
+
+  test('tariffa_totale non passata → nessun controllo, 201', async () => {
+    const res = await request(app)
+      .post('/api/prenotazioni')
+      .set(authHeader.receptionist())
+      .send({
+        canale_origine: 'diretta',
+        soggiorno: {
+          camera_id: cameraLimitiId, ospite_id: ospiteTestId,
+          data_arrivo: '2093-03-10', data_partenza: '2093-03-12',
+        },
+      });
+    expect(res.status).toBe(201);
+    prenotazioniCreate.push(res.body.id);
+  });
+});
+
 // ─── PATCH /api/prenotazioni/:id ──────────────────────────────────────────────
 
 describe('PATCH /api/prenotazioni/:id', () => {

@@ -9,6 +9,8 @@ const pool = require('../config/db');
 const { DOC_MASCHERATO } = require('./anagraficaOspitiController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
 const { inviaConfermaPrenotazione, inviaPromemoriaPreArrivo, inviaRichiestaRecensione, inviaInvitoPreCheckin } = require('../lib/emailPrenotazioni');
+const { verificaLimitiListino } = require('../utils/verificaLimitiListino');
+const { logAudit } = require('./auditController');
 
 // Mappa esplicita delle transizioni di stato ammesse — non if/else sparsi.
 // Qualunque transizione fuori da questa mappa è un 400.
@@ -402,8 +404,28 @@ async function crea(req, res) {
   }
 
   const client = await pool.connect();
+  let limiti = null;
   try {
     await client.query('BEGIN');
+
+    if (soggiorno.tariffa_totale) {
+      const cameraInfo = await client.query('SELECT tipo_camera_id FROM camere WHERE id = $1', [soggiorno.camera_id]);
+      if (cameraInfo.rows.length && cameraInfo.rows[0].tipo_camera_id) {
+        limiti = await verificaLimitiListino({
+          tipoCameraId: cameraInfo.rows[0].tipo_camera_id,
+          trattamento: soggiorno.trattamento || 'bb',
+          dataArrivo: soggiorno.data_arrivo, dataPartenza: soggiorno.data_partenza,
+          valore: soggiorno.tariffa_totale, db: client,
+        });
+        if (!limiti.conforme && !soggiorno.confermato) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            errore: 'La tariffa esce dal min/max dichiarato per il cartellino.',
+            minimo: limiti.minimo, massimo: limiti.massimo, valore: Number(soggiorno.tariffa_totale),
+          });
+        }
+      }
+    }
 
     // data_scadenza_opzione calcolata lato backend (now + 48h) — mai dal client.
     const prenotazioneResult = await client.query(
@@ -432,6 +454,12 @@ async function crea(req, res) {
       [soggiornoResult.rows[0].id, soggiorno.ospite_id]
     );
 
+    if (limiti && !limiti.conforme) {
+      await logAudit(req.utente.id, 'override_limite_listino', 'soggiorni', soggiornoResult.rows[0].id, req, {
+        valore_inserito: Number(soggiorno.tariffa_totale), minimo: limiti.minimo, massimo: limiti.massimo,
+      });
+    }
+
     await client.query('COMMIT');
     res.status(201).json({ ...prenotazione, soggiorno: soggiornoResult.rows[0] });
   } catch (err) {
@@ -459,6 +487,7 @@ async function aggiungiSoggiorno(req, res) {
   }
 
   const client = await pool.connect();
+  let limiti = null;
   try {
     await client.query('BEGIN');
 
@@ -469,6 +498,25 @@ async function aggiungiSoggiorno(req, res) {
     if (!prenotazioneResult.rows.length) {
       await client.query('ROLLBACK');
       return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+
+    if (soggiorno.tariffa_totale) {
+      const cameraInfo = await client.query('SELECT tipo_camera_id FROM camere WHERE id = $1', [soggiorno.camera_id]);
+      if (cameraInfo.rows.length && cameraInfo.rows[0].tipo_camera_id) {
+        limiti = await verificaLimitiListino({
+          tipoCameraId: cameraInfo.rows[0].tipo_camera_id,
+          trattamento: soggiorno.trattamento || 'bb',
+          dataArrivo: soggiorno.data_arrivo, dataPartenza: soggiorno.data_partenza,
+          valore: soggiorno.tariffa_totale, db: client,
+        });
+        if (!limiti.conforme && !soggiorno.confermato) {
+          await client.query('ROLLBACK');
+          return res.status(409).json({
+            errore: 'La tariffa esce dal min/max dichiarato per il cartellino.',
+            minimo: limiti.minimo, massimo: limiti.massimo, valore: Number(soggiorno.tariffa_totale),
+          });
+        }
+      }
     }
 
     const soggiornoResult = await client.query(
@@ -488,6 +536,12 @@ async function aggiungiSoggiorno(req, res) {
        VALUES ($1, $2, '17')`,
       [soggiornoResult.rows[0].id, soggiorno.ospite_id]
     );
+
+    if (limiti && !limiti.conforme) {
+      await logAudit(req.utente.id, 'override_limite_listino', 'soggiorni', soggiornoResult.rows[0].id, req, {
+        valore_inserito: Number(soggiorno.tariffa_totale), minimo: limiti.minimo, massimo: limiti.massimo,
+      });
+    }
 
     await client.query('COMMIT');
     res.status(201).json(soggiornoResult.rows[0]);

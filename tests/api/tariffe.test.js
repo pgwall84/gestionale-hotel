@@ -68,6 +68,45 @@ describe('GET /api/tariffe', () => {
   });
 });
 
+// ─── POST /api/tariffe — min/max cartellino ───────────────────────────────────
+
+// Date 2095 — non usate altrove nel file (2090-2094, vedi commento in
+// testa al file): 2092-01 era la scelta originale, ma collideva con
+// "periodo senza tariffa configurata" (GET /api/tariffe/calcola, sotto),
+// che si aspetta proprio 2092-01-01→03 scoperto. Trovato con `npx jest`
+// reale dal tab Code (23/08/2026) — non rilevabile da questo ambiente
+// Cowork, che non può eseguire la suite. Spostato su un anno tutto suo
+// invece di limarne solo i giorni, per non ripetere lo stesso rischio con
+// un'altra suite futura.
+describe('POST /api/tariffe — min/max cartellino', () => {
+  test('prezzo dentro il range dichiarato → 201', async () => {
+    const res = await creaTariffa(authHeader.titolare(), {
+      data_inizio: '2095-01-01', data_fine: '2095-01-31',
+      prezzo_notte: 150, prezzo_minimo: 100, prezzo_massimo: 200,
+    });
+    expect(res.status).toBe(201);
+  });
+
+  test('prezzo sopra il massimo, senza conferma → 409 con dettaglio range', async () => {
+    const res = await creaTariffa(authHeader.titolare(), {
+      data_inizio: '2095-02-01', data_fine: '2095-02-28',
+      prezzo_notte: 250, prezzo_minimo: 100, prezzo_massimo: 200,
+    });
+    expect(res.status).toBe(409);
+    expect(res.body.minimo).toBe(100);
+    expect(res.body.massimo).toBe(200);
+  });
+
+  test('prezzo sopra il massimo, con confermato:true → 201, salvato comunque', async () => {
+    const res = await creaTariffa(authHeader.titolare(), {
+      data_inizio: '2095-03-01', data_fine: '2095-03-31',
+      prezzo_notte: 250, prezzo_minimo: 100, prezzo_massimo: 200, confermato: true,
+    });
+    expect(res.status).toBe(201);
+    expect(Number(res.body.prezzo_notte)).toBe(250);
+  });
+});
+
 // ─── GET /api/tariffe/calcola ─────────────────────────────────────────────────
 
 describe('GET /api/tariffe/calcola', () => {

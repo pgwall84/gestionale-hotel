@@ -9,6 +9,8 @@
 const pool = require('../config/db');
 const { DOC_MASCHERATO } = require('./anagraficaOspitiController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
+const { verificaLimitiListino } = require('../utils/verificaLimitiListino');
+const { logAudit } = require('./auditController');
 
 // Tipi che identificano l'intestatario del soggiorno (Codice Tabella
 // Tipo_Alloggiato: singolo/capofamiglia/capogruppo). Ogni soggiorno deve
@@ -22,12 +24,37 @@ const TIPI_INTESTATARIO = ['16', '17', '18'];
 // di POST /api/prenotazioni (stesso helper condiviso).
 // Accessibile a: admin, titolare, receptionist (scrittura).
 async function aggiorna(req, res) {
-  const { camera_id, data_arrivo, data_partenza, tariffa_totale } = req.body;
+  const { camera_id, data_arrivo, data_partenza, tariffa_totale, confermato } = req.body;
   if (data_arrivo && data_partenza && data_partenza <= data_arrivo) {
     return res.status(400).json({ error: 'data_partenza deve essere successiva a data_arrivo.' });
   }
 
   try {
+    let limiti = null;
+    if (tariffa_totale) {
+      const attuale = await pool.query('SELECT camera_id, data_arrivo, data_partenza, trattamento FROM soggiorni WHERE id = $1', [req.params.id]);
+      if (!attuale.rows.length) {
+        return res.status(404).json({ error: 'Soggiorno non trovato' });
+      }
+      const cameraIdEffettiva = camera_id || attuale.rows[0].camera_id;
+      const cameraInfo = await pool.query('SELECT tipo_camera_id FROM camere WHERE id = $1', [cameraIdEffettiva]);
+      if (cameraInfo.rows.length && cameraInfo.rows[0].tipo_camera_id) {
+        limiti = await verificaLimitiListino({
+          tipoCameraId: cameraInfo.rows[0].tipo_camera_id,
+          trattamento: attuale.rows[0].trattamento || 'bb',
+          dataArrivo: data_arrivo || attuale.rows[0].data_arrivo,
+          dataPartenza: data_partenza || attuale.rows[0].data_partenza,
+          valore: tariffa_totale,
+        });
+        if (!limiti.conforme && !confermato) {
+          return res.status(409).json({
+            errore: 'La tariffa esce dal min/max dichiarato per il cartellino.',
+            minimo: limiti.minimo, massimo: limiti.massimo, valore: Number(tariffa_totale),
+          });
+        }
+      }
+    }
+
     const result = await pool.query(
       `UPDATE soggiorni SET
          camera_id      = COALESCE($1, camera_id),
@@ -41,6 +68,11 @@ async function aggiorna(req, res) {
     );
     if (!result.rows.length) {
       return res.status(404).json({ error: 'Soggiorno non trovato' });
+    }
+    if (limiti && !limiti.conforme) {
+      await logAudit(req.utente.id, 'override_limite_listino', 'soggiorni', req.params.id, req, {
+        valore_inserito: Number(tariffa_totale), minimo: limiti.minimo, massimo: limiti.massimo,
+      });
     }
     res.json(result.rows[0]);
   } catch (err) {

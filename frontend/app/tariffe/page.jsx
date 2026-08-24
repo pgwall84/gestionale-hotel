@@ -41,6 +41,32 @@ import SchedaTrattamento from '@/components/tariffe/SchedaTrattamento';
 
 const RUOLI_LETTURA = ['admin', 'titolare', 'receptionist'];
 
+// Stesso ordinamento tipologie della griglia /planning-tariffe (richiesta
+// del titolare, 24/08/2026: "ordinamento in tariffe deve rispecchiare
+// stesso ordinamento camere del planning") — DUPLICATO deliberatamente
+// invece di condiviso in un file comune (nessuna infrastruttura di helper
+// condivisi frontend nel progetto finora): se l'ordine cambia, va
+// aggiornato in ENTRAMBI i file, qui e in
+// frontend/app/planning-tariffe/page.jsx (stesso array ORDINE_TIPOLOGIE).
+// Alias multipli per posizione e fallback in fondo per un nome non
+// riconosciuto — mai un crash o una tipologia che sparisce dalla
+// tabella; vedi commento gemello in planning-tariffe/page.jsx per il
+// motivo dell'ambiguità Singola/Doppia uso singola/Matrimoniale Piccola
+// (migration 048), non risolvibile da questo sandbox.
+const ORDINE_TIPOLOGIE = [
+  ['matrimoniale'],
+  ['matrimoniale piccola', 'matrimoniale uso singola'],
+  ['tripla'],
+  ['quadrupla'],
+  ['doppia uso singola', 'doppio uso singola'],
+  ['singola'],
+];
+function prioritaTipologia(nome) {
+  const n = (nome || '').trim().toLowerCase();
+  const idx = ORDINE_TIPOLOGIE.findIndex(candidati => candidati.includes(n));
+  return idx === -1 ? ORDINE_TIPOLOGIE.length : idx;
+}
+
 const inputStyle = {
   height: '38px',
   border: '1px solid var(--border)',
@@ -66,7 +92,6 @@ export default function PaginaTariffe() {
   const [tariffeTutte, setTariffeTutte] = useState([]);
   const [regoleTutte, setRegoleTutte] = useState([]);
   const [supplementiTutti, setSupplementiTutti] = useState([]);
-  const [tipoSelezionato, setTipoSelezionato] = useState(null);
   const [caricamento, setCaricamento] = useState(true);
   const [errore, setErrore] = useState('');
   const [successo, setSuccesso] = useState('');
@@ -129,8 +154,6 @@ export default function PaginaTariffe() {
             periodiStagionali={periodiStagionali}
             tariffeTutte={tariffeTutte}
             regoleTutte={regoleTutte}
-            tipoSelezionato={tipoSelezionato}
-            setTipoSelezionato={setTipoSelezionato}
             puoScrivere={puoScrivere}
             onCambiato={caricaBase}
             onErrore={setErrore}
@@ -170,64 +193,177 @@ export default function PaginaTariffe() {
   );
 }
 
-// ── Prezzi per tipologia (madre + derivate, timeline unificata) ───────────
+// ── Prezzi per tipologia (griglia statica, redesign Piano 2, 24/08/2026) ──
 // Un tipo camera è "madre" se non ha righe in regole_derivazione_tariffe
 // (prezzo diretto, tabella tariffe), altrimenti "derivata" (percentuale sul
 // tipo base + range, tabella regole_derivazione_tariffe) — dedotto dai dati,
 // mai da un elenco fisso di nomi.
 
-// Un tipo camera diventa un'etichetta nella fila in alto (non più una
-// tendina): tocchi "Singola" e vedi SOLO la sua scheda, stessa card di
-// Matrimoniale — evita di avere 5 schede (madre + 4 derivate) una sotto
-// l'altra sulla stessa pagina, che avrebbe ricreato il problema di
-// leggibilità della prima versione da un'altra porta (chiesto
-// esplicitamente dal titolare, 20/08/2026).
+// Quarto redesign di questa sezione (dopo i tre descritti in testa al file):
+// da "una scheda alla volta" (fila di chip + scheda unica visibile) a una
+// tabella statica — righe = tipi camera, colonne = periodi stagionali +
+// "Tutto l'anno" (solo righe derivate: i tipi madre non hanno concetto di
+// fallback). Ogni cella è un bottone che apre in un modal la STESSA
+// SchedaPrezzoTipologia di sempre (nessuna riscrittura della logica di
+// salvataggio), pre-selezionata sul periodo cliccato tramite il prop
+// periodoIniziale. Decisione del titolare, non nuova: parcheggiata il
+// 20/08/2026, richiamata in docs/EVOLUTIVE.md. Solo struttura statica,
+// click singolo per editare — nessun drag-select multi-cella, nessun
+// bulk-edit (per non ripetere l'errore della timeline trascinabile bocciata
+// lo stesso giorno).
 
-function SezionePrezziTipologia({ tipiCamera, periodiStagionali, tariffeTutte, regoleTutte, tipoSelezionato, setTipoSelezionato, puoScrivere, onCambiato, onErrore }) {
-  const tipo = tipiCamera.find(t => String(t.id) === String(tipoSelezionato)) || null;
-  const regolePerTipo = tipoSelezionato ? regoleTutte.filter(r => String(r.tipo_camera_id) === String(tipoSelezionato)) : [];
-  const isDerivata = regolePerTipo.length > 0;
-  const tariffePerTipo = tipoSelezionato ? tariffeTutte.filter(t => String(t.tipo_camera_id) === String(tipoSelezionato)) : [];
+function SezionePrezziTipologia({ tipiCamera, periodiStagionali, tariffeTutte, regoleTutte, puoScrivere, onCambiato, onErrore }) {
+  const [cellaAperta, setCellaAperta] = useState(null); // null | { tipoId, periodoId } — periodoId è un id numerico oppure la stringa 'fallback'
+
+  function apriCella(tipoId, periodoId) { setCellaAperta({ tipoId, periodoId }); }
+  function chiudiCella() { setCellaAperta(null); }
+
+  const tipoAperto = cellaAperta ? tipiCamera.find(t => String(t.id) === String(cellaAperta.tipoId)) || null : null;
 
   return (
     <div className="rounded-xl p-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
       <h3 className="text-sm font-semibold mb-3" style={{ color: 'var(--foreground)' }}>Prezzi per tipologia</h3>
 
-      <div className="flex gap-2 mb-4 flex-wrap">
-        {tipiCamera.map(t => (
-          <button key={t.id} onClick={() => setTipoSelezionato(String(t.id))}
-                  className="text-xs font-medium px-3 py-1.5 rounded-lg"
-                  style={String(tipoSelezionato) === String(t.id)
-                    ? { background: 'var(--hotel-navy)', color: 'white' }
-                    : { border: '1px solid var(--border)', color: 'var(--muted-foreground)' }}>
-            {t.nome}
-          </button>
-        ))}
-      </div>
-
-      {!tipo ? (
-        <p className="text-xs text-center py-6" style={{ color: 'var(--muted-foreground)' }}>Scegli una tipologia qui sopra per vedere e modificare i prezzi.</p>
+      {tipiCamera.length === 0 ? (
+        <p className="text-xs text-center py-6" style={{ color: 'var(--muted-foreground)' }}>Nessuna tipologia camera configurata (vedi Impostazioni ▸ Camere).</p>
+      ) : periodiStagionali.length === 0 ? (
+        <p className="text-xs text-center py-6" style={{ color: 'var(--muted-foreground)' }}>
+          Nessun periodo stagionale definito — crealo nella sezione &quot;Periodi stagionali&quot; qui sotto, poi torna qui per impostare i prezzi.
+        </p>
       ) : (
-        <>
-          <span className="inline-block text-xs px-2 py-0.5 rounded-full mb-3"
-                style={{ background: 'var(--hotel-amber-light)', color: 'var(--hotel-amber-dark)' }}>
-            {isDerivata ? 'Tipo derivato' : 'Tipo madre — prezzo diretto'}
-          </span>
+        <div className="overflow-x-auto">
+          <table className="w-full text-xs" style={{ borderCollapse: 'collapse' }}>
+            <thead>
+              <tr>
+                <th className="text-left px-2 py-1.5" style={{ color: 'var(--muted-foreground)', borderBottom: '1px solid var(--border)' }}>Tipologia</th>
+                {periodiStagionali.map(p => (
+                  <th key={p.id} className="text-left px-2 py-1.5 font-medium" style={{ color: 'var(--muted-foreground)', borderBottom: '1px solid var(--border)' }}>
+                    {p.nome}
+                    {/* Intervallo date sotto il nome (richiesta titolare, 24/08/2026)
+                        "per comprendere meglio" quali date copre ogni colonna. */}
+                    <span className="block text-[10px] font-normal" style={{ color: 'var(--muted-foreground)' }}>
+                      {p.data_inizio} → {p.data_fine}
+                    </span>
+                  </th>
+                ))}
+                <th className="text-left px-2 py-1.5 font-medium" style={{ color: 'var(--muted-foreground)', borderBottom: '1px solid var(--border)' }}>
+                  Tutto l&apos;anno
+                </th>
+              </tr>
+            </thead>
+            <tbody>
+              {[...tipiCamera].sort((a, b) => prioritaTipologia(a.nome) - prioritaTipologia(b.nome)).map(tipo => {
+                const regolePerTipo = regoleTutte.filter(r => String(r.tipo_camera_id) === String(tipo.id));
+                const isDerivata = regolePerTipo.length > 0;
+                const tariffePerTipo = tariffeTutte.filter(t => String(t.tipo_camera_id) === String(tipo.id));
+                const valoreFallback = isDerivata ? (regolePerTipo.find(r => r.periodo_id === null) || null) : null;
 
-          <SchedaPrezzoTipologia
-            tipo={tipo}
-            tipiCamera={tipiCamera}
-            periodiStagionali={periodiStagionali}
-            isDerivata={isDerivata}
-            regolePerTipo={regolePerTipo}
-            tariffePerTipo={tariffePerTipo}
-            tariffeTutte={tariffeTutte}
-            puoScrivere={puoScrivere}
-            onCambiato={onCambiato}
-            onErrore={onErrore}
-          />
-        </>
+                return (
+                  <tr key={tipo.id}>
+                    <td className="px-2 py-1.5" style={{ borderBottom: '0.5px solid var(--border)' }}>
+                      <span className="font-medium">{tipo.nome}</span>
+                      <span className="block text-[10px]" style={{ color: 'var(--muted-foreground)' }}>
+                        {isDerivata ? 'derivato' : 'madre'}
+                      </span>
+                    </td>
+                    {periodiStagionali.map(p => {
+                      const valore = isDerivata
+                        ? regolePerTipo.find(r => r.periodo_id === p.id) || null
+                        : tariffePerTipo.find(t => t.periodo_id === p.id) || null;
+                      return (
+                        <td key={p.id} className="px-2 py-1.5" style={{ borderBottom: '0.5px solid var(--border)' }}>
+                          <button type="button" onClick={() => apriCella(tipo.id, p.id)}
+                                  className="w-full text-left px-2 py-1 rounded-lg"
+                                  style={{ border: '1px solid var(--border)', color: valore ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
+                            {valore
+                              ? (isDerivata ? `${Number(valore.percentuale) > 0 ? '+' : ''}${valore.percentuale}%` : `${valore.prezzo_notte} €`)
+                              : '+ Imposta'}
+                          </button>
+                        </td>
+                      );
+                    })}
+                    <td className="px-2 py-1.5" style={{ borderBottom: '0.5px solid var(--border)' }}>
+                      {isDerivata ? (
+                        <button type="button" onClick={() => apriCella(tipo.id, 'fallback')}
+                                className="w-full text-left px-2 py-1 rounded-lg"
+                                style={{ border: '1px solid var(--border)', color: valoreFallback ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
+                          {valoreFallback ? `${Number(valoreFallback.percentuale) > 0 ? '+' : ''}${valoreFallback.percentuale}%` : '+ Imposta'}
+                        </button>
+                      ) : (
+                        <span className="block text-center" style={{ color: 'var(--muted-foreground)' }}>—</span>
+                      )}
+                    </td>
+                  </tr>
+                );
+              })}
+            </tbody>
+          </table>
+        </div>
       )}
+
+      {tipoAperto && (
+        <ModalPrezzoTipologia
+          tipo={tipoAperto}
+          tipiCamera={tipiCamera}
+          periodiStagionali={periodiStagionali}
+          tariffeTutte={tariffeTutte}
+          regoleTutte={regoleTutte}
+          periodoId={cellaAperta.periodoId}
+          puoScrivere={puoScrivere}
+          onCambiato={onCambiato}
+          onErrore={onErrore}
+          onChiudi={chiudiCella}
+        />
+      )}
+    </div>
+  );
+}
+
+// ── Modal cella griglia (Piano 2, 24/08/2026) ──────────────────────────────
+// Riusa SchedaPrezzoTipologia senza modificarne la logica di
+// salvataggio/eliminazione: calcola qui isDerivata/regolePerTipo/
+// tariffePerTipo per il tipo cliccato (stessa logica già usata sopra per
+// colorare le celle) e passa periodoIniziale per pre-selezionare la
+// colonna cliccata. La key su tipo.id+periodoId forza un remount pulito
+// ogni volta che si clicca una cella diversa, invece di gestire a mano la
+// re-inizializzazione dello stato interno della scheda.
+
+function ModalPrezzoTipologia({ tipo, tipiCamera, periodiStagionali, tariffeTutte, regoleTutte, periodoId, puoScrivere, onCambiato, onErrore, onChiudi }) {
+  const regolePerTipo = regoleTutte.filter(r => String(r.tipo_camera_id) === String(tipo.id));
+  const isDerivata = regolePerTipo.length > 0;
+  const tariffePerTipo = tariffeTutte.filter(t => String(t.tipo_camera_id) === String(tipo.id));
+  const periodoIniziale = periodoId === 'fallback' ? 'fallback' : (periodiStagionali.find(p => p.id === periodoId) || null);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.4)' }} onClick={onChiudi}>
+      <div className="w-full max-w-lg rounded-xl p-4" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }} onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between mb-3">
+          <div>
+            <h4 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>{tipo.nome}</h4>
+            <span className="inline-block text-xs px-2 py-0.5 rounded-full mt-1"
+                  style={{ background: 'var(--hotel-amber-light)', color: 'var(--hotel-amber-dark)' }}>
+              {isDerivata ? 'Tipo derivato' : 'Tipo madre — prezzo diretto'}
+            </span>
+          </div>
+          <button type="button" onClick={onChiudi} className="text-xs px-2 py-1 rounded-lg border">Chiudi</button>
+        </div>
+
+        <SchedaPrezzoTipologia
+          key={`${tipo.id}-${periodoId}`}
+          tipo={tipo}
+          tipiCamera={tipiCamera}
+          periodiStagionali={periodiStagionali}
+          isDerivata={isDerivata}
+          regolePerTipo={regolePerTipo}
+          tariffePerTipo={tariffePerTipo}
+          tariffeTutte={tariffeTutte}
+          regoleTutte={regoleTutte}
+          periodoIniziale={periodoIniziale}
+          puoScrivere={puoScrivere}
+          onCambiato={onCambiato}
+          onErrore={onErrore}
+        />
+      </div>
     </div>
   );
 }

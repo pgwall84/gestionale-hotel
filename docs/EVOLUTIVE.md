@@ -320,6 +320,28 @@ Modulo 2.2 — Tariffe/pacchetti (codice scritto 31/07/2026, evolutiva non
   esplicita al titolare su come deve comportarsi in questo caso, prima di
   scrivere la logica di ricalcolo.
 
+Semplificare pagina Tariffe — PARLARE PRIMA CON IL TITOLARE (segnalato
+  24/08/2026, non implementare senza prima tornare a discuterne, stesso
+  principio della voce sospesa qui sopra): dopo il redesign a griglia
+  statica del 24/08 (Piano 2) e i fix del giorno stesso (catena di
+  derivazione, ordinamento tipologie), il titolare vuole valutare due
+  semplificazioni strutturali prima di toccare ancora la UI:
+  (1) rendere FISSO tutto l'anno il supplemento per trattamento (mezza
+  pensione/pensione completa) invece che per periodo stagionale — da
+  notare: è una possibile INVERSIONE di una decisione esplicita presa il
+  20/08/2026 ("la percentuale può variare per periodo stagionale,
+  confermato dal titolare — non è più una costante fissa tutto l'anno
+  come nella prima versione del 19/08", migration 051), quindi va chiarito
+  con il titolare se è un cambio di idea deliberato o se si riferisce a
+  un supplemento diverso da quello già periodizzato;
+  (2) calcolare AUTOMATICAMENTE il min/max cartellino una volta noto il
+  prezzo di partenza (es. una percentuale fissa sopra/sotto), invece
+  dell'inserimento manuale di oggi (`prezzo_minimo`/`prezzo_massimo`,
+  sia per il tipo madre sia per le regole derivate) — da capire con il
+  titolare se la percentuale di tolleranza è la stessa per tutte le
+  tipologie/periodi o va configurata, e se sostituisce del tutto
+  l'inserimento manuale o resta un default sovrascrivibile.
+
 Tabella `camere` non tracciata da nessuna migration (scoperto 31/07/2026,
   riordino Impostazioni▸Camere): in `database/migrations/` esiste solo un
   `ALTER TABLE camere ADD COLUMN piano` (migration 017), nessun `CREATE
@@ -1843,3 +1865,125 @@ a fine sessione, non urgente ma da chiudere prima di fidarsi del clamp:
     `prezzo_notte: 0` trattato come "nessun valore" via COALESCE,
     potenzialmente raggiungibile dalla nuova UI schede/chip — serve il
     file:riga esatto citato da Code prima di chiudere o riaprire.
+
+Modulo min/max cartellino + planning-tariffe giorno-per-giorno — design
+architetturale (23/08/2026), NESSUN CODICE TOCCATO, solo decisioni prese in
+sessione Cowork tramite superpowers:brainstorming, da passare a
+writing-plans quando il titolare vuole partire con l'implementazione:
+  - Origine: bug "pagamento misto non segnalato" (risolto in questa stessa
+    sessione, vedi `docs/DIARIO_SESSIONI.md` 23/08/2026) → discussione su
+    channel manager / booking engine → 4 mockup HTML del planning-tariffe
+    giorno-per-giorno (drag-select, doppio click, drawer bulk-edit,
+    min-stay/CTA/CTD/stop-sell), consegnati SOLO via file al titolare, MAI
+    committati nel repo (convenzione: i mockup sono materiale di decisione,
+    non codice) → domanda del titolare su listino prezzi annuale con
+    min/max → normativa Liguria (testo incollato dal titolare): la Regione
+    non impone alcun prezzo, obbligo è solo di esposizione cartellini in
+    reception e dietro ogni porta camera; sanzione solo se si addebita più
+    del massimo esposto o se i cartellini non sono esposti — **nessun
+    limite legale sul minimo**, nessun blocco rigido: solo alert
+    bloccante-superabile alla modifica del prezzo, sia in planning sia in
+    fase di inserimento prenotazione (il titolare ha verificato che lì il
+    prezzo si scrive anche a mano, non solo da pacchetto — stesso punto di
+    rischio del planning).
+  - **Correzione importante a metà sessione**: la prima proposta di design
+    (nuova pagina "Listino Prezzi" con tabelle `trattamenti`/
+    `stagioni_listino`/`listino_prezzi` da zero) è stata SCARTATA dopo aver
+    letto il codice reale di `/tariffe` — gran parte di quello che sembrava
+    da costruire esiste già, in una forma diversa da quella ipotizzata a
+    tavolino. Lezione: verificato tardi, andava controllato subito invece
+    di progettare sulla sola conversazione.
+  - Decisioni architetturali prese (confermate dal titolare):
+    - Nessuna pagina nuova. Si estende `/tariffe` esistente.
+    - Tipi derivati (Singola, Doppia uso singola, Tripla, Quadrupla)
+      restano a percentuale da Matrimoniale (`regole_derivazione_tariffe`,
+      invariato). La percentuale resta un valore di default/seed — quando
+      si genera un nuovo periodo nel futuro planning-tariffe, precompila i
+      prezzi; da lì ogni cella diventa liberamente editabile giorno per
+      giorno (planning = fonte di verità sul prezzo di vendita effettivo,
+      non la percentuale ricalcolata in continuazione).
+    - Le 6 tipologie reali sono tutte in scope per il min/max: Matrimoniale,
+      Matrimoniale Piccola, Singola, Doppia uso singola, Tripla,
+      Quadrupla — non le 4 che il titolare aveva citato a mente in un
+      primo momento (confermato esplicitamente dopo domanda diretta).
+    - Min/max: si riusano gli STESSI campi già esistenti
+      `regole_derivazione_tariffe.prezzo_minimo/prezzo_massimo` (oggi
+      predisposti ma non popolati, unico consumo attuale: clamp silenzioso
+      sul prezzo derivato calcolato, vedi voce 20/08/2026 sopra) — ma il
+      COMPORTAMENTO cambia: da sostituzione automatica silenziosa ad alert
+      bloccante-superabile con conferma esplicita dell'utente. Il clamp
+      automatico attuale va quindi rimosso in fase di implementazione, non
+      è compatibile con la decisione presa.
+    - `tariffe` (tipi madre: Matrimoniale, Matrimoniale Piccola) oggi NON
+      ha alcun campo min/max — vanno aggiunti ex novo (`prezzo_minimo`,
+      `prezzo_massimo` per riga tipo_camera_id+periodo_id), stesso
+      comportamento di alert dei tipi derivati.
+    - Min/max si applica per trattamento (titolare esplicito: Camera e
+      colazione, Mezza pensione, Pensione completa devono avere ciascuno
+      il proprio limite) ma sul PREZZO TOTALE pagato dall'ospite (camera +
+      eventuale supplemento), non sul solo supplemento isolato.
+    - Supplemento trattamento: NESSUN cambiamento al meccanismo esistente
+      (`tariffe-derivate/trattamento`, `SchedaTrattamento.jsx`) — resta un
+      importo fisso a persona/notte che varia SOLO per adulto/bambino,
+      indipendente dalla tipologia camera (chiarito esplicitamente dal
+      titolare dopo un mio tentativo sbagliato di renderlo un'entità
+      "trattamenti" con granularità per tipologia — inutile complessità,
+      scartata). Conseguenza pratica: il min/max di Mezza pensione e
+      Pensione completa NON si inserisce a mano — si CALCOLA sommando il
+      supplemento fisso al min/max di Camera e colazione della tipologia.
+      Nessuna nuova tabella `trattamenti`.
+    - Sconto bambini (`configurazione_bambini`, già esistente e già
+      collegato in questa stessa pagina) — nessuna modifica, resta così.
+    - Scontistiche generiche (early booking, soggiorni lunghi, promozioni)
+      — esplicitamente FUORI SCOPE, il titolare le vuole in una sessione
+      dedicata separata (sua richiesta esplicita: "segnalo in memoria").
+    - Validazione: funzione unica lato server, agganciata DENTRO i
+      controller di salvataggio (planning-tariffe da costruire + form
+      "Nuova prenotazione" esistente da modificare) — non solo richiamata
+      dal frontend prima di salvare, altrimenti un salvataggio diretto
+      dell'API la aggirerebbe. Frontend precarica il listino per mostrare
+      un badge "fuori listino" istantaneo mentre si edita, ma resta pura
+      anteprima — il server è l'unica fonte autorevole.
+    - Log di override (chi conferma un prezzo fuori limite e quando) —
+      **CONFERMATO dal titolare (23/08/2026)**: tabella minima
+      (utente_id, tipo_camera_id, trattamento_id, data, prezzo_inserito,
+      min_dichiarato, max_dichiarato, timestamp), scritta dallo stesso
+      controller che applica l'alert bloccante-superabile, zero UI
+      aggiuntiva oltre alla conferma già prevista.
+  - `/tariffe` — QUARTO redesign UI in arrivo (dopo i tre chiusi il
+    20/08/2026, vedi sopra): da "una scheda per tipologia alla volta" a
+    tabella (righe = tipologie, colonne = periodi stagionali, celle
+    cliccabili che aprono lo stesso editing esistente — SchedaPrezzoTipologia
+    /SchedaTrattamento riusate, cambia solo il layer di selezione). SOLO
+    struttura a griglia statica, click singolo per editare — NESSUN
+    drag-select multi-cella né bulk-edit su questa pagina (scelta esplicita
+    del titolare, per non rischiare di ripetere l'errore della timeline
+    trascinabile bocciata il 20/08 — da notare comunque che sono due idee
+    diverse: quella bocciata era un trascinamento su timeline, questa è una
+    tabella statica mai provata). **Non è una richiesta nuova**: è
+    esattamente l'idea del titolare "vista tipo planning, righe=tipologie,
+    colonne=mesi/trimestri" già registrata sopra come deliberatamente
+    parcheggiata il 20/08/2026 ("andare prima ai pannelli") — i pannelli
+    ora esistono, quindi questa è quell'idea che torna. `periodi_stagionali`
+    già supporta un numero arbitrario di periodi (CRUD esistente, non
+    limitato a 4) — i "4" proposti da Cowork in sessione erano solo un
+    default illustrativo, non un vincolo.
+  - Planning-tariffe giorno-per-giorno — confermato come funzionalità
+    INTERAMENTE NUOVA: oggi in produzione non esiste alcun prezzo per
+    singolo giorno, `/tariffe` imposta un prezzo unico per l'intero periodo
+    stagionale. I 4 mockup (drag-select, doppio click, drawer bulk-edit,
+    restrizioni min-stay/CTA/CTD/stop-sell) restano la base di interazione
+    da cui partire. Nasce alimentato da `/tariffe` come seed (prezzo
+    consigliato = prezzo diretto per i tipi madre, calcolato via
+    percentuale per i derivati), poi ogni cella resta liberamente
+    editabile — coerente con la decisione sopra sul ruolo della
+    percentuale.
+  - Valori concreti (date dei periodi stagionali — potrebbero essere più
+    di 4 —, percentuali di derivazione, importi min/max, importo
+    supplemento trattamento) deliberatamente NON decisi in questa sessione
+    — il titolare li definirà in un secondo momento, non fanno parte di
+    questa decisione architetturale.
+  - Stato: solo design, nessun piano di implementazione scritto, nessun
+    codice toccato. Prossimo passo quando il titolare è pronto: passare da
+    qui a un piano di implementazione (superpowers:writing-plans), non
+    partire a scrivere codice direttamente da questa voce.
