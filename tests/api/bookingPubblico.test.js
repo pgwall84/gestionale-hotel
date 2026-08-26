@@ -98,6 +98,121 @@ describe('GET /api/booking-pubblico/configurazione', () => {
   });
 });
 
+// Endpoint disponibilità mensile aggregata (24/08/2026) — alimenta il nuovo
+// calendario OTA-style del date-range picker in sito-hotel. Aggregato su
+// TUTTE le tipologie attive (non filtrabile per tipo_camera_id nella
+// risposta, per design — vedi
+// sito-hotel/docs/superpowers/specs/2026-08-24-date-range-picker-design.md):
+// le asserzioni "false" sotto usano adulti:20 per restare valide anche se
+// nel DB di test esistono altre tipologie attive con capienza inferiore a
+// 20 (assunzione ragionevole per un hotel come questo, non verificabile da
+// questa sessione Cowork senza accesso al DB).
+describe('GET /api/booking-pubblico/disponibilita-mese', () => {
+  let tipoMeseId, cameraMeseId;
+  const prenotazioniMese = [];
+
+  // Isolamento dall'aggregazione (vedi commento sul describe qui sopra):
+  // capienzaIsolante è più alta di qualunque capienza_max reale attiva nel
+  // DB, cosi la sola tipologia che soddisfa il filtro capienza nella query
+  // "notte prenotata" (sotto) è quella di questo test — altrimenti una
+  // qualunque camera reale libera in quella notte fa risultare l'aggregato
+  // disponibile=true a prescindere dalla prenotazione appena creata.
+  // Calcolata dal DB invece di un numero fisso, per non affidarsi a un
+  // valore che potrebbe non reggere se in futuro l'hotel aggiunge una
+  // tipologia con capienza maggiore (es. una suite).
+  let capienzaIsolante;
+
+  beforeAll(async () => {
+    const db = getPool();
+    const maxReale = await db.query(
+      `SELECT COALESCE(MAX(capienza_max), 0) AS max FROM tipi_camera WHERE attivo = true`
+    );
+    capienzaIsolante = maxReale.rows[0].max + 1;
+    const tipo = await db.query(
+      `INSERT INTO tipi_camera (nome, capienza_max) VALUES ($1, $2) RETURNING id`,
+      [`TestDispMese${SUFFISSO}`, capienzaIsolante]
+    );
+    tipoMeseId = tipo.rows[0].id;
+    const camera = await db.query(
+      `INSERT INTO camere (numero, nome, piano, attivo) VALUES ($1, 'Camera Test Disponibilita Mese', 9, true) RETURNING id`,
+      [`TEST-DM${SUFFISSO}`]
+    );
+    cameraMeseId = camera.rows[0].id;
+    await db.query(
+      `INSERT INTO tipi_camera_camere (tipo_camera_id, camera_id) VALUES ($1, $2)`,
+      [tipoMeseId, cameraMeseId]
+    );
+    await db.query(
+      `INSERT INTO tariffe (tipo_camera_id, nome_stagione, data_inizio, data_fine, prezzo_notte) VALUES ($1, 'Test', '2099-01-01', '2099-12-31', 90)`,
+      [tipoMeseId]
+    );
+  });
+
+  afterAll(async () => {
+    const db = getPool();
+    if (prenotazioniMese.length) {
+      await db.query('DELETE FROM pagamenti WHERE prenotazione_id = ANY($1)', [prenotazioniMese]);
+      await db.query('DELETE FROM soggiorno_ospiti WHERE soggiorno_id IN (SELECT id FROM soggiorni WHERE prenotazione_id = ANY($1))', [prenotazioniMese]);
+      await db.query('DELETE FROM soggiorni WHERE prenotazione_id = ANY($1)', [prenotazioniMese]);
+      await db.query('DELETE FROM prenotazioni WHERE id = ANY($1)', [prenotazioniMese]);
+    }
+    await db.query('DELETE FROM tipi_camera_camere WHERE tipo_camera_id = $1', [tipoMeseId]);
+    await db.query('DELETE FROM tariffe WHERE tipo_camera_id = $1', [tipoMeseId]);
+    await db.query('DELETE FROM camere WHERE id = $1', [cameraMeseId]);
+    await db.query('DELETE FROM tipi_camera WHERE id = $1', [tipoMeseId]);
+  });
+
+  test('400 se anno o mese mancano o non validi', async () => {
+    const senzaParam = await request(app).get('/api/booking-pubblico/disponibilita-mese').query({ mese: 6 });
+    expect(senzaParam.status).toBe(400);
+
+    const meseFuoriRange = await request(app).get('/api/booking-pubblico/disponibilita-mese').query({ anno: 2099, mese: 13 });
+    expect(meseFuoriRange.status).toBe(400);
+  });
+
+  test('un mese senza prenotazioni: le notti risultano disponibili grazie alla tipologia di test', async () => {
+    const res = await request(app)
+      .get('/api/booking-pubblico/disponibilita-mese')
+      .query({ anno: 2099, mese: 6, adulti: 2 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.disponibilita['2099-06-01']).toBe(true);
+    expect(res.body.disponibilita['2099-06-30']).toBe(true);
+    expect(Object.keys(res.body.disponibilita).length).toBe(30); // giugno ha 30 giorni
+  });
+
+  test('una notte prenotata sulla camera di test risulta non disponibile, il checkout resta libero', async () => {
+    const prenotazione = await request(app).post('/api/booking-pubblico/prenota').send({
+      tipo_camera_id: tipoMeseId, data_arrivo: '2099-07-10', data_partenza: '2099-07-12',
+      nome: 'DispMese', cognome: 'Test', email: `dispmese${SUFFISSO}@example.com`,
+    });
+    expect(prenotazione.status).toBe(201);
+    prenotazioniMese.push(prenotazione.body.prenotazione_id);
+
+    const res = await request(app)
+      .get('/api/booking-pubblico/disponibilita-mese')
+      .query({ anno: 2099, mese: 7, adulti: capienzaIsolante });
+
+    expect(res.status).toBe(200);
+    // Notti occupate: 10 e 11 luglio. Il 12 è il giorno di checkout — la
+    // notte del 12 (arrivo di un altro ospite) resta libera, stessa
+    // semantica '[)' già usata in disponibilita().
+    expect(res.body.disponibilita['2099-07-10']).toBe(false);
+    expect(res.body.disponibilita['2099-07-11']).toBe(false);
+    expect(res.body.disponibilita['2099-07-12']).toBe(true);
+    expect(res.body.disponibilita['2099-07-01']).toBe(true);
+  });
+
+  test('capienza richiesta irrealisticamente alta: nessuna tipologia soddisfa, notte non disponibile', async () => {
+    const res = await request(app)
+      .get('/api/booking-pubblico/disponibilita-mese')
+      .query({ anno: 2099, mese: 8, adulti: 20 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.disponibilita['2099-08-15']).toBe(false);
+  });
+});
+
 describe('POST /api/booking-pubblico/prenota', () => {
   test('crea una prenotazione opzione con hold breve e un PaymentIntent', async () => {
     const res = await request(app)

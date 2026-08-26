@@ -6087,78 +6087,353 @@ Consegna: `backend/controllers/planningTariffeController.js`,
 `sito-hotel/components/booking/BookingWidget.tsx` inviati con
 `SendUserFile` e scritti sul dispositivo con `device_commit_files`.
 
-### Piano 4bis — override planning-tariffe su un tipo madre non arrivava ai tipi derivati (24/08/2026, stesso giorno, poche ore dopo la consegna del Piano 4)
+### Piano 4bis — fix propagazione override planning-tariffe ai tipi camera derivati (24/08/2026, stesso giorno del Piano 4)
 
-Marco riprova il booking engine su 28-29 agosto dopo aver corretto lui
-stesso la riga Quadrupla←Tripla nel DB (tab Code): "Prezzo Matrimoniale è
-corretto, 150€... tripla dice da 195€, quadrupla da 180€, già così non ha
-senso... se clicco su matrimoniale, è selezionabile solo b&b e non gli
-altri trattamenti — stessa cosa per tutte le altre tipologie".
+Marco ha testato il Piano 4 con dati reali (Matrimoniale 28-29/08 override
+bb 160€ su planning-tariffe, Tripla derivata +30%, Quadrupla +50%,
+trattamenti impostati al 25% su tutto l'anno) e ha segnalato prezzi senza
+senso: "una quadrupla costa sempre più di una tripla. non sono corretti né
+i prezzi, e rimane non selezionabile altro trattamento" — poi, sul sito,
+numeri completamente slegati dall'override (150/120/180/195 invece dei
+valori attesi).
 
-**Bug reale #1, confermato leggendo il codice, non ipotizzato**: la
-funzione consegnata nel Piano 4
-(`calcolaTariffaPerTrattamentiConPlanning`) controllava un override
-planning-tariffe solo per il tipo camera RICHIESTO. Per calcolare il
-prezzo "camera" di fallback (usato quando quel tipo/trattamento/notte non
-ha un override proprio) chiamava però `calcolaPrezzoCameraPerNotte`
-"nuda" di `tariffeController.js` — che per un tipo DERIVATO (Tripla,
-Quadrupla) risolve il prezzo del tipo BASE sempre e solo da
-`calcolaPrezzoDirettoPerNotte` (`backend/controllers/tariffeController.js`
-righe 49-58: `LEFT JOIN tariffe t ON t.tipo_camera_id = $1...`, nessun
-riferimento a `planning_tariffe_giorni`). Risultato: l'override 150€ che
-Marco ha impostato su Matrimoniale in planning-tariffe cambia il prezzo
-mostrato SOLO se si cerca Matrimoniale direttamente — Tripla e Quadrupla,
-che derivano da Matrimoniale per percentuale, continuavano a calcolare la
-propria base dal vecchio prezzo diretto in tabella `tariffe`, mai
-aggiornato. Esattamente il gap che il Piano 4 avrebbe dovuto chiudere e
-non ha chiuso — non l'avevo previsto quando ho scritto la funzione.
+**Causa**: `calcolaTariffaPerTrattamentiConPlanning` (Piano 4) ricadeva,
+per le notti senza override diretto, sul motore condiviso
+`calcolaPrezzoCameraPerNotte` (`tariffeController.js`) — quella funzione
+risolve il prezzo di un tipo DERIVATO chiamando
+`calcolaPrezzoDirettoPerNotte(baseId, ...)` sulla sua Madre, che legge SOLO
+la tabella storica `tariffe`, mai `planning_tariffe_giorni`. Risultato: un
+override planning-tariffe sulla Madre (Matrimoniale) non arrivava mai ai
+tipi che ne derivano (Tripla, Quadrupla) — continuavano a calcolare dal
+vecchio prezzo storico.
 
-Fix: nuove funzioni in `backend/controllers/planningTariffeController.js`,
-`prezzoBasePerNotteConPlanning` e `calcolaPrezzoCameraPerNotteConPlanning`
-— stessa logica di derivazione di `calcolaPrezzoCameraPerNotte`
-(percentuale sul tipo base, stesso anti-loop, stesso clamp min/max),
-duplicata apposta (non richiamata dall'originale, che resta invariata per
-`/tariffe` e per `griglia()`) per sostituire l'unico punto che cambia
-davvero: la base di un tipo derivato ora si risolve con un override bb in
-planning_tariffe_giorni sul tipo BASE, prima di ricadere sul prezzo
-diretto storico. `calcolaTariffaPerTrattamentiConPlanning` ora chiama
-questa versione al posto di quella nuda. Serviva anche esportare
-`calcolaPrezzoDirettoPerNotte` da `tariffeController.js` (non lo era —
-modifica additiva al `module.exports`, nessun comportamento esistente
-cambiato).
+**Fix**: duplicate in `planningTariffeController.js` (deliberatamente, non
+richiamando l'originale — vedi commento nel file) due nuove funzioni:
+`prezzoBasePerNotteConPlanning(baseTipoCameraId, dataArrivo, dataPartenza)`
+(prezzo diretto storico della Madre, sostituito notte per notte da un
+eventuale override bb in `planning_tariffe_giorni` per quel tipo base) e
+`calcolaPrezzoCameraPerNotteConPlanning(tipoCameraId, dataArrivo,
+dataPartenza)` (stessa logica di `calcolaPrezzoCameraPerNotte` — anti-loop
+su catene di derivazione a più livelli, clamp min/max — ma risolve la base
+di un tipo derivato con `prezzoBasePerNotteConPlanning` invece che con
+`calcolaPrezzoDirettoPerNotte` diretta). `calcolaTariffaPerTrattamentiConPlanning`
+ora chiama questa nuova funzione. `griglia()` e `calcolaPrezzoCameraPerNotte`
+"nuda" (usata da `/tariffe`) NON sono state toccate in questo intervento —
+vedi però il fix separato più sotto in questa stessa giornata, che le
+riguarda.
 
-**Attenzione — non risolve tutto da sola**: i numeri 195€/180€ che Marco
-ha visto potrebbero già riflettere il 150€ di Matrimoniale (se le
-percentuali di derivazione sono +30%/+20%, tornerebbe esattamente questi
-valori) — il problema "Quadrupla più economica di Tripla" **[Ipotesi, non
-verificabile da qui, nessun accesso a `regole_derivazione_tariffe`]** è
-allora quasi certamente una percentuale di derivazione impostata al
-contrario tra i due tipi in `/tariffe` ("Deriva da"), non un bug di
-codice — va controllato e corretto lì da Marco, il fix di oggi non lo
-tocca e non potrebbe: non è compito di questo codice decidere quale
-percentuale sia quella giusta.
+Verificato solo con `node -c` — nessun accesso DB, nessuna query reale.
 
-**Bug reale #2, NON un bug di codice — dato mancante, da verificare da
-Marco**: mezza pensione e pensione completa risultavano non selezionabili
-per TUTTE le tipologie su 28-29 agosto. Letto il codice di
-`calcolaSupplementoTrattamento` (`tariffeController.js` righe 174-219):
-se non c'è una riga in `supplementi_trattamento` per la categoria
-(singola/doppia, dedotta da `capienza_max`) + quel trattamento, che copra
-il periodo di quella notte (né un periodo specifico né una riga
-"fallback" con `periodo_id NULL`), la notte risulta scoperta e il
-trattamento non è prenotabile — indipendentemente da planning-tariffe, che
-non c'entra: quella tabella non contiene i supplementi trattamento, solo
-prezzo/restrizioni per notte. **[Probabile, non verificabile da qui,
-nessun accesso a Postgres]**: manca una riga di supplemento per la
-categoria coinvolta che copra la data richiesta — da controllare in
-`/tariffe`, sezione "Trattamenti" (componente `SchedaTrattamento`,
-separata dalla griglia tipologie), per categoria doppia (Matrimoniale/
-Matrimoniale Piccola/Tripla/Quadrupla — tutte capienza_max > 1) sia per
-mezza pensione sia per pensione completa.
+**Dopo la consegna Marco ha ancora segnalato "non torna"** — è seguita una
+sessione di debug sistematico (skill `superpowers:systematic-debugging`,
+niente più ipotesi a caso) invece di proporre altri fix alla cieca:
+1. Ipotesi "clamp min/max su Tripla/Quadrupla" — **esclusa da Marco**: "su
+   tripla e quadrupla non è impostato min max".
+2. Ipotesi "override non salvato" — **esclusa da Marco**: confermato dalla
+   griglia planning-tariffe che il valore 160 c'era.
+3. Ipotesi "deploy non riavviato sul server" — **testata e confermata
+   ERRATA come unica causa**: una chiamata diretta a
+   `/api/booking-pubblico/disponibilita` ha mostrato il campo
+   `motivi_non_disponibile` (introdotto proprio dal Piano 4) → il codice
+   di oggi ERA live e in esecuzione.
+4. **Causa reale, trovata con una query SQL diretta eseguita da Marco (tab
+   Code)** su quello che lui chiamava "DB locale": la query mostrava
+   l'override 160€/min_stay 2 presente — ma questo CONTRADDICEVA il
+   comportamento dell'API live (che rispondeva 150€, senza blocco, nessun
+   override). Le due cose non potevano essere vere sullo stesso database:
+   la query e l'API stavano leggendo DUE DATABASE DIVERSI.
 
-Verificato con `node -c` su entrambi i file toccati
-(`tariffeController.js`, `planningTariffeController.js`) — nessun accesso
-a Postgres, nessuna query reale eseguita, nessuna riverifica end-to-end
-sul sito. Consegna: `backend/controllers/tariffeController.js` e
-`backend/controllers/planningTariffeController.js` inviati con
-`SendUserFile` e scritti sul dispositivo con `device_commit_files`.
+**Chiarimento finale di Marco sul suo flusso di lavoro reale** (non
+documentato da nessuna parte prima d'ora): lavora interamente in locale —
+gestionale-hotel backend + Postgres locali, dove vive TUTTA la sua
+configurazione reale (tariffe, regole di derivazione, trattamenti,
+planning-tariffe). `sito-hotel` è distinto, su Vercel. Carica sul server
+VPS di produzione solo periodicamente, "quando mi tornano le modifiche" —
+e il database di produzione è oggi "quasi tutto vuoto... nessun trattamento
+impostato, nessuna tariffa settata". Marco stesso ha formulato l'ipotesi:
+"il problema è quindi che vercel punta al gestionale in produzione e non a
+quello in locale" — cioè `NEXT_PUBLIC_GESTIONALE_API_URL` su Vercel
+(sito-hotel) punta all'host di produzione (`hdgolfo-gestionale.com`,
+praticamente vuoto), non al suo gestionale locale dove configura davvero i
+prezzi.
+
+**Conclusione**: nessun bug nel codice di Piano 4/4bis — ogni discrepanza
+segnalata oggi si spiega con il confronto tra due ambienti diversi (DB
+locale configurato vs DB di produzione vuoto, letto dal sito su Vercel).
+Il codice non è mai stato verificato con dati veri per la semplice ragione
+che, finché si testa da `sito-hotel` su Vercel, non può mai vedere i dati
+che Marco imposta in locale. **Indicazione data a Marco**: per verificare
+davvero il booking engine con la sua configurazione reale deve far girare
+`sito-hotel` in locale (`npm run dev`) con `NEXT_PUBLIC_GESTIONALE_API_URL`
+(in `.env.local`) puntato al suo gestionale locale, non usare la versione
+Vercel per questo tipo di test. Nessuna modifica di codice richiesta da
+questa scoperta in sé — è un chiarimento di procedura di test, non un fix.
+
+### Fix "prezzo consigliato" griglia planning-tariffe non allineato all'override della Madre (24/08/2026, stessa giornata, dopo il test in locale)
+
+Testando in locale come indicato sopra, Marco ha riportato numeri
+coerenti sul sito (Quadrupla 240€, Tripla 208€ per il 28-29/08) ma
+diversi da quelli mostrati nella griglia planning-tariffe come "prezzo
+consigliato" per quei due tipi (255€ e 221€): "ti torna?".
+
+**Verificato che tornano entrambi, ma partendo da basi diverse**: 160€
+(l'override bb di Matrimoniale su planning-tariffe per quella notte) ×
+1,30 = 208 e × 1,50 = 240 — esattamente i prezzi mostrati in prenotazione,
+motore Piano 4bis. 170€ (il prezzo storico di Matrimoniale nella tabella
+`tariffe`, quello precedente all'override) × 1,30 = 221 e × 1,50 = 255 —
+esattamente i valori mostrati come "consigliato" in griglia. Causa: `griglia()`
+(riga ~51, non toccata dal Piano 4bis per scelta esplicita — vedi sopra)
+calcolava ancora il prezzo camera con `calcolaPrezzoCameraPerNotte` "nuda",
+che per un tipo derivato risolve sempre la base dalla tabella storica
+`tariffe`, mai da un override planning-tariffe sulla Madre — stesso identico
+bug del Piano 4bis, ma sul lato "pannello di pianificazione" invece che sul
+lato "prenotazione live".
+
+**Fix, su richiesta esplicita di Marco ("si aggiorna")**: `griglia()` ora
+chiama `calcolaPrezzoCameraPerNotteConPlanning` (la stessa funzione già
+usata dal motore di prenotazione, Piano 4bis) invece di
+`calcolaPrezzoCameraPerNotte`. Per un tipo MADRE il comportamento non
+cambia (nessuna regola di derivazione → stesso `calcolaPrezzoDirettoPerNotte`
+di sempre, l'override sulla cella esatta era comunque già applicato da
+`griglia()` a parte). Cambia solo la base usata per i tipi DERIVATI, che ora
+riflette un eventuale override sulla Madre — coerente col prezzo mostrato in
+prenotazione. Rimosso l'import ormai inutilizzato di `calcolaPrezzoCameraPerNotte`
+da `planningTariffeController.js` (resta usata ed esportata da
+`tariffeController.js` per `/tariffe`, invariata).
+
+File toccato: `backend/controllers/planningTariffeController.js` (solo
+`griglia()` + import + commenti). Verificato solo con `node -c` — nessun
+accesso DB, nessuna query reale, nessuna verifica visiva della griglia.
+Da fare dal tab Code: riaprire `/planning-tariffe` sul tipo Tripla o
+Quadrupla per una data con override sulla Madre attivo, confermare che il
+"consigliato" mostrato ora coincida col prezzo reale di prenotazione.
+
+Consegna: `backend/controllers/planningTariffeController.js` inviato con
+`SendUserFile` e scritto sul dispositivo con `device_commit_files`,
+insieme all'aggiornamento di questo diario e di `STATO_PROGETTO.md`.
+
+### Tre aggiornamenti STATO_PROGETTO.md + lettura documenti RIMOVCLI (24/08/2026, stessa giornata)
+
+Marco ha dato tre aggiornamenti da registrare: (1) risposta arrivata da
+Regione Liguria su RIMOVCLI, documenti in `docs/rimovcli`; (2) attivata
+XPay Pro di Nexi (canone zero, 1,10%+0,24€ a operazione su carte, +7,5€
+una tantum e 2,5€/mese di commissione di acquiring — Protection Plus
+incluso), in attesa che Nexi mandi i documenti al titolare, poi
+specifiche tecniche per decidere Nexi vs Stripe; (3) ricevuto il codice
+di migrazione per trasferire il dominio `hoteldelgolfolerici.com` da
+Vercel a quello dell'hotel. Tutti e tre registrati in STATO_PROGETTO.md
+nei punti relativi (2.6, sezione "Bloccato su terzi" per Nexi/LivelloUno,
+4.1 per il caveat di rischio sul dominio).
+
+**Letti i documenti `docs/rimovcli`** (8 file, ricevuti dal titolare):
+`RIMOVCLI_SOFTWAREHOUSE.PDF` (lettera Regione Liguria, 2 pagine),
+`Specifiche Import Gestionali Alberghieri.pdf` (specifiche tecniche
+Datasiel, 11 pagine), `Manuale Utente ImportC59.pdf` (23 pagine),
+`ModelloC59.xsd`, `COD1_20130813.xml` (XML d'esempio), più le tabelle di
+codifica (`ISTAT - PROVINCE.XLSX`, `stati esteri excel.xls`, PDF allegato
+3 circolare ISTAT n.5/2012 su regioni italiane e paesi esteri).
+
+**Prima cosa da segnalare, prima del contenuto tecnico**: tutti i
+documenti sono datati 2012-2013 — la lettera di Regione Liguria è del 14
+gennaio 2013, indirizzata genericamente "Spett. Software-House, Loro
+sedi" (non un destinatario nominale), con una scadenza per l'invio di un
+XML di test fissata al **31 gennaio 2013**, ovviamente già passata da 13
+anni. Le specifiche tecniche Datasiel sono del 17/12/2012, il manuale
+utente di settembre 2013 (include persino istruzioni per Internet
+Explorer e Opera). Non è chiaro se questo sia il pacchetto standard che
+Regione Liguria manda a chiunque chieda informazioni su RIMOVCLI (quindi
+tecnicamente valido se il sistema non è cambiato in 13 anni, plausibile
+per un sistema regionale mai rifatto) oppure una risposta non aggiornata
+alla richiesta specifica di Marco. **Raccomandato a Marco**: verificare
+con Regione Liguria/Datasiel (contatti nel manuale: assistenza La Spezia
+0187 2543301, assistenzac59@provincia.sp.it) che URL del portale,
+schema XML e processo di certificazione siano ancora questi, prima di
+investire tempo a costruire qualcosa sopra.
+
+**Cosa confermano nel merito, comunque utile per chiudere il dubbio
+ROSS1000 vs RIMOVCLI aperto dal 13/08**: RIMOVCLI è definitivamente il
+canale giusto per la Liguria (non il webservice SOAP ROSS1000/Turismo5
+nazionale a cui punta oggi `ross1000Xml.js`/`ross1000Controller.js`) —
+ma il meccanismo è diverso da entrambe le ipotesi discusse finora:
+- **Certificazione una tantum come "software house"**: prima che la
+  struttura possa ricevere le credenziali, il produttore del gestionale
+  deve produrre un XML di test conforme a `ModelloC59.xsd`, farlo
+  validare da Regione Liguria/Datasiel, ed essere inserito nell'elenco
+  pubblicato sul portale regionale. Un requisito che gestionale-hotel
+  (software proprietario, mai certificato prima) deve ancora soddisfare
+  da zero — non è dato per scontato che basti "attivare" qualcosa.
+- **Un file XML al giorno, non uno stream/webservice**: un file per
+  struttura per giorno (elemento `c59`, `idstruttura` + `data`), con un
+  blocco opzionale `mensile` (camere/letti disponibili nel mese, nome del
+  gestionale) e un blocco `giornaliero` con una riga `rigac59` per ogni
+  provincia italiana (codice ISTAT 3 cifre) o stato estero di provenienza
+  dei presenti, con arrivati/partiti/presenti/diurni. Le giornate senza
+  presenti richiedono comunque un invio (giornata "a movimenti 0") o
+  vanno segnate come "chiusura" — non si può semplicemente non inviare.
+- **Upload manuale via portale web**, non un'API richiamabile dal
+  backend: login/password, pulsante "Seleziona file" + "Invia file" su
+  `https://flussituristici.regione.liguria.it/importc59-prod/login.c59`.
+  **Nessun meccanismo di invio automatico documentato** — il codice può
+  generare il file XML corretto, ma il caricamento quotidiano resta
+  un'azione umana sul portale (a meno di costruire un'automazione
+  browser a parte, fuori scope di questa lettura).
+- **Controlli di coerenza lato portale**: il sistema rifiuta il file se i
+  presenti di oggi non tornano con (presenti di ieri + arrivati −
+  partiti) per ciascuna provenienza, se le camere occupate superano i
+  presenti, o se i codici provincia/stato non sono tra quelli ISTAT
+  validi (tabelle di riferimento incluse nei file ricevuti) — un
+  generatore XML lato gestionale-hotel dovrà riprodurre esattamente
+  questa logica di continuità giorno-su-giorno per non far rifiutare i
+  file in produzione.
+
+**Non toccato nessun file di codice in questo intervento** — solo
+lettura e documentazione. `ross1000Xml.js`/`ross1000Controller.js`
+restano non toccati: sostituirli con un generatore RIMOVCLI è lavoro
+nuovo da pianificare a parte (serve prima la certificazione, poi le
+credenziali della struttura, poi il generatore XML), non una modifica
+incrementale di quello che c'è.
+
+Consegna: solo aggiornamento di `STATO_PROGETTO.md` e di questo diario,
+inviati con `SendUserFile` e scritti sul dispositivo con
+`device_commit_files`.
+
+### Mail reale di Regione Liguria condivisa da Marco — dubbio sull'attualità dei documenti RIMOVCLI sciolto (24/08/2026, stessa giornata)
+
+Dopo la lettura sopra (che segnalava il rischio che i documenti 2012-2013
+fossero il pacchetto standard non aggiornato, non una risposta
+personalizzata), Marco ha incollato il testo della mail ricevuta da
+Regione Liguria — mittente Dott.ssa Elena Tagliano, Direzione Generale
+Turismo, Marketing territoriale e Sistemi Informativi, indirizzata a
+"Carmine Muro" (nome non ancora chiarito con Marco — probabile
+riferimento anagrafico della struttura presso Regione Liguria, non
+necessariamente lo stesso Marco di questa sessione, da verificare se
+rilevante).
+
+**Informazione realmente nuova, non deducibile dai soli documenti**: (1)
+lo stesso nominativo (Elena Tagliano) compare nel contatto assistenza
+Genova del manuale utente 2013 — il contatto è quindi verificato attivo
+ancora oggi, un forte indizio che il sistema/processo RIMOVCLI descritto
+nei documenti 2012-2013 è tuttora quello reale, non superato; (2) la mail
+chiarisce esplicitamente che **il file XML può essere generato da un
+gestionale interno**, non serve essere una software house esterna in
+senso tradizionale — un punto che i documenti tecnici da soli non
+specificavano con questa chiarezza; (3) procedura confermata: costruire
+l'XML conforme a `ModelloC59.xsd`, inviarlo per email a
+movimentoturistico.istat@regione.liguria.it per il test, dopo esito
+positivo la struttura viene "abilitata alla modalità con invio file
+XML".
+
+**Resta un punto aperto, non chiarito da questa mail**: una volta
+abilitati, l'invio quotidiano a regime passa dal portale web con upload
+manuale (come descritto nel manuale utente 2013) o da un canale diverso
+(la mail non lo specifica, parla solo della fase di test via email). È
+la domanda giusta da fare a Regione Liguria prima di decidere se serve
+anche un'automazione browser oltre al generatore XML, o se il
+caricamento quotidiano resta comunque un'azione umana.
+
+STATO_PROGETTO.md aggiornato di conseguenza (riga 2.6 e voce
+corrispondente in "Bloccato su terzi", ora chiusa). Nessun file di codice
+toccato.
+
+Consegna: solo aggiornamento di `STATO_PROGETTO.md` e di questo diario,
+inviati con `SendUserFile` e scritti sul dispositivo con
+`device_commit_files`.
+
+### Bozza mail di richiesta chiarimento RIMOVCLI salvata (24/08/2026, stessa giornata)
+
+Marco ha chiarito che Carmine Muro è il titolare di Hotel del Golfo (la
+mail di Regione Liguria è quindi intestata a lui, non un refuso), e ha
+chiesto di salvare come file la bozza di domanda a Regione Liguria già
+proposta in chat (se l'invio a regime del file XML, dopo l'abilitazione,
+può essere automatico o resta upload manuale sul portale).
+
+Salvata in `docs/mail preventivi/mail_rimovcli_domanda_invio_automatico.md`,
+stesso formato delle altre mail pronte in quella cartella (Oggetto +
+corpo + firma), **non ancora inviata** — deve partire dalla casella di
+Carmine Muro per restare nello stesso filo di conversazione con la Dott.ssa
+Tagliano. STATO_PROGETTO.md aggiornato di conseguenza (riga 2.6 e voce
+"Bloccato su terzi", entrambe riaperte in attesa di questa risposta —
+prima non ha senso iniziare a costruire il generatore XML, perché la
+risposta determina se serve anche un'automazione browser oltre al
+generatore).
+
+Consegna: `docs/mail preventivi/mail_rimovcli_domanda_invio_automatico.md`
+(nuovo) e `STATO_PROGETTO.md` inviati con `SendUserFile` e scritti sul
+dispositivo con `device_commit_files`.
+
+### Endpoint disponibilità mensile aggregata — Piano 1 del date-range picker eseguito (24/08/2026, stessa giornata)
+
+Eseguito (esecuzione Inline, `superpowers:executing-plans`, scelta
+esplicitamente da Marco per il checkpoint di review dopo ogni task) il
+Task 1 del piano
+`docs/superpowers/plans/2026-08-24-endpoint-disponibilita-mese.md`,
+scritto in una sessione precedente della stessa giornata dopo il
+brainstorming sul date-range picker per `sito-hotel`.
+
+Nuovo `GET /api/booking-pubblico/disponibilita-mese` in
+`bookingPubblicoController.js`, subito prima di `prenota()`: riusa alla
+lettera il pattern EXISTS inventario/capienza già scritto per
+`disponibilita()` sopra (`tipi_camera`/`tipi_camera_camere`/`camere`/
+`soggiorni`, stesso operatore `daterange`), ma con `generate_series`
+sulle notti del mese richiesto e l'operatore di contenimento `@>` al
+posto dell'overlap `&&` — una singola query invece di N chiamate,
+nessuna chiamata a `calcolaTariffaPerTrattamentiConPlanning`: questo
+endpoint non calcola prezzi, solo un booleano per notte. Per design (già
+approvato dal titolare in fase di brainstorming, vedi
+`sito-hotel/docs/superpowers/specs/2026-08-24-date-range-picker-design.md`)
+non tiene conto delle restrizioni planning-tariffe: il trattamento non è
+ancora scelto a questo punto del flusso booking, un giorno "verde" può
+ancora risultare bloccato alla chiamata vera su `/disponibilita`.
+Esportata in `module.exports`, route registrata in
+`backend/routes/bookingPubblico.js` subito dopo `/disponibilita`, dentro
+lo stesso middleware CORS + rate limit già montato (nessuna modifica al
+middleware). Segnalato a Marco, non silenziato: il rate limit condiviso
+resta 30 richieste/15 minuti in produzione — un calendario che ricarica
+ad ogni cambio di mese/occupazione può avvicinarsi a quel limite più in
+fretta di quanto facesse `/disponibilita` da sola, se un ospite sfoglia
+molti mesi; non modificato in questo piano, da tenere presente quando il
+Piano 2 (frontend) sarà davvero testato nel browser.
+
+Aggiunto anche un nuovo blocco `describe('GET /api/booking-pubblico/
+disponibilita-mese', ...)` in `tests/api/bookingPubblico.test.js` (prima
+di `describe('POST /api/booking-pubblico/prenota', ...)`), 4 test: 400 su
+anno/mese mancanti o non validi, un mese senza prenotazioni con tutte le
+notti disponibili (30 giorni per giugno), una prenotazione reale via
+`POST /prenota` che rende non disponibili le notti occupate lasciando
+libero il giorno di checkout (semantica `[)`, coerente con
+`disponibilita()`), e una richiesta con `adulti: 20` che non trova
+nessuna tipologia capiente — soglia scelta apposta per restare valida
+anche in presenza di altre tipologie attive nel DB di test, dato che
+questo endpoint aggrega su TUTTE le tipologie e non permette di isolare
+per `tipo_camera_id` nella risposta come fa invece `disponibilita()`.
+
+**Limiti di verifica di questa sessione Cowork, dichiarati esplicitamente
+(nessuna esecuzione reale possibile)**: nessun accesso al database
+Postgres, nessuna esecuzione della suite Jest vera. Verificato invece:
+`node -c` su tutti e tre i file toccati (sintassi valida); un'esecuzione
+isolata della funzione `disponibilitaMese` con `pool.query` sostituito da
+uno stub in memoria (nessuna riscrittura del file, solo un mock a runtime
+via `Module._load`), che ha confermato: 400 corretto per `anno` mancante,
+400 corretto per `mese` fuori range (13), e per un input valido
+(`anno=2099, mese=2, adulti=2`) i parametri passati alla query SQL sono
+esattamente quelli attesi (`primoGiorno='2099-02-01'`,
+`primoGiornoMeseSuccessivo='2099-03-01'`,
+`ospitiChePesanoSuCapienza=2`) — verifica della logica di composizione
+query, non una prova che la query stessa produca risultati corretti
+contro dati reali (quello richiede Postgres, non disponibile qui). I 4
+test Jest aggiunti restano da eseguire per davvero dal titolare in
+locale, come già il resto della suite `bookingPubblico.test.js` (voce
+STATO_PROGETTO.md riga 4.1, "scritta ma mai eseguita").
+
+**Prossimo passo**: checkpoint del titolare (Step 7 del piano — verifica
+manuale con curl/Postman contro il gestionale in esecuzione in locale, e
+Step 6 — esecuzione reale dei test Jest) prima di iniziare il Piano 2
+(`sito-hotel`, componente `DateRangePicker.tsx`), che dipende da questo
+endpoint. Nessun commit git eseguito da questa sessione Cowork per
+convenzione di progetto — il titolare esegue i commit reali dal "tab
+Code" dopo aver verificato.
+
+Consegna: `backend/controllers/bookingPubblicoController.js`,
+`backend/routes/bookingPubblico.js`, `tests/api/bookingPubblico.test.js`,
+`STATO_PROGETTO.md` e questo diario, inviati con `SendUserFile` e scritti
+sul dispositivo con `device_commit_files`.

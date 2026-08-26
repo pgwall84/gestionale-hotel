@@ -1987,3 +1987,42 @@ writing-plans quando il titolare vuole partire con l'implementazione:
     codice toccato. Prossimo passo quando il titolare è pronto: passare da
     qui a un piano di implementazione (superpowers:writing-plans), non
     partire a scrivere codice direttamente da questa voce.
+
+Modulo 4.1 — Booking Engine, endpoint disponibilità mensile aggregata
+(nuovo, 24/08/2026, nato dal redesign visivo di sito-hotel):
+  - Contesto: sito-hotel sta sostituendo i due `<input type="date">`
+    nativi del booking widget con un calendario vero da esperienza OTA
+    (Booking.com/Airbnb) — giorni pieni/liberi visibili mentre l'utente
+    sfoglia i mesi, PRIMA di scegliere un range. Decisione presa col
+    titolare in sessione di brainstorming: aggregato (un giorno è
+    "disponibile" se ALMENO UNA tipologia camera ha posto, non filtrato
+    per tipologia — coerente col flusso attuale, dove la tipologia si
+    sceglie dopo le date) e sensibile al numero di ospiti (adulti+bambini,
+    non un'occupazione fissa di default) — scelta esplicita del titolare,
+    "è la strada più corretta anche se c'è da lavorare di più".
+  - Serve un endpoint nuovo, pubblico, in
+    `backend/controllers/bookingPubblicoController.js`:
+    `GET /api/booking-pubblico/disponibilita-mese?anno=&mese=&adulti=&bambini_eta=`
+    → `{ "disponibilita": { "YYYY-MM-DD": true|false, ... } }` per ogni
+    notte del mese richiesto. Riusa la stessa logica di inventario/
+    capienza già scritta per `disponibilita()` (shared inventory via
+    `tipi_camera_camere`, `ospitiChePesanoSuCapienza`), ma SENZA calcolare
+    prezzo/derivazione tariffaria per notte — deve restare economico su un
+    mese intero di date. Design completo:
+    `sito-hotel/docs/superpowers/specs/2026-08-24-date-range-picker-design.md`.
+  - **Decisione esplicita da riconfermare quando si scrive il piano**: il
+    nuovo endpoint calcola SOLO disponibilità di inventario, non le
+    restrizioni di planning-tariffe (min_stay/chiuso_arrivo/
+    chiuso_partenza/stop_sell) — quelle sono per tipo_camera+trattamento,
+    non ancora scelti a questo punto del flusso. Conseguenza: un giorno
+    può apparire disponibile nel calendario mese e risultare comunque
+    bloccato quando si arriva alla chiamata vera su `/disponibilita` con
+    trattamento scelto — stesso tipo di scostamento già accettato con la
+    scelta "aggregato, non per tipologia".
+  - Stato: solo design (brainstorming completato, spec scritta), nessun
+    piano di implementazione scritto, nessun codice toccato. Tocca DUE
+    repository (gestionale-hotel per l'endpoint, sito-hotel per il
+    componente `DateRangePicker.tsx` che lo consuma, vestito con
+    `lib/theme.ts`, libreria `react-day-picker`) — il piano di
+    implementazione dovrà probabilmente essere spezzato in due, uno per
+    repository.

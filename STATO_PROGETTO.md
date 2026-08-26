@@ -24,7 +24,7 @@ pre-produzione incluso. Guida server: `docs/DEPLOY_VPS_NETCUP.md`.
 | 2.3 Channel manager (OTA) | Fase 1 (mappatura camere↔canale, `tipi_camera_canali`) ✅, resta valida a prescindere dal fornitore. **Fornitore cambiato 19/08/2026**: WuBook/WooDoo scartato (**verificato direttamente con WuBook**, non solo dedotto — accettano solo fornitori certificati multi-cliente), stessa risposta da RoomCloud, Octorate escluso (richiede comprare il loro gestionale in bundle, ~160€/mese) — **Beds24 scelto al suo posto, spec non ancora scritta** | EVOLUTIVE.md correzione 19/08; `sito-hotel/SPEC_SITO_HOTEL.md` §10 (fonte più aggiornata) |
 | 2.4 Tassa di soggiorno | ✅ Fatto (01/08). Formato export Comune di Lerici ancora sconosciuto — export Excel generico nel frattempo | diario 01/08 |
 | 2.5 Alloggiati Web (SOAP) | ⚠️ **Più avanti di quanto dica CLAUDE.md §8**: Fase 1b ✅, **Fase 2 (schedina+invio reale) già costruita e in uso controllato** dal 13/08 — Test validato contro il servizio vero (1/1), invio reale dietro interruttore `ALLOGGIATI_JOB_ATTIVO` spento di default, coda manuale funzionante. 4 gap noti (D/A/B/C) chiusi 13-14/08, **non ancora verificati da Marco contro Postgres reale** | EVOLUTIVE.md "Fase 2, stato 13/08/2026"; diario 13-14/08 |
-| 2.6 ROSS1000/ISTAT | ⚠️ **Bloccato su un dubbio irrisolto, diverso da CLAUDE.md §8**: scoperto 13/08 un conflitto — il codice punta a un webservice SOAP (ROSS1000/Turismo5 nazionale) ma la documentazione ufficiale Liguria descrive RIMOVCLI, upload manuale su portale con software certificato preventivamente. Non è "in attesa di credenziali HTTP Basic" — è in attesa di risposta da Regione Liguria su quale canale sia quello giusto. Mail pronta ma **mai inviata** (Marco deve completare nome/telefono/email). **Non toccare `ross1000Xml.js`/`ross1000Controller.js` prima della risposta** | EVOLUTIVE.md "RIMOVCLI vs ROSS1000" |
+| 2.6 ROSS1000/ISTAT | ⚠️ **AGGIORNATO 24/08/2026 (bis)**: Marco ha condiviso la mail REALE di risposta di Regione Liguria (Dott.ssa Elena Tagliano, Direzione Generale Turismo — la stessa persona è anche nel contatto assistenza Genova del manuale 2013, quindi il contatto è verificato attivo) — **conferma che i documenti tecnici 2012-2013 in `docs/rimovcli` sono tuttora validi**, non un pacchetto generico non aggiornato (dubbio sollevato in questa stessa sessione, ora sciolto da un'informazione realmente nuova). La mail chiarisce inoltre un punto che i documenti da soli non specificavano: **un gestionale interno può produrre l'XML, non serve essere una software house esterna in senso tradizionale**. Procedura confermata: costruire il generatore XML conforme a `ModelloC59.xsd`, inviarlo per email a movimentoturistico.istat@regione.liguria.it per il test, dopo esito positivo la struttura viene abilitata "alla modalità con invio file XML". **Resta da chiarire con Regione Liguria** (non deducibile né dai documenti né da questa mail): una volta abilitati, l'invio quotidiano a regime avviene ancora tramite upload manuale sul portale (come descritto nel manuale 2013) o anche quello ora passa da un canale diverso — rilevante per decidere se serve un'automazione browser oltre al generatore XML. Resta invariato il resto della riga precedente: certificazione/test da fare, generatore XML da costruire da zero, `ross1000Xml.js`/`ross1000Controller.js` non toccati (canale sbagliato) | EVOLUTIVE.md "RIMOVCLI vs ROSS1000"; `docs/rimovcli`; diario 24/08/2026 |
 
 ## Fase 2B — Fiscale e pagamenti
 
@@ -35,7 +35,7 @@ Nexi/Stripe via WuBook) — dipendono in parte da 2.3.
 
 | Modulo | Stato reale | Dettaglio |
 |---|---|---|
-| 4.1 Booking engine | 🔶 Costruito come "Booking Engine Diretto v2" su `sito-hotel` (19-20/08, caparra 30% Stripe) — CLAUDE.md §8 non lo segna ancora. Dal 24/08 il prezzo legge anche `planning_tariffe_giorni` (Piano 4, vedi sotto), non più solo il motore `/tariffe`. Aperto: suite `bookingPubblico.test.js` scritta ma mai eseguita (e non aggiornata per il Piano 4), range min/max tariffe e sconto bambini 3-11 (oggi 0%) da popolare, verifica end-to-end `/prenota` non fatta, restrizioni min_stay/chiusure mai testate su una prenotazione reale | diario 19-20/08, 24/08 |
+| 4.1 Booking engine | 🔶 Costruito come "Booking Engine Diretto v2" su `sito-hotel` (19-20/08, caparra 30% Stripe) — CLAUDE.md §8 non lo segna ancora. Dal 24/08 il prezzo legge anche `planning_tariffe_giorni` (Piano 4/4bis, vedi sotto), non più solo il motore `/tariffe`, e Piano 4bis è confermato coerente con dati reali (override Matrimoniale → Tripla/Quadrupla derivate correttamente, sia in prenotazione sia nel "consigliato" di griglia). **Importante**: il DB del server di produzione è oggi quasi vuoto (nessun trattamento/tariffa/planning-tariffe reale) — Marco configura tutto in locale e carica in produzione solo periodicamente, e `sito-hotel` su Vercel punta al gestionale di produzione. Per verificare il booking engine con dati veri va usato `sito-hotel` in locale con `NEXT_PUBLIC_GESTIONALE_API_URL` puntato al gestionale locale, mai la versione Vercel. Aperto: suite `bookingPubblico.test.js` scritta ma mai eseguita (e non aggiornata per il Piano 4/4bis), range min/max tariffe e sconto bambini 3-11 (oggi 0%) da popolare, verifica end-to-end `/prenota` non fatta, restrizioni min_stay/chiusure mai testate su una prenotazione reale, dati di produzione da popolare prima che il booking live serva ospiti veri. **Nuovo 24/08/2026 (piano date-range picker)**: aggiunto `GET /api/booking-pubblico/disponibilita-mese` (stesso file, stesso pattern EXISTS inventario/capienza di `disponibilita()`, adattato con `generate_series` per un booleano per notte su un mese intero, senza calcolo prezzo) — alimenta il nuovo calendario di `sito-hotel` (Piano `sito-hotel/docs/superpowers/plans/2026-08-24-date-range-picker-componente.md`, non ancora eseguito). Verificato da questa sessione Cowork solo con `node -c` (sintassi) e un'esecuzione isolata della funzione con `pool.query` mockato (400 corretti su anno/mese invalidi, parametri SQL corretti per un mese di prova) — **nessun accesso al DB reale, nessuna esecuzione della suite Jest vera**: i 4 test aggiunti in `tests/api/bookingPubblico.test.js` (blocco `disponibilita-mese`) restano da eseguire dal titolare in locale, stesso stato "scritta ma mai eseguita" già segnalato sopra per il resto del file | diario 19-20/08, 24/08, 24/08 (bis) |
 | 4.2 Welcome Book | ✅ Fatto, in produzione su Vercel (dominio provvisorio) | diario 02/08 |
 
 ## Fase 2D — Esperienza ospite
@@ -161,6 +161,45 @@ testi editabili + Offerte (04/08).
   vedi voce sotto**: il gap "non ancora la fonte di verità del prezzo
   mostrato a un ospite" è stato chiuso su richiesta esplicita del
   titolare — non era più un rimando volontario a un piano futuro.
+- **Piano 4bis + fix griglia consigliato — propagazione override
+  planning-tariffe ai tipi derivati, implementato E confermato coerente
+  con dati reali (24/08/2026, stessa giornata del Piano 4)**: il Piano 4
+  aveva un gap — il motore di prenotazione ricadeva su
+  `calcolaPrezzoCameraPerNotte` "nuda" per le notti senza override
+  diretto, che per un tipo DERIVATO (Tripla/Quadrupla) risolve la Madre
+  sempre dalla tabella storica `tariffe`, mai da un override
+  planning-tariffe sulla Madre stessa — un override su Matrimoniale non
+  arrivava mai ai tipi che ne derivano. Corretto duplicando la logica in
+  due nuove funzioni interne a `planningTariffeController.js`:
+  `prezzoBasePerNotteConPlanning` e `calcolaPrezzoCameraPerNotteConPlanning`
+  (stesso anti-loop/clamp min-max dell'originale, ma base risolta con
+  l'override quando c'è). Stesso identico bug trovato poi anche nel
+  "prezzo consigliato" mostrato dalla griglia planning-tariffe (`griglia()`
+  chiamava ancora la funzione "nuda") — corretto allo stesso modo,
+  `griglia()` ora chiama `calcolaPrezzoCameraPerNotteConPlanning`. **A
+  differenza del Piano 4, qui la coerenza è stata confermata con dati
+  reali di Marco**: override Matrimoniale bb 160€ → Tripla (+30%) 208€,
+  Quadrupla (+50%) 240€, esattamente i valori mostrati sia in prenotazione
+  sia (ora) nella griglia come consigliato — non più solo verificato a
+  livello di codice/sintassi.
+  **Scoperta collaterale, non un bug di codice**: la ragione per cui i
+  test precedenti di Marco non tornavano affatto (numeri 150/120/180/195
+  completamente slegati da qualsiasi override) è che stava testando dal
+  sito su Vercel, che punta al gestionale di PRODUZIONE — il cui database
+  è oggi quasi vuoto (nessun trattamento, nessuna tariffa, nessun
+  planning-tariffe reale). Marco lavora e configura tutto in un'istanza
+  locale di gestionale-hotel (backend + Postgres locali) e carica sul
+  server di produzione solo periodicamente. **Per testare il booking
+  engine con dati reali va usato `sito-hotel` in locale (`npm run dev`)
+  con `NEXT_PUBLIC_GESTIONALE_API_URL` puntato al gestionale locale, non
+  la versione Vercel** — non è un fix di codice, è una correzione di
+  procedura di test, ma vale la pena tenerla qui perché ha causato ore di
+  debug apparentemente inspiegabile.
+  File toccato in più rispetto al Piano 4:
+  `backend/controllers/planningTariffeController.js` (nuove funzioni +
+  `griglia()` aggiornata + import ripulito). Verificato solo con `node -c`
+  — nessun accesso DB diretto da questo sandbox, i numeri di verifica sopra
+  vengono dai test reali di Marco in locale, non da una query eseguita qui.
 - **Piano 4 — sincronizzazione booking engine ↔ planning-tariffe,
   implementato non verificato (24/08/2026, stesso giorno del Piano 3,
   su richiesta esplicita del titolare dopo aver notato "prezzi delle
@@ -221,30 +260,6 @@ testi editabili + Offerte (04/08).
   davvero (sia in ricerca sia provando a forzare una prenotazione più
   breve via `prenota()`); eseguire (mai fatto finora, vedi riga 4.1 sopra)
   la suite `bookingPubblico.test.js` se ancora valida dopo questo cambio.
-- **Piano 4bis — override su tipo madre non arrivava ai tipi derivati,
-  corretto (24/08/2026, poche ore dopo il Piano 4)**: Marco ha riprovato
-  su 28-29 agosto e trovato **2 problemi reali**. (1) **Bug di codice,
-  corretto**: il Piano 4 controllava un override planning-tariffe solo sul
-  tipo camera richiesto — per un tipo DERIVATO (Tripla/Quadrupla) il
-  prezzo del tipo BASE veniva comunque risolto dal vecchio prezzo diretto
-  in tabella `tariffe`, mai da planning-tariffe. L'override 150€ su
-  Matrimoniale non arrivava a Tripla/Quadrupla. Corretto con due nuove
-  funzioni planning-aware in `planningTariffeController.js`
-  (`calcolaPrezzoCameraPerNotteConPlanning`/`prezzoBasePerNotteConPlanning`,
-  duplicate apposta, non toccano `/tariffe` né `griglia()`); serviva
-  esportare anche `calcolaPrezzoDirettoPerNotte` da `tariffeController.js`
-  (non lo era, modifica additiva). **Non risolve da sola** l'osservazione
-  di Marco "Quadrupla più economica di Tripla" — [Ipotesi] è una
-  percentuale di derivazione impostata al contrario in `/tariffe`, da
-  controllare e correggere lì, il codice non decide quale percentuale sia
-  quella giusta. (2) **Non è un bug — dato mancante**: mezza
-  pensione/pensione completa non selezionabili per nessuna tipologia su
-  quella data. [Probabile, non verificabile da qui] manca una riga in
-  `supplementi_trattamento` (sezione "Trattamenti" di `/tariffe`,
-  categoria doppia) che copra il periodo di quella data — planning-tariffe
-  non c'entra, quella tabella non contiene supplementi trattamento.
-  Verificato solo con `node -c`. Dettaglio completo:
-  `docs/DIARIO_SESSIONI.md`, voce "Piano 4bis" del 24/08.
 - **Piano 3 — 3 fix dopo prima verifica a video, implementati non
   verificati (24/08/2026)**: (1) **bug reale corretto** — `caricaGriglia`
   in `/planning-tariffe` passava `{params:{...}}` a `api.get`, ma
@@ -393,16 +408,39 @@ con una ricerca reale eseguita contro Postgres (non solo apertura pannello
   spec Beds24, nessuna mail ancora inviata a Beds24.
 - 2.5 Fase 2: Marco deve compilare le credenziali reali in `.env` e
   testare "Sincronizza ora" in locale — già in suo possesso.
-- 2.6: risposta di Regione Liguria su RIMOVCLI — mail pronta in
-  `docs/mail preventivi/mail_statistiche_liguria.md`, **mai inviata**
-  (manca nome/telefono/email di Marco).
+- 2.6: **RIAPERTO come "in attesa di risposta" (24/08/2026)** — mail
+  reale di Regione Liguria (Dott.ssa Elena Tagliano) confermata: RIMOVCLI
+  conferma XML costruibile dal gestionale interno, test via email a
+  movimentoturistico.istat@regione.liguria.it. Resta però da chiarire se
+  l'invio quotidiano A REGIME (dopo l'abilitazione) è automatizzabile o
+  resta upload manuale sul portale — non specificato né dai documenti né
+  dalla mail. Mail di richiesta pronta in
+  `docs/mail preventivi/mail_rimovcli_domanda_invio_automatico.md`,
+  **non ancora inviata** (deve partire dall'indirizzo di Carmine Muro,
+  titolare, che ha ricevuto la mail originale). Solo dopo questa risposta
+  ha senso pianificare il generatore XML conforme a `ModelloC59.xsd`
+  (vedi riga 2.6 sopra e diario 24/08/2026).
 - A-Cube (corrispettivi, sostituisce Hugin RT-K50): mail pronta in
   `docs/mail preventivi/mail_acube_preventivo.md`, **mai inviata**,
   stesso blocco (dati di contatto mancanti).
-- LivelloUno (trasferimento dominio `hoteldelgolfolerici.com`): mail
-  inviata, in attesa di risposta — blocca anche DNS sito, GA4, Iubenda.
-- Nexi: nessuna commissione pubblicata, da contattare per iscritto prima
-  di confrontare i costi con Stripe — non ancora contattato.
+- LivelloUno (trasferimento dominio `hoteldelgolfolerici.com`): **AGGIORNATO
+  24/08/2026** — Marco ha ricevuto il codice di migrazione per trasferire
+  il dominio da Vercel a quello dell'hotel. Non più "in attesa di
+  risposta": resta da eseguire il trasferimento vero e proprio (fuori
+  portata di questo sandbox, nessun accesso a DNS/registrar) — una volta
+  fatto si sblocca DNS sito, GA4, Iubenda. **Nota di rischio**: finché il
+  dominio reale non è collegato, `sito-hotel` su Vercel non serve ospiti
+  veri — vedi il caveat in 4.1 sul DB di produzione quasi vuoto: prima di
+  completare questo trasferimento va popolato il DB di produzione con
+  tariffe/trattamenti/planning-tariffe reali, altrimenti il sito
+  diventerebbe pubblico con prezzi non configurati.
+- Nexi: **AGGIORNATO 24/08/2026** — attivata XPay Pro (canone zero,
+  commissione 1,10% + 0,24€ a operazione su carte, più 7,5€ una tantum e
+  2,5€/mese di commissione di acquiring, inclusiva nel programma
+  Protection Plus). In attesa che Nexi invii i documenti al titolare;
+  dopo la ricezione arriveranno le specifiche tecniche di integrazione,
+  su cui basare la scelta finale tra Nexi e Stripe (vantaggio/comodità da
+  confrontare, non ancora deciso).
 - Commercialista: 5 domande aperte (A-Cube sostitutivo Hugin? piano
   Fatture in Cloud reale? import automatico? account Aruba di chi?
   contratto dipendenti "a chiamata"?) — `docs/DOMANDE_APERTE_07-08-2026.md` §4.

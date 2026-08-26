@@ -169,6 +169,69 @@ async function disponibilita(req, res) {
   }
 }
 
+// GET /api/booking-pubblico/disponibilita-mese?anno=&mese=&adulti=&bambini_eta=
+// Disponibilità mensile aggregata (24/08/2026) — alimenta il calendario
+// OTA-style del date-range picker in sito-hotel. Riusa lo stesso pattern
+// EXISTS inventario/capienza di disponibilita() sopra, ma UNA query sola
+// su generate_series invece di N chiamate, e NESSUN calcolo prezzo/
+// derivazione: per design, non tiene conto delle restrizioni di
+// planning-tariffe (min_stay/chiuso_arrivo/chiuso_partenza/stop_sell), che
+// sono per tipo_camera+trattamento e qui il trattamento non è ancora
+// scelto — vedi
+// sito-hotel/docs/superpowers/specs/2026-08-24-date-range-picker-design.md.
+async function disponibilitaMese(req, res) {
+  const { anno, mese, adulti, bambini_eta } = req.query;
+  const annoNum = parseInt(anno, 10);
+  const meseNum = parseInt(mese, 10);
+
+  if (!Number.isInteger(annoNum) || annoNum < 2020 || annoNum > 2100) {
+    return res.status(400).json({ error: 'anno non valido.' });
+  }
+  if (!Number.isInteger(meseNum) || meseNum < 1 || meseNum > 12) {
+    return res.status(400).json({ error: 'mese non valido (1-12).' });
+  }
+
+  const { ospitiChePesanoSuCapienza } = normalizzaComposizioneOspiti(adulti, bambini_eta);
+
+  const primoGiorno = `${annoNum}-${String(meseNum).padStart(2, '0')}-01`;
+  const meseSuccessivo = meseNum === 12 ? 1 : meseNum + 1;
+  const annoMeseSuccessivo = meseNum === 12 ? annoNum + 1 : annoNum;
+  const primoGiornoMeseSuccessivo = `${annoMeseSuccessivo}-${String(meseSuccessivo).padStart(2, '0')}-01`;
+
+  try {
+    const result = await pool.query(
+      `SELECT
+         notte::date::text AS notte,
+         EXISTS (
+           SELECT 1
+           FROM tipi_camera tc
+           WHERE tc.attivo = true
+             AND (tc.capienza_max IS NULL OR tc.capienza_max >= $3)
+             AND EXISTS (
+               SELECT 1 FROM tipi_camera_camere tcc
+               JOIN camere c ON c.id = tcc.camera_id
+               WHERE tcc.tipo_camera_id = tc.id AND c.attivo = true
+                 AND NOT EXISTS (
+                   SELECT 1 FROM soggiorni s
+                   WHERE s.camera_id = c.id AND s.cancellato = false
+                     AND daterange(s.data_arrivo, s.data_partenza, '[)') @> notte::date
+                 )
+             )
+         ) AS disponibile
+       FROM generate_series($1::date, ($2::date - INTERVAL '1 day'), INTERVAL '1 day') AS notte
+       ORDER BY notte`,
+      [primoGiorno, primoGiornoMeseSuccessivo, ospitiChePesanoSuCapienza]
+    );
+
+    const disponibilita = {};
+    result.rows.forEach((r) => { disponibilita[r.notte] = r.disponibile; });
+    res.json({ disponibilita });
+  } catch (err) {
+    console.error('Errore disponibilitaMese:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
 // POST /api/booking-pubblico/prenota
 // Crea una prenotazione con blocco camera breve (opzione, TTL 15 minuti) e
 // genera il PaymentIntent Stripe per il 30% di caparra. SICUREZZA:
@@ -437,4 +500,4 @@ async function configurazione(req, res) {
   res.json({ percentuale_caparra: PERCENTUALE_CAPARRA });
 }
 
-module.exports = { disponibilita, prenota, terminiCancellazione, configurazione, CANALE_ORIGINE_BOOKING_ENGINE, MINUTI_VALIDITA_HOLD, PERCENTUALE_CAPARRA };
+module.exports = { disponibilita, disponibilitaMese, prenota, terminiCancellazione, configurazione, CANALE_ORIGINE_BOOKING_ENGINE, MINUTI_VALIDITA_HOLD, PERCENTUALE_CAPARRA };

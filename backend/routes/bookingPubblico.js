@@ -41,6 +41,7 @@ const bookingRateLimit = rateLimit({
 router.use(bookingRateLimit);
 
 router.get('/disponibilita', ctrl.disponibilita);
+router.get('/disponibilita-mese', ctrl.disponibilitaMese);
 router.post('/prenota', ctrl.prenota);
 router.get('/termini-cancellazione', ctrl.terminiCancellazione);
 router.get('/configurazione', ctrl.configurazione);

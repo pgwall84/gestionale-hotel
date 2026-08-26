@@ -2,21 +2,33 @@
 // Griglia giorno-per-giorno di prezzo e restrizioni, per tipo camera e
 // trattamento (Piano 3, 24/08/2026). Un giorno senza riga in
 // planning_tariffe_giorni usa il prezzo "consigliato" calcolato al volo da
-// calcolaPrezzoCameraPerNotte/calcolaSupplementoTrattamento — stesso motore
-// di /tariffe, invariato. Adulti fisso a 2 / nessun bambino per il calcolo
-// del supplemento consigliato: stessa convenzione già usata da
-// verificaLimitiListino per il cartellino, non un numero nuovo inventato
-// qui.
+// calcolaPrezzoCameraPerNotteConPlanning/calcolaSupplementoTrattamento.
+// Adulti fisso a 2 / nessun bambino per il calcolo del supplemento
+// consigliato: stessa convenzione già usata da verificaLimitiListino per il
+// cartellino, non un numero nuovo inventato qui.
 // AGGIORNATO 24/08/2026: la griglia ORA è letta anche dal motore di
 // prenotazione reale — vedi calcolaTariffaPerTrattamentiConPlanning più
 // sotto in questo file, usata da bookingPubblicoController.js al posto di
 // calcolaTariffaPerTrattamenti/calcolaTariffa "nude". griglia() qui sopra
 // resta il pannello di pianificazione per la UI (non tocca il calcolo di
 // prenotazione, e viceversa — vedi commento sulla funzione nuova).
+// AGGIORNATO 24/08/2026 (bis, stessa sera): il "prezzo consigliato" per un
+// tipo camera DERIVATO (es. Tripla/Quadrupla) ora legge anche l'eventuale
+// override bb della sua Madre in planning_tariffe_giorni — prima leggeva
+// solo il prezzo storico in tabella `tariffe`, quindi con un override attivo
+// sulla Madre il "consigliato" mostrato in griglia per i tipi derivati non
+// coincideva più col prezzo realmente applicato in prenotazione (segnalato
+// da Marco confrontando 240/208 in prenotazione contro 255/221 in griglia).
+// Fix: griglia() ora chiama calcolaPrezzoCameraPerNotteConPlanning (stessa
+// funzione già usata dal motore di prenotazione, definita più sotto in
+// questo file) invece di calcolaPrezzoCameraPerNotte "nuda". Per un tipo
+// MADRE il comportamento è identico a prima (nessuna regola di derivazione
+// → stesso calcolaPrezzoDirettoPerNotte di sempre); cambia solo la base
+// usata per i tipi derivati.
 
 const pool = require('../config/db');
 const { logAudit } = require('./auditController');
-const { calcolaPrezzoCameraPerNotte, calcolaPrezzoDirettoPerNotte, calcolaSupplementoTrattamento } = require('./tariffeController');
+const { calcolaPrezzoDirettoPerNotte, calcolaSupplementoTrattamento } = require('./tariffeController');
 const { verificaLimitiListino } = require('../utils/verificaLimitiListino');
 
 const TRATTAMENTI = ['bb', 'mezza_pensione', 'pensione_completa'];
@@ -48,7 +60,7 @@ async function griglia(req, res) {
     const dataFineEsclusiva = aggiungiGiorno(data_a);
 
     const [prezziCamera, overrideResult] = await Promise.all([
-      calcolaPrezzoCameraPerNotte(tipo_camera_id, data_da, dataFineEsclusiva),
+      calcolaPrezzoCameraPerNotteConPlanning(tipo_camera_id, data_da, dataFineEsclusiva),
       pool.query(
         `SELECT trattamento, data, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell
          FROM planning_tariffe_giorni
