@@ -6437,3 +6437,69 @@ Consegna: `backend/controllers/bookingPubblicoController.js`,
 `backend/routes/bookingPubblico.js`, `tests/api/bookingPubblico.test.js`,
 `STATO_PROGETTO.md` e questo diario, inviati con `SendUserFile` e scritti
 sul dispositivo con `device_commit_files`.
+
+### Checkpoint Piano 1 chiuso — test eseguiti per davvero dal titolare, un bug trovato e corretto, più un bug preesistente non correlato (24/08/2026, stessa giornata)
+
+Marco ha eseguito per davvero (locale, "tab Code") quanto la sessione
+Cowork precedente non poteva verificare: `npx jest
+tests/api/bookingPubblico.test.js`. Trovato un bug reale nel test appena
+scritto, non nel codice di produzione.
+
+**Bug nel test "una notte prenotata... risulta non disponibile"**: la
+query di verifica usava `adulti: 2`, assumendo che prenotare l'unica
+camera del tipo di test rendesse l'intero mese "non disponibile" in
+aggregato. Ma `disponibilitaMese` è per design aggregata su TUTTE le
+tipologie attive del DB (commento già presente nel controller, stesso
+principio già applicato al terzo test del blocco con `adulti: 20`) — nel
+DB di sviluppo del titolare altre 4 tipologie reali (Matrimoniale,
+Matrimoniale Piccola, Tripla, Quadrupla, capienza 2-4) restavano libere
+quella notte, facendo risultare `disponibile: true` a prescindere dalla
+prenotazione di test. Root cause verificata con una query diretta al DB
+prima del fix (4 tipologie reali attive con capienza ≥2, zero soggiorni
+su quella data). **Fix, solo nel file di test**: la tipologia di test ora
+usa `capienzaIsolante = MAX(capienza_max reali attive) + 1`, calcolato
+dal DB invece di un numero fisso — più robusto del semplice `adulti: 20`
+già usato altrove, perché resta valido anche se in futuro l'hotel
+aggiunge una tipologia con capienza maggiore (es. una suite). Nessuna
+modifica al codice di produzione: il comportamento aggregato
+dell'endpoint è intenzionale, il bug era solo nell'assunzione del test.
+
+**Bug preesistente, non correlato, trovato eseguendo l'intera suite**: 5
+fallimenti nel blocco "Tariffe derivate — periodi, clamp, trattamento,
+bambini". Causa: il `beforeAll` di quel blocco faceva un `INSERT` cieco
+su `supplementi_trattamento` (categoria `'doppia'`, `mezza_pensione`,
+periodo `NULL`) senza controllare se esisteva già una riga — quella
+tabella contiene anche la configurazione REALE del titolare (supplemento
+mezza pensione 25€/persona), che nel DB di sviluppo esisteva già e
+violava il vincolo `uq_supplementi_trattamento_fallback`. **Rilevante
+anche per la sicurezza dei dati**: se quel vincolo unique non ci fosse
+stato, l'INSERT avrebbe scritto silenziosamente un valore di test sopra
+il prezzo reale, senza errore visibile — lo stesso rischio già
+riconosciuto e mitigato per `configurazione_bambini` nello stesso file
+(valore letto, salvato, ripristinato in `afterAll`), ma non replicato qui
+quando è stato aggiunto questo blocco. **Fix**: stesso pattern
+salva/ripristina già in uso per `configurazione_bambini` — valore
+originale letto prima del test, `UPSERT` invece di `INSERT` cieco,
+ripristino esatto in `afterAll` (verificato dal titolare: la riga reale è
+tornata a 25,00€).
+
+Commit reali dal titolare (mai da Cowork, per convenzione di progetto):
+`43c6a5e` (lavoro non commesso di questa sessione — endpoint
+`disponibilita-mese`, aggiornamenti planning-tariffe, documentazione,
+materiale RIMOVCLI; `_to_delete/` lasciata non tracciata come già deciso
+in sessioni precedenti) e `d84bb92` (fix del bug preesistente sopra).
+Suite completa finale, riverificata dopo entrambi i fix: **35/35 suite,
+969/969 test passati, nessuna regressione**.
+
+Piano 1 (`docs/superpowers/plans/2026-08-24-endpoint-disponibilita-mese.md`)
+considerato chiuso: Task 1 e Task 2 eseguiti, checkpoint del titolare
+superato con verifica reale (non solo la simulazione isolata di questa
+sessione Cowork, ora superata dai fatti). Prossimo passo: Piano 2
+(`sito-hotel/docs/superpowers/plans/2026-08-24-date-range-picker-componente.md`),
+componente `DateRangePicker.tsx`.
+
+Consegna: nessuna — questa voce documenta lavoro di verifica e commit
+fatto interamente dal titolare in locale. Solo questo diario e
+`STATO_PROGETTO.md` sono stati aggiornati da questa sessione Cowork per
+riflettere l'esito reale, e vengono consegnati con `SendUserFile` +
+`device_commit_files` come di consueto.
