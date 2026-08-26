@@ -457,6 +457,15 @@ describe('Shared inventory (migration 050)', () => {
 describe('Tariffe derivate — periodi, clamp, trattamento, bambini', () => {
   let tipoMadreId, tipoDerivatoId, periodoId;
   let scontoBambiniOriginale;
+  // supplementi_trattamento è scoped per `categoria` (classe di capienza:
+  // singola/doppia/tripla/...), non per tipo_camera_id — condivisa con le
+  // tipologie reali dell'hotel. 'doppia' + 'mezza_pensione' fallback
+  // (periodo_id IS NULL) può già avere una riga reale configurata dal
+  // titolare (vincolo uq_supplementi_trattamento_fallback, un solo
+  // fallback per categoria+trattamento) — stesso principio di
+  // scontoBambiniOriginale sopra: si salva e si ripristina, mai un INSERT
+  // cieco che colliderebbe con la configurazione reale.
+  let supplementoDoppiaMezzaPensioneOriginale;
   const prenotazioniTariffeDerivate = [];
 
   beforeAll(async () => {
@@ -504,8 +513,13 @@ describe('Tariffe derivate — periodi, clamp, trattamento, bambini', () => {
     await db.query(`UPDATE configurazione_bambini SET sconto_mezza_pensione_percentuale = 50 WHERE id = 1`);
 
     // Supplemento mezza pensione, categoria 'doppia' (capienza_max 2 = tipoMadreId), fallback valido tutto l'anno.
+    const supplementoAttuale = await db.query(
+      `SELECT supplemento_a_persona FROM supplementi_trattamento WHERE categoria = 'doppia' AND trattamento = 'mezza_pensione' AND periodo_id IS NULL`
+    );
+    supplementoDoppiaMezzaPensioneOriginale = supplementoAttuale.rows[0]?.supplemento_a_persona ?? null;
     await db.query(
-      `INSERT INTO supplementi_trattamento (categoria, periodo_id, trattamento, supplemento_a_persona) VALUES ('doppia', NULL, 'mezza_pensione', 20)`
+      `INSERT INTO supplementi_trattamento (categoria, periodo_id, trattamento, supplemento_a_persona) VALUES ('doppia', NULL, 'mezza_pensione', 20)
+       ON CONFLICT (categoria, trattamento) WHERE periodo_id IS NULL DO UPDATE SET supplemento_a_persona = EXCLUDED.supplemento_a_persona`
     );
   });
 
@@ -518,7 +532,14 @@ describe('Tariffe derivate — periodi, clamp, trattamento, bambini', () => {
       await db.query('DELETE FROM prenotazioni WHERE id = ANY($1)', [prenotazioniTariffeDerivate]);
     }
     await db.query(`UPDATE configurazione_bambini SET sconto_mezza_pensione_percentuale = $1 WHERE id = 1`, [scontoBambiniOriginale]);
-    await db.query(`DELETE FROM supplementi_trattamento WHERE categoria = 'doppia' AND trattamento = 'mezza_pensione' AND periodo_id IS NULL AND supplemento_a_persona = 20`);
+    if (supplementoDoppiaMezzaPensioneOriginale === null) {
+      await db.query(`DELETE FROM supplementi_trattamento WHERE categoria = 'doppia' AND trattamento = 'mezza_pensione' AND periodo_id IS NULL`);
+    } else {
+      await db.query(
+        `UPDATE supplementi_trattamento SET supplemento_a_persona = $1 WHERE categoria = 'doppia' AND trattamento = 'mezza_pensione' AND periodo_id IS NULL`,
+        [supplementoDoppiaMezzaPensioneOriginale]
+      );
+    }
     await db.query('DELETE FROM regole_derivazione_tariffe WHERE tipo_camera_id = $1', [tipoDerivatoId]);
     await db.query('DELETE FROM tipi_camera_camere WHERE tipo_camera_id = $1', [tipoMadreId]);
     await db.query('DELETE FROM tariffe WHERE tipo_camera_id = $1', [tipoMadreId]);
