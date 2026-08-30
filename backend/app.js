@@ -40,13 +40,13 @@ const preCheckinRoutes         = require('./routes/preCheckin');
 const preCheckinPubblicoRoutes = require('./routes/preCheckinPubblico');
 const bookingPubblicoRoutes    = require('./routes/bookingPubblico');
 const stripeWebhookRoutes      = require('./routes/stripeWebhook');
-// Integrazione Nexi XPay di TEST (29/08/2026) — vedi
+// Integrazione Nexi XPay di TEST (29/08/2026): i moduli routes/xpayTest e
+// routes/xpayNotifica non sono ancora committati nel repo — il require è
+// spostato dentro la guardia NODE_ENV più sotto, così un checkout pulito
+// in produzione (dove quei file non ci sono) parte comunque.
 // docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md.
-const xpayTestRoutes           = require('./routes/xpayTest');
-const xpayNotificaRoutes       = require('./routes/xpayNotifica');
 const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
 const ross1000Routes           = require('./routes/ross1000');
-const rimovcliRoutes           = require('./routes/rimovcliC59');
 const manutenzioneRoutes       = require('./routes/manutenzione');
 const catalogoAddebitiRoutes   = require('./routes/catalogoAddebiti');
 const registroHaccpRoutes      = require('./routes/registroHaccp');
@@ -148,14 +148,20 @@ app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
 app.use('/api/booking-pubblico',     bookingPubblicoRoutes);
 // Route di TEST per l'integrazione Nexi XPay (29/08/2026) — SOLO fuori
 // produzione, percorso isolato non collegato al booking pubblico reale.
+// require() qui dentro (non in testa al file): i moduli non sono ancora
+// nel repo, in produzione non esistono e non devono essere caricati.
 // Vedi docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md.
 if (process.env.NODE_ENV !== 'production') {
-  app.use('/api/xpay-test', xpayTestRoutes);
-  app.use('/api/xpay/notifica', xpayNotificaRoutes);
+  app.use('/api/xpay-test', require('./routes/xpayTest'));
+  app.use('/api/xpay/notifica', require('./routes/xpayNotifica'));
 }
 app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
-app.use('/api/rimovcli',             rimovcliRoutes);
+// '/api/rimovcli' (Statistiche Liguria / RIMOVCLI C59): riattivare la
+// riga qui sotto quando backend/routes/rimovcliC59.js e le sue dipendenze
+// (lib/rimovcliC59.js, lib/rimovcliResidenza.js, controller) entrano nel
+// repo — oggi sono file non committati e un checkout pulito va in crash.
+// app.use('/api/rimovcli',          require('./routes/rimovcliC59'));
 app.use('/api/manutenzione',         manutenzioneRoutes);
 app.use('/api/impostazioni/catalogo-addebiti', catalogoAddebitiRoutes);
 app.use('/api/registro-haccp',       registroHaccpRoutes);
