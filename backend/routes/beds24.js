@@ -38,19 +38,28 @@ async function scriviWebhookLog(payload, errore) {
 
 // POST /api/beds24/webhook/bookings — riceve le notifiche prenotazione da
 // Beds24. Pubblica (nessun token: è Beds24 a chiamarci).
+// Corpo incapsulato — confermato sullo Swagger reale (30/08/2026):
+// { timeStamp, booking: {...}, infoItems, invoiceItems, messages, retries }
+// NON un oggetto booking nudo. Logghiamo sempre il payload grezzo intero
+// (con l'involucro) per tracciabilità, ma processiamo solo booking.
+// ATTENZIONE — nota aperta: l'oggetto booking del webhook NON contiene
+// firstName/lastName/email/phone (a differenza di GET /bookings). Finché
+// non si decide una correzione, processaBooking crea/aggiorna con questi
+// campi vuoti sul percorso webhook — vedi conversazione 30/08/2026.
 router.post('/webhook/bookings', webhookRateLimit, async (req, res) => {
-  const payload = req.body || {};
+  const payloadGrezzo = req.body || {};
+  const booking = payloadGrezzo.booking || {};
   try {
-    if (!payload.id || !payload.roomId) {
-      await scriviWebhookLog(payload, 'payload senza id o roomId');
+    if (!booking.id || !booking.roomId) {
+      await scriviWebhookLog(payloadGrezzo, 'payload senza booking.id o booking.roomId');
       return res.status(200).json({ ricevuto: true });
     }
-    await processaBooking(payload);
-    await scriviWebhookLog(payload, null);
+    await processaBooking(booking);
+    await scriviWebhookLog(payloadGrezzo, null);
     res.status(200).json({ ricevuto: true });
   } catch (err) {
     console.error('beds24 webhook — errore elaborazione:', err.message);
-    await scriviWebhookLog(payload, err.message);
+    await scriviWebhookLog(payloadGrezzo, err.message);
     // 200 comunque: non vogliamo che Beds24 ripeta la stessa chiamata in
     // loop per un errore nostro — l'errore resta tracciato in webhook_log.
     res.status(200).json({ ricevuto: true });

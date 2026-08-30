@@ -5,6 +5,8 @@
 // Base URL: le fonti pubbliche sono discordanti (api.beds24.com/v2 vs
 // beds24.com/api/v2) — configurabile via env, verificata nel Task 12
 // contro l'account reale.
+// getBookings: parametri e forma della risposta confermati il 30/08/2026
+// contro lo Swagger reale (incollato da Marco, non più un'ipotesi).
 
 const pool = require('../config/db');
 
@@ -74,24 +76,58 @@ async function getToken() {
   return dati.token;
 }
 
-// Legge le prenotazioni da Beds24. modifiedSince è opzionale (formato ISO
-// 8601) — usato dal job di riconciliazione notturna per recuperare solo
-// le modifiche successive all'ultima sincronizzazione. Nome del parametro
-// non confermato dallo Swagger ufficiale (bloccato al fetch automatico) —
-// verificare nel Task 12 contro l'account reale.
-async function getBookings({ modifiedSince } = {}) {
+// Legge le prenotazioni da Beds24, con paginazione automatica.
+// modifiedFrom/modifiedTo: formato Beds24 YYYY-MM-DDTHH:MM:SS (senza
+// millisecondi né Z) — usato dal job di riconciliazione notturna per le
+// modifiche successive all'ultima sincronizzazione.
+// status: Beds24 filtra di DEFAULT solo su confirmed/new/request — le
+// cancellazioni NON tornano se non richieste esplicitamente (confermato
+// sullo Swagger reale). Il default qui include sempre 'cancelled':
+// altrimenti il job di riconciliazione (rete di sicurezza per webhook
+// persi, cancellazioni comprese) non vedrebbe mai una cancellazione
+// persa. 'black'/'inquiry' restano esclusi: non sono prenotazioni ospite
+// reali per Fase 1.
+async function getBookings({ modifiedFrom, modifiedTo, status } = {}) {
   const token = await getToken();
-  const url = new URL(`${BASE_URL}/bookings`);
-  if (modifiedSince) {
-    url.searchParams.set('modifiedSince', modifiedSince);
+  const statiRichiesti = status || ['confirmed', 'new', 'request', 'cancelled'];
+
+  const tutte = [];
+  let pagina = 1;
+  let altrePagine = true;
+
+  while (altrePagine) {
+    const url = new URL(`${BASE_URL}/bookings`);
+    if (modifiedFrom) url.searchParams.set('modifiedFrom', modifiedFrom);
+    if (modifiedTo) url.searchParams.set('modifiedTo', modifiedTo);
+    statiRichiesti.forEach((s) => url.searchParams.append('status', s));
+    if (pagina > 1) url.searchParams.set('page', String(pagina));
+
+    const risposta = await fetch(url, { headers: { token } });
+    if (!risposta.ok) {
+      let dettaglio = '';
+      try {
+        const corpoErrore = await risposta.json();
+        dettaglio = corpoErrore.error ? ` — ${corpoErrore.error}` : '';
+      } catch (_erroreParsing) {
+        // corpo non JSON, ignoriamo e teniamo solo lo status HTTP
+      }
+      throw new Error(`GET /bookings fallita: HTTP ${risposta.status}${dettaglio}`);
+    }
+    const dati = await risposta.json();
+    const paginaDati = Array.isArray(dati) ? dati : (dati.data || []);
+    tutte.push(...paginaDati);
+
+    altrePagine = !!(dati.pages && dati.pages.nextPageExists);
+    pagina += 1;
+    // Limite di sicurezza — non ciclare all'infinito su una risposta
+    // inattesa (es. nextPageExists sempre true per un bug lato Beds24).
+    if (pagina > 50) {
+      console.error('Beds24 getBookings: interrotta paginazione oltre 50 pagine, controllo manuale necessario.');
+      break;
+    }
   }
 
-  const risposta = await fetch(url, { headers: { token } });
-  if (!risposta.ok) {
-    throw new Error(`GET /bookings fallita: HTTP ${risposta.status}`);
-  }
-  const dati = await risposta.json();
-  return Array.isArray(dati) ? dati : (dati.data || []);
+  return tutte;
 }
 
 module.exports = { scambiaInviteCode, getToken, getBookings };

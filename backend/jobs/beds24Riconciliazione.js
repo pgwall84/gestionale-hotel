@@ -16,6 +16,13 @@ const beds24Client = require('../lib/beds24Client');
 // così sopra invece che con { getBookings }.
 const beds24SyncController = require('../controllers/beds24SyncController');
 
+// Beds24 vuole modifiedFrom/modifiedTo in formato YYYY-MM-DDTHH:MM:SS —
+// niente millisecondi, niente Z (confermato sullo Swagger reale,
+// 30/08/2026). toISOString() produce invece ".123Z" in coda: lo togliamo.
+function formattaDataBeds24(data) {
+  return data.toISOString().replace(/\.\d{3}Z$/, '');
+}
+
 async function eseguiRiconciliazione() {
   const config = await pool.query('SELECT ultima_sincronizzazione_at FROM beds24_config WHERE id = 1');
   if (!config.rows.length || !config.rows[0].ultima_sincronizzazione_at) {
@@ -23,11 +30,14 @@ async function eseguiRiconciliazione() {
     return;
   }
 
-  const modifiedSince = new Date(config.rows[0].ultima_sincronizzazione_at).toISOString();
+  const modifiedFrom = formattaDataBeds24(new Date(config.rows[0].ultima_sincronizzazione_at));
   const inizioGiro = new Date();
 
   try {
-    const prenotazioni = await beds24Client.getBookings({ modifiedSince });
+    // status non passato: getBookings usa il suo default (confirmed,
+    // new, request, cancelled) — include sempre le cancellazioni, vedi
+    // commento in beds24Client.js.
+    const prenotazioni = await beds24Client.getBookings({ modifiedFrom });
     let elaborate = 0;
     for (const booking of prenotazioni) {
       try {
