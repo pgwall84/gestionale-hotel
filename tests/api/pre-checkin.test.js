@@ -134,6 +134,12 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
     expect(res.status).toBe(400);
   });
 
+  // stato_residenza_codice aggiunto su entrambi gli ospiti (29/08/2026):
+  // vincolo ISTAT C/59 esteso ad ogni ospite del form pubblico (28/08/2026
+  // sera, preCheckinPubblicoController.invia) — senza, il POST ora 400 prima
+  // ancora di arrivare all'INSERT. '999999999' = codice di fantasia NON
+  // Italia, stesso trucco già in uso in tests/api/alloggiati.test.js per
+  // evitare di dover fornire anche comune_residenza_codice.
   test('POST valido → 201, ok:true', async () => {
     const dettaglio = await request(app).get(`/api/pre-checkin-pubblico/${token}`);
     const soggiornoId = dettaglio.body.soggiorni[0].id;
@@ -142,8 +148,8 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
       consenso_privacy_accettato: true,
       note_referente: 'Arriviamo tardi',
       ospiti: [
-        { soggiorno_id: soggiornoId, nome: 'Anna', cognome: `TestPreCheckinCapofamiglia${SUFFISSO}`, sesso: 'F', cittadinanza_testo: 'Italia' },
-        { soggiorno_id: soggiornoId, nome: 'Bruno', cognome: `TestPreCheckinFamiliare${SUFFISSO}`, sesso: 'M' },
+        { soggiorno_id: soggiornoId, nome: 'Anna', cognome: `TestPreCheckinCapofamiglia${SUFFISSO}`, sesso: 'F', cittadinanza_testo: 'Italia', stato_residenza_codice: '999999999' },
+        { soggiorno_id: soggiornoId, nome: 'Bruno', cognome: `TestPreCheckinFamiliare${SUFFISSO}`, sesso: 'M', stato_residenza_codice: '999999999' },
       ],
     });
     expect(res.status).toBe(201);
@@ -155,11 +161,20 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
     expect(res.body.giaInviato).toBe(true);
   });
 
+  // 29/08/2026: prima 1 solo ospite. Il controllo "già inviato" (409) sta
+  // DOPO la validazione residenza e il conteggio ospiti-per-camera
+  // (preCheckinPubblicoController.invia, 28/08/2026 sera) — un payload che
+  // non li supera 400 prima di arrivare lì. Il soggiorno di questo describe
+  // ha num_ospiti=2 (default di creaPrenotazione), quindi servono 2 ospiti
+  // validi, non 1, per raggiungere davvero il controllo di duplicato.
   test('secondo POST sulla stessa prenotazione → 409', async () => {
     const dettaglio = await request(app).get(`/api/pre-checkin-pubblico/${token}`);
     const res = await request(app).post(`/api/pre-checkin-pubblico/${token}`).send({
       consenso_privacy_accettato: true,
-      ospiti: [{ soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'X', cognome: 'Y' }],
+      ospiti: [
+        { soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'X', cognome: 'Y', stato_residenza_codice: '999999999' },
+        { soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'X2', cognome: 'Y2', stato_residenza_codice: '999999999' },
+      ],
     });
     expect(res.status).toBe(409);
   });
@@ -205,10 +220,12 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
       const dettaglio = await request(app).get(`/api/pre-checkin/${richiesta.id}`).set(authHeader.titolare());
       const [primo, secondo] = dettaglio.body.ospiti;
 
+      // stato_residenza_codice aggiunto (29/08/2026): stesso vincolo
+      // gemello in preCheckinController.applica() (28/08/2026 sera).
       const res = await request(app).post(`/api/pre-checkin/${richiesta.id}/applica`).set(authHeader.titolare()).send({
         ospiti: [
-          { pre_checkin_ospiti_id: primo.id, soggiorno_id: primo.soggiorno_id, ospite_id_esistente: ospiteCapofamigliaId, tipo_alloggiato: '17', nome: primo.nome, cognome: primo.cognome },
-          { pre_checkin_ospiti_id: secondo.id, soggiorno_id: secondo.soggiorno_id, tipo_alloggiato: '19', nome: secondo.nome, cognome: secondo.cognome },
+          { pre_checkin_ospiti_id: primo.id, soggiorno_id: primo.soggiorno_id, ospite_id_esistente: ospiteCapofamigliaId, tipo_alloggiato: '17', nome: primo.nome, cognome: primo.cognome, stato_residenza_codice: '999999999' },
+          { pre_checkin_ospiti_id: secondo.id, soggiorno_id: secondo.soggiorno_id, tipo_alloggiato: '19', nome: secondo.nome, cognome: secondo.cognome, stato_residenza_codice: '999999999' },
         ],
       });
       expect(res.status).toBe(200);
@@ -235,14 +252,20 @@ describe('Flusso pubblico — GET/POST /api/pre-checkin-pubblico/:token', () => 
 
 describe('Scarta — POST /api/pre-checkin/:id/scarta', () => {
   test('titolare scarta una richiesta in attesa → 200, poi un nuovo invio pubblico è di nuovo possibile', async () => {
-    const creata = await creaPrenotazione(ospiteCapofamigliaId, { soggiorno: { data_arrivo: '2099-04-10', data_partenza: '2099-04-15' } });
+    // num_ospiti:1 (29/08/2026, override esplicito — il default di
+    // creaPrenotazione è 2): questo test invia un solo ospite per POST, e
+    // dal 28/08/2026 sera il numero deve combaciare esattamente col
+    // soggiorno (vedi blocco B sopra) — qui il soggiorno è dedicato a
+    // questo test, quindi più semplice abbassare num_ospiti a 1 che
+    // aggiungere un secondo ospite fittizio a entrambi gli invii.
+    const creata = await creaPrenotazione(ospiteCapofamigliaId, { soggiorno: { data_arrivo: '2099-04-10', data_partenza: '2099-04-15', num_ospiti: 1 } });
     const link = await assicuraToken(creata.body.id);
     const token = link.split('/').pop();
     const dettaglio = await request(app).get(`/api/pre-checkin-pubblico/${token}`);
 
     const invio = await request(app).post(`/api/pre-checkin-pubblico/${token}`).send({
       consenso_privacy_accettato: true,
-      ospiti: [{ soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'Scarta', cognome: 'Test' }],
+      ospiti: [{ soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'Scarta', cognome: 'Test', stato_residenza_codice: '999999999' }],
     });
     expect(invio.status).toBe(201);
 
@@ -255,7 +278,7 @@ describe('Scarta — POST /api/pre-checkin/:id/scarta', () => {
     // Dopo lo scarto, un nuovo invio sulla stessa prenotazione è di nuovo ammesso.
     const secondoInvio = await request(app).post(`/api/pre-checkin-pubblico/${token}`).send({
       consenso_privacy_accettato: true,
-      ospiti: [{ soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'Scarta2', cognome: 'Test2' }],
+      ospiti: [{ soggiorno_id: dettaglio.body.soggiorni[0].id, nome: 'Scarta2', cognome: 'Test2', stato_residenza_codice: '999999999' }],
     });
     expect(secondoInvio.status).toBe(201);
   });

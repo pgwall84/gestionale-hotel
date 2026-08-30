@@ -11,6 +11,7 @@
 
 const pool = require('../config/db');
 const { hashToken } = require('../lib/preCheckin');
+const { CODICE_ITALIA_ALLOGGIATI } = require('../lib/rimovcliResidenza');
 
 const GIORNI_VALIDITA_DOPO_PARTENZA = 2;
 
@@ -95,6 +96,27 @@ const invia = async (req, res) => {
     }
   }
 
+  // Vincolo ISTAT C/59 (Marco, 28/08/2026, seguito alla scoperta di ospiti
+  // esclusi dal generatore rimovcliC59.js per mancanza dello stato di
+  // residenza — vedi il vincolo gemello al check-in in
+  // prenotazioniController.js). ESTESO 28/08/2026 (bis): la prima versione
+  // richiedeva la residenza solo al primo ospite inserito per camera
+  // ("un solo referente basta") — la documentazione RIMOVCLI non prevede
+  // eccezioni per familiari/minori, quindi ora è richiesta per OGNI
+  // ospite inserito, non solo il primo. Lato frontend il referente
+  // principale (primo della lista) può offrire una spunta "deriva
+  // residenza dal referente principale" per compilare più in fretta i
+  // campi degli altri componenti — qui non cambia nulla: arriva comunque
+  // un valore per ciascun ospite, derivato o no.
+  for (const o of ospiti) {
+    if (!o.stato_residenza_codice) {
+      return res.status(400).json({ error: `Manca lo stato di residenza per ${o.nome} ${o.cognome}: obbligatorio per ogni ospite.` });
+    }
+    if (o.stato_residenza_codice === CODICE_ITALIA_ALLOGGIATI && !o.comune_residenza_codice) {
+      return res.status(400).json({ error: `Manca il comune di residenza per ${o.nome} ${o.cognome} (residente in Italia).` });
+    }
+  }
+
   const client = await pool.connect();
   try {
     await client.query('BEGIN');
@@ -111,6 +133,32 @@ const invia = async (req, res) => {
       if (!idSoggiorniValidi.has(o.soggiorno_id)) {
         await client.query('ROLLBACK');
         return res.status(400).json({ error: 'Uno o più ospiti fanno riferimento a una camera non valida per questa prenotazione.' });
+      }
+    }
+
+    // Vincolo numero ospiti (Marco, 28/08/2026 sera): num_ospiti è già noto
+    // e affidabile PRIMA che l'ospite compili questo form — arriva dalla
+    // prenotazione online (adulti + bambini, bookingPubblicoController.js)
+    // o è impostato dalla reception in planning-camere per le prenotazioni
+    // telefoniche. Il form pubblico deve quindi ricevere ESATTAMENTE quel
+    // numero di ospiti validati per ogni camera, non un numero qualunque:
+    // altrimenti una riga lasciata vuota (o rimossa/aggiunta per errore)
+    // passerebbe senza che nessuno se ne accorga, come già successo nei
+    // test di stasera. Contatore fatto qui, non prima, perché deve contare
+    // solo gli ospiti che hanno già superato la validazione nome/cognome/
+    // residenza sopra — un ospite scartato lì non deve "contare" come
+    // presente.
+    const contiPerSoggiorno = {};
+    for (const o of ospiti) {
+      contiPerSoggiorno[o.soggiorno_id] = (contiPerSoggiorno[o.soggiorno_id] || 0) + 1;
+    }
+    for (const s of esito.soggiorni) {
+      const inseriti = contiPerSoggiorno[s.id] || 0;
+      if (inseriti !== s.num_ospiti) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Camera ${s.camera_numero}: attesi ${s.num_ospiti} ospit${s.num_ospiti === 1 ? 'e' : 'i'}, ricevut${inseriti === 1 ? 'o' : 'i'} ${inseriti}. Controlla di aver compilato tutte le righe (o rimuovi quelle in più).`,
+        });
       }
     }
 

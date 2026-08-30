@@ -793,6 +793,7 @@ Indice di dove si trova cosa, per evitare di ricreare doppioni:
 |---|---|
 | `CLAUDE.md` (questo file) | Identità, stack, ruoli, struttura, convenzioni, DB, sicurezza, roadmap — spec permanente |
 | `STATO_PROGETTO.md` | Fotografia dello stato attuale per fase/modulo, verifiche pendenti, bloccati su terzi — letto insieme a CLAUDE.md a inizio sessione |
+| `to do list.md` | Elenco puntato di lettura rapida: fix/verifiche da chiudere e evolutive da sviluppare — versione sintetica di STATO_PROGETTO.md/EVOLUTIVE.md |
 | `docs/PRENOTAZIONI_FASE2.md` | Contratto API + schema DB + UI del modulo Prenotazioni (Fase 2A), stato implementato/non implementato |
 | `docs/PIANO_MIGRAZIONE_DICEMBRE_2026.md` | Piano di migrazione da TeamSystem al sistema interno, step-by-step con dipendenze e rischi, target dicembre 2026 |
 | `docs/confronto_costi_fase2.xlsx` | Tabella costi oggi vs a lavoro completo (Fase 2) |

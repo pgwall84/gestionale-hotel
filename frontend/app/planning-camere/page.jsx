@@ -12,6 +12,7 @@ import { useState, useEffect, useCallback, useMemo, useRef } from 'react';
 import {
   ChevronLeft, ChevronRight, X, Loader2, User, CreditCard, Pencil, AlertTriangle, Plus, UserPlus,
   BrushCleaning, StickyNote, Circle, CheckCircle, Mail, Receipt, Search, LayoutGrid, List, Printer, Download, Users,
+  Plane, Check,
 } from 'lucide-react';
 import {
   DndContext, useDraggable, useDroppable, PointerSensor, useSensor, useSensors,
@@ -21,7 +22,9 @@ import { useSearchParams } from 'next/navigation';
 import AppShell from '@/components/layout/AppShell';
 import { useAuth } from '@/context/AuthContext';
 import api from '@/lib/api';
-import CampoData from '@/components/ui/CampoData';
+import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
+import SelettoreCodiceAlloggiati from '@/components/ui/SelettoreCodiceAlloggiati';
+import SelettoreProvincia from '@/components/ui/SelettoreProvincia';
 
 // Larghezza colonna giorno: MINIMA, non fissa (fix 31/07/2026 — la griglia
 // deve riempire lo spazio disponibile, non lasciare spazio vuoto a destra
@@ -241,6 +244,23 @@ function adattaFontATesto(pdf, testo, larghezzaMax, fontMax = 7, fontMin = 4) {
   return t.length < testo.length ? `${t}...` : testo;
 }
 
+// ── Icona stato pre-checkin (28/08/2026 notte, richiesta esplicita del
+// titolare) ──────────────────────────────────────────────────────────────
+// Nessun nuovo stato in prenotazioni.stato — solo un'informazione calcolata
+// da due dati già nella risposta di /griglia: pre_checkin_inviato_at
+// (quando è stato mandato l'invito) e pre_checkin_richiesta_stato (stato
+// della richiesta più recente non scartata: null/'in_attesa'/'applicata').
+// Tre stati distinti per FORMA dell'icona, non per colore (l'icona eredita
+// colori.text della barra per restare leggibile su qualunque sfondo di
+// stato prenotazione) — evita qualunque problema di contrasto invece di
+// introdurre una nuova palette di colori solo per questo badge.
+function statoPreCheckinDaSoggiorno(soggiorno) {
+  if (!soggiorno.pre_checkin_inviato_at) return null;
+  if (soggiorno.pre_checkin_richiesta_stato === 'applicata') return 'applicato';
+  if (soggiorno.pre_checkin_richiesta_stato === 'in_attesa') return 'ricevuto';
+  return 'inviato';
+}
+
 // ── Barra prenotazione (draggable) ──────────────────────────────────────────
 
 function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
@@ -267,6 +287,7 @@ function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
         color: colori.text,
         opacity: isDragging ? 0.6 : (attenuata ? 0.25 : 1),
         cursor: puoTrascinare ? 'grab' : 'pointer',
+        position: 'relative',
       }}
       className="rounded-md px-2 py-1 text-[11px] font-medium m-0.5 flex items-center select-none"
       // Tooltip più dettagliato (04/08/2026, richiesto dal titolare) — prima
@@ -296,6 +317,31 @@ function Barra({ soggiorno, style, puoTrascinare, onApri, attenuata }) {
           è già nella risposta di /griglia (aggiunto oggi al SELECT). */}
       {soggiorno.gruppo_id && <Users size={10} className="shrink-0 mr-0.5" />}
       <span className="truncate min-w-0">{soggiorno.ospite_cognome}</span>
+      {(() => {
+        const statoPreCheckin = statoPreCheckinDaSoggiorno(soggiorno);
+        if (!statoPreCheckin) return null;
+        // NON formatDataEstesa: quella si aspetta una DATE pura ('YYYY-MM-DD',
+        // vedi sopra "+ 'T00:00:00'") — pre_checkin_inviato_at è un TIMESTAMP
+        // ISO completo (già un formato che `new Date()` legge da solo, niente
+        // concatenazione), altrimenti si ottiene "Invalid Date" nel tooltip.
+        const dataInvio = soggiorno.pre_checkin_inviato_at
+          ? new Date(soggiorno.pre_checkin_inviato_at).toLocaleDateString('it-IT', { day: 'numeric', month: 'long', year: 'numeric' })
+          : '';
+        const IconaPreCheckin = statoPreCheckin === 'applicato' ? CheckCircle : (statoPreCheckin === 'ricevuto' ? Mail : Plane);
+        const tooltipPreCheckin = statoPreCheckin === 'applicato'
+          ? 'Pre-checkin completato — pronto per il check-in'
+          : statoPreCheckin === 'ricevuto'
+            ? 'Dati pre-checkin ricevuti, da rivedere in reception'
+            : `Pre-checkin inviato al cliente${dataInvio ? ` il ${dataInvio}` : ''}`;
+        return (
+          <span
+            title={tooltipPreCheckin}
+            style={{ position: 'absolute', bottom: 1, left: 2, color: colori.text, lineHeight: 0 }}
+          >
+            <IconaPreCheckin size={9} />
+          </span>
+        );
+      })()}
     </div>
   );
 }
@@ -590,6 +636,12 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
     }
   }
 
+  // 29/08/2026: se il gate blocca per dati mancanti (codice 'DATI_INCOMPLETI',
+  // vedi prenotazioniController.aggiornaStato), non mostra più solo il testo
+  // dell'errore — apre la schermata multi check-in, che carica esattamente
+  // gli stessi dati mancanti (stessa funzione condivisa lato backend) e
+  // permette di correggerli senza uscire dal planning. Qualunque altro 400
+  // (es. transizione non ammessa) resta un messaggio di errore normale.
   async function fasiCheckIn() {
     setSalvataggio(true);
     setErrore(null);
@@ -598,7 +650,11 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
       await carica();
       onCambiato();
     } catch (err) {
-      setErrore(err.message || 'Errore nel check-in');
+      if (err.response?.data?.codice === 'DATI_INCOMPLETI') {
+        setMostraMultiCheckIn(true);
+      } else {
+        setErrore(err.message || 'Errore nel check-in');
+      }
     } finally {
       setSalvataggio(false);
     }
@@ -610,6 +666,8 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   // (riepilogo economico + pagamento rapido + stampa ricevuta di cortesia),
   // che esegue il PATCH solo dopo la conferma esplicita dell'operatore.
   const [mostraCheckOut, setMostraCheckOut] = useState(false);
+  // Multi check-in (29/08/2026) — vedi fasiCheckIn() sopra per il trigger.
+  const [mostraMultiCheckIn, setMostraMultiCheckIn] = useState(false);
   // Gruppi di prenotazione (15/08/2026) — vedi ModalAssegnaGruppo/
   // ModalDettaglioGruppo più sotto.
   const [mostraAssegnaGruppo, setMostraAssegnaGruppo] = useState(false);
@@ -1269,6 +1327,14 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
       />
     )}
 
+    {mostraMultiCheckIn && (
+      <PannelloMultiCheckIn
+        prenotazioneId={prenotazioneId}
+        onChiudi={() => setMostraMultiCheckIn(false)}
+        onCheckInRiuscito={() => { setMostraMultiCheckIn(false); carica(); onCambiato(); }}
+      />
+    )}
+
     {mostraAssegnaGruppo && (
       <ModalAssegnaGruppo
         prenotazioneId={prenotazioneId}
@@ -1533,6 +1599,279 @@ function PannelloCheckOut({ prenotazioneId, onChiudi, onCompletato }) {
             </button>
           </div>
         )}
+      </div>
+    </div>
+  );
+}
+
+// ── Multi check-in ────────────────────────────────────────────────────────
+// Schermata dedicata (29/08/2026, richiesta esplicita del titolare — vedi
+// docs/EVOLUTIVE.md "Modulo 2.3/5.2") per correggere in un colpo solo i dati
+// Alloggiati Web/residenza di TUTTI gli ospiti di una prenotazione, invece
+// di aprire una scheda cliente alla volta. Si apre da sola quando il
+// check-in (fasiCheckIn, sopra) viene bloccato dal gate backend (codice
+// 'DATI_INCOMPLETI'). Stesso pattern a righe di app/pre-checkin/page.jsx
+// (PannelloRevisione), ma qui si edita l'ospite REALE già collegato al
+// soggiorno via PATCH /api/ospiti/:id — non uno staging da "applicare".
+//
+// Editor completo per ogni ospite, non solo i campi mancanti (decisione
+// esplicita del titolare): permette di correggere anche un dato sbagliato,
+// non solo compilare un vuoto. I campi mancanti restano comunque
+// evidenziati (bordo rosso) così l'operatore sa cosa serve davvero. Nome e
+// cognome restano SOLO in lettura qui: non sono mai nell'elenco dei campi
+// obbligatori mancanti, e rinominare un cliente reale è un'azione diversa
+// (scheda cliente, non il gate del check-in) — tenerli fuori evita di
+// mescolare due scopi in una schermata pensata per sbloccare un check-in.
+//
+// Un soggiorno senza nessun ospite assegnato resta fuori scope (decisione
+// esplicita, caso raro/dati storici): solo un avviso, si assegna l'ospite
+// dal dettaglio prenotazione, non da qui.
+//
+// Al salvataggio riprova da sola la transizione a check_in (retry
+// automatico, decisione esplicita) — un solo click per la reception; se
+// manca ancora qualcosa la schermata resta aperta con l'elenco aggiornato
+// (richiede una nuova GET .../check-in-dettaglio, stessa fonte dati del
+// gate: mai un disallineamento tra "sembra a posto" e "il gate blocca").
+const inputStyleMultiCheckIn = {
+  height: '36px',
+  border: '1px solid var(--border)',
+  background: 'var(--background)',
+  color: 'var(--foreground)',
+};
+
+// Campi realmente inviati in PATCH /api/ospiti/:id — stesso elenco (meno
+// nome/cognome) accettato da anagraficaOspitiController.aggiorna(), COALESCE
+// lato backend: un campo vuoto/null qui non cancella mai il valore esistente,
+// aggiorna solo quello compilato. documento_numero incluso come gli altri
+// (mai pre-compilato con un valore reale, vedi documento_mascherato sotto —
+// stessa regola non derogabile di anagraficaOspitiController.js).
+const CAMPI_MULTI_CHECKIN = [
+  'sesso', 'data_nascita',
+  'stato_nascita_codice', 'stato_nascita_testo',
+  'comune_nascita_codice', 'comune_nascita_testo',
+  'provincia_nascita',
+  'cittadinanza_codice', 'cittadinanza_testo',
+  'documento_tipo_codice', 'documento_tipo_testo',
+  'documento_numero', 'documento_scadenza',
+  'luogo_rilascio_codice', 'luogo_rilascio_testo',
+  'stato_residenza_codice', 'stato_residenza_testo',
+  'comune_residenza_codice', 'comune_residenza_testo',
+];
+
+// Da etichetta di 'mancanti' (testo pronto dal backend, campiObbligatoriMancanti
+// + check residenza — stesse stringhe esatte, vedi lib/alloggiatiSchedina.js e
+// caricaOspitiCheckIn in prenotazioniController.js) a nome del campo del form,
+// solo per decidere quale input evidenziare in rosso.
+const MANCANTE_PER_CAMPO = {
+  'sesso': 'sesso',
+  'data di nascita': 'data_nascita',
+  'stato di nascita': 'stato_nascita_codice',
+  'comune di nascita (obbligatorio se nato in Italia)': 'comune_nascita_codice',
+  'provincia di nascita (obbligatorio se nato in Italia)': 'provincia_nascita',
+  'cittadinanza': 'cittadinanza_codice',
+  'tipo documento': 'documento_tipo_codice',
+  'numero documento': 'documento_numero',
+  'luogo di rilascio documento': 'luogo_rilascio_codice',
+  'stato di residenza': 'stato_residenza_codice',
+  'comune di residenza': 'comune_residenza_codice',
+};
+
+const TIPI_ALLOGGIATO_LABEL_MULTI = {
+  '16': 'Singolo', '17': 'Capofamiglia', '18': 'Capogruppo', '19': 'Familiare', '20': 'Membro gruppo',
+};
+
+function PannelloMultiCheckIn({ prenotazioneId, onChiudi, onCheckInRiuscito }) {
+  const [soggiorni, setSoggiorni] = useState([]);
+  const [righe, setRighe] = useState({}); // { [ospiteId]: { ...campi modificabili } }
+  const [caricamento, setCaricamento] = useState(true);
+  const [salvataggio, setSalvataggio] = useState(false);
+  const [errore, setErrore] = useState('');
+
+  const carica = useCallback(async () => {
+    setCaricamento(true);
+    setErrore('');
+    try {
+      const res = await api.get(`/prenotazioni/${prenotazioneId}/check-in-dettaglio`);
+      const nuoviSoggiorni = res.data.soggiorni || [];
+      setSoggiorni(nuoviSoggiorni);
+      setRighe(precedenti => {
+        const iniziali = {};
+        for (const sog of nuoviSoggiorni) {
+          for (const o of sog.ospiti) {
+            // Se l'operatore aveva già scritto qualcosa in questa riga (retry
+            // dopo un salvataggio ancora incompleto), non sovrascriverlo con
+            // il dato appena ricaricato dal server.
+            iniziali[o.id] = precedenti[o.id] || { ...o, documento_numero: '' };
+          }
+        }
+        return iniziali;
+      });
+    } catch (err) {
+      setErrore(err.message || 'Errore nel caricamento.');
+    } finally {
+      setCaricamento(false);
+    }
+  }, [prenotazioneId]);
+
+  useEffect(() => { carica(); }, [carica]);
+
+  function aggiornaCampo(ospiteId, campo, valore) {
+    setRighe(r => ({ ...r, [ospiteId]: { ...r[ospiteId], [campo]: valore } }));
+  }
+  function aggiornaCoppia(ospiteId, campoTesto, campoCodice, testo, codice) {
+    setRighe(r => ({ ...r, [ospiteId]: { ...r[ospiteId], [campoTesto]: testo, [campoCodice]: codice } }));
+  }
+
+  async function salvaERiprova() {
+    setSalvataggio(true);
+    setErrore('');
+    try {
+      await Promise.all(Object.entries(righe).map(([ospiteId, r]) => {
+        const payload = {};
+        for (const campo of CAMPI_MULTI_CHECKIN) payload[campo] = r[campo] || null;
+        return api.patch(`/ospiti/${ospiteId}`, payload);
+      }));
+
+      // Retry automatico (decisione esplicita del titolare, 29/08/2026): un
+      // solo click, non due azioni separate "salva" e poi "check-in".
+      await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'check_in' });
+      onCheckInRiuscito();
+    } catch (err) {
+      if (err.response?.data?.codice === 'DATI_INCOMPLETI') {
+        setErrore('Alcuni dati mancano ancora — vedi le righe evidenziate qui sotto.');
+        await carica();
+      } else {
+        setErrore(err.message || 'Errore nel salvataggio.');
+      }
+    } finally {
+      setSalvataggio(false);
+    }
+  }
+
+  const totaleOspiti = soggiorni.reduce((n, s) => n + s.ospiti.length, 0);
+  const totaleMancanti = soggiorni.reduce((n, s) => n + s.ospiti.filter(o => o.mancanti?.length).length, 0);
+
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-end" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="h-full w-full max-w-2xl bg-white shadow-xl overflow-y-auto" onClick={e => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b sticky top-0 bg-white z-10">
+          <div>
+            <p className="font-semibold text-sm">Multi check-in — dati mancanti</p>
+            {!caricamento && (
+              <p className="text-xs" style={{ color: 'var(--muted-foreground)' }}>
+                {totaleMancanti > 0
+                  ? `${totaleMancanti} di ${totaleOspiti} ospiti con dati da completare`
+                  : `${totaleOspiti} ospiti, tutti i dati completi`}
+              </p>
+            )}
+          </div>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100"><X size={18} /></button>
+        </div>
+
+        <div className="p-4 space-y-4">
+          {caricamento ? (
+            <p className="text-sm text-center py-8" style={{ color: 'var(--muted-foreground)' }}>Caricamento...</p>
+          ) : (
+            <>
+              {errore && (
+                <div className="px-3 py-2.5 rounded-lg text-[13px]" style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                  {errore}
+                </div>
+              )}
+
+              {soggiorni.map(sog => (
+                <div key={sog.soggiorno_id} className="space-y-2">
+                  <p className="text-xs font-semibold" style={{ color: 'var(--muted-foreground)' }}>
+                    Camera {sog.camera_numero} — dal {sog.data_arrivo} al {sog.data_partenza}
+                  </p>
+
+                  {sog.ospiti.length === 0 && (
+                    <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs" style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+                      <AlertTriangle size={14} /> Nessun ospite assegnato a questa camera — vai sul dettaglio prenotazione per assegnarlo, non gestibile da qui.
+                    </div>
+                  )}
+
+                  {sog.ospiti.map(o => {
+                    const r = righe[o.id] || {};
+                    const mancanti = o.mancanti || [];
+                    const campiMancanti = new Set(mancanti.map(m => MANCANTE_PER_CAMPO[m]).filter(Boolean));
+                    const bordo = campo => campiMancanti.has(campo)
+                      ? { height: '36px', border: '1px solid var(--status-red-text)', background: 'var(--background)', color: 'var(--foreground)' }
+                      : inputStyleMultiCheckIn;
+                    return (
+                      <div key={o.id} className="rounded-lg p-3 space-y-2" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
+                        <div className="flex items-center justify-between gap-2">
+                          <span className="text-sm font-medium">{o.cognome} {o.nome}</span>
+                          <span className="text-[11px] px-2 py-0.5 rounded-full" style={{ background: 'var(--background)', border: '0.5px solid var(--border)' }}>
+                            {TIPI_ALLOGGIATO_LABEL_MULTI[o.tipo_alloggiato] || o.tipo_alloggiato}
+                          </span>
+                        </div>
+
+                        {mancanti.length > 0 ? (
+                          <p className="text-[11px]" style={{ color: 'var(--status-red-text)' }}>
+                            Manca: {mancanti.join(', ')}
+                          </p>
+                        ) : (
+                          <p className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--status-green-text)' }}>
+                            <Check size={11} /> Dati completi
+                          </p>
+                        )}
+
+                        <div className="grid grid-cols-2 gap-2">
+                          <select value={r.sesso || ''} onChange={e => aggiornaCampo(o.id, 'sesso', e.target.value)}
+                                  className="px-3 rounded-lg text-sm outline-none" style={bordo('sesso')}>
+                            <option value="">Sesso</option>
+                            <option value="M">M</option>
+                            <option value="F">F</option>
+                          </select>
+                          <CampoData value={r.data_nascita || ''} onChange={v => aggiornaCampo(o.id, 'data_nascita', v)}
+                                 minAnno={ANNO_CORRENTE - 110} maxAnno={ANNO_CORRENTE}
+                                 className="px-3" style={bordo('data_nascita')} />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.stato_nascita_testo} codice={r.stato_nascita_codice}
+                                                      placeholder="Stato di nascita"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'stato_nascita_testo', 'stato_nascita_codice', t, c)} />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.comune_nascita_testo} codice={r.comune_nascita_codice}
+                                                      placeholder="Comune di nascita (se Italia)"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'comune_nascita_testo', 'comune_nascita_codice', t, c)} />
+                          <SelettoreProvincia valore={r.provincia_nascita}
+                                               onCambiamento={v => aggiornaCampo(o.id, 'provincia_nascita', v)}
+                                               placeholder="Provincia nascita" />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.cittadinanza_testo} codice={r.cittadinanza_codice}
+                                                      placeholder="Cittadinanza"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'cittadinanza_testo', 'cittadinanza_codice', t, c)} />
+                          <SelettoreCodiceAlloggiati tabella="Tipi_Documento" testo={r.documento_tipo_testo} codice={r.documento_tipo_codice}
+                                                      placeholder="Tipo documento"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'documento_tipo_testo', 'documento_tipo_codice', t, c)} />
+                          <input placeholder={o.documento_mascherato ? `Numero documento (attuale: ${o.documento_mascherato})` : 'Numero documento'}
+                                 value={r.documento_numero || ''} onChange={e => aggiornaCampo(o.id, 'documento_numero', e.target.value)}
+                                 className="px-3 rounded-lg text-sm outline-none" style={bordo('documento_numero')} />
+                          <CampoData placeholder="Scadenza documento" value={r.documento_scadenza || ''} onChange={v => aggiornaCampo(o.id, 'documento_scadenza', v)}
+                                 minAnno={ANNO_CORRENTE - 1} maxAnno={ANNO_CORRENTE + 11}
+                                 className="px-3" style={inputStyleMultiCheckIn} />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.luogo_rilascio_testo} codice={r.luogo_rilascio_codice}
+                                                      placeholder="Luogo rilascio documento"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'luogo_rilascio_testo', 'luogo_rilascio_codice', t, c)} />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.stato_residenza_testo} codice={r.stato_residenza_codice}
+                                                      placeholder="Stato di residenza"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'stato_residenza_testo', 'stato_residenza_codice', t, c)} />
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={r.comune_residenza_testo} codice={r.comune_residenza_codice}
+                                                      placeholder="Comune di residenza (se Italia)"
+                                                      onCambiamento={(t, c) => aggiornaCoppia(o.id, 'comune_residenza_testo', 'comune_residenza_codice', t, c)} />
+                        </div>
+                      </div>
+                    );
+                  })}
+                </div>
+              ))}
+
+              <button onClick={salvaERiprova} disabled={salvataggio || totaleOspiti === 0}
+                      className="w-full rounded-lg py-2 text-sm font-medium text-white disabled:opacity-60"
+                      style={{ background: 'var(--hotel-navy)' }}>
+                {salvataggio ? 'Salvataggio e check-in...' : 'Salva e riprova check-in'}
+              </button>
+            </>
+          )}
+        </div>
       </div>
     </div>
   );

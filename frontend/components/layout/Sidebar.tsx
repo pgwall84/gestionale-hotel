@@ -39,7 +39,7 @@ import {
   CalendarDays, BookOpen, Car, Archive, Settings,
   Clock, LogOut, LogIn, ChefHat, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3, CalendarRange,
+  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3, CalendarRange, FileBarChart,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -93,12 +93,14 @@ const SEZIONI_MENU = [
     // OPERATIVA nuova (/alloggiati-web, coda invii + ricevute) — diversa
     // da quella di configurazione che resta in IMPOSTAZIONI (sync tabelle
         // di codifica, verifica credenziali, verifica schedina di test).
-    // Statistiche Liguria punta ancora a /impostazioni/ross1000 (nessuno
-    // split operativo/config possibile finché la Fase E — RIMOVCLI vs
-    // ROSS1000 — non è sbloccata dalla risposta di Regione Liguria):
-    // stessa pagina, non duplicata altrove — rimossa la vecchia voce
-    // "Export ROSS1000" da IMPOSTAZIONI per non avere due link alla
-    // stessa identica pagina con due nomi diversi.
+    // SPLIT 28/08/2026 (richiesta esplicita del titolare, riga 2.6): la
+    // vecchia voce "Statistiche Liguria" (/impostazioni/ross1000, schema
+    // webservice nazionale) è stata rinominata "ROSS1000" — NON eliminata,
+    // resta utile per l'appartamento che ha regole diverse di flussi
+    // turistici. "Statistiche Liguria" ora è la voce nuova sotto, che punta
+    // a /statistiche-liguria (motore RIMOVCLI/ISTAT C/59, upload manuale
+    // sul portale regionale — vedi backend/lib/rimovcliC59.js, schema
+    // completamente diverso da ROSS1000).
     label: 'ADEMPIMENTI',
     railLabel: 'Adempim.',
     iconaGruppo: ShieldCheck,
@@ -106,7 +108,8 @@ const SEZIONI_MENU = [
       { href: '/tassa-soggiorno', icona: Euro, testo: 'Tassa di soggiorno', ruoli: [...AT,'receptionist'] },
       { href: '/ztl',      icona: Car,          testo: 'ZTL Targhe',   ruoli: [...AT,'receptionist','portiere_notte'] },
       { href: '/alloggiati-web', icona: ShieldCheck, testo: 'Alloggiati Web', ruoli: AT },
-      { href: '/impostazioni/ross1000', icona: FileCode, testo: 'Statistiche Liguria', ruoli: AT },
+      { href: '/impostazioni/ross1000', icona: FileCode, testo: 'ROSS1000', ruoli: AT },
+      { href: '/statistiche-liguria', icona: FileBarChart, testo: 'Statistiche Liguria', ruoli: AT },
       // Spostata qui da STRUTTURA (15/08/2026, richiesta esplicita del
       // titolare): stesso tema "scadenze/controlli obbligatori" delle altre
       // voci del gruppo. In futuro, quando il modulo HACCP avrà un vero

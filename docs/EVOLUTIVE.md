@@ -572,6 +572,35 @@ Modulo 2.6 — RIMOVCLI vs ROSS1000, conflitto scoperto il 13/08/2026: il
   integrazione da scrivere; canale automatizzabile alternativo confermato
   → nuovo modulo vero (nuovo client, nuove credenziali), non un ritocco.
 
+Modulo 2.1 — Anagrafica clienti da evolvere, oggi non completa (segnalato
+  dal titolare 28/08/2026, non sviluppare ora). Seguito diretto del gap
+  RIMOVCLI (2.6): reso obbligatorio solo lo stato di residenza, solo in tre
+  punti puntuali (check-in, pre-checkin, salvataggio scheda cliente
+  completa — vedi `docs/DIARIO_SESSIONI.md` 28/08/2026), più un contatore
+  "Clienti da completare" in `/clienti` (`GET /api/ospiti/da-completare-count`,
+  filtro `senza_residenza`) per i clienti storici già senza. Questo è un
+  rattoppo mirato, non una soluzione strutturale: l'anagrafica non ha oggi
+  un concetto generale di "scheda completa" — nessun altro campo
+  (documento, data di nascita, cittadinanza...) è tracciato come
+  mancante/da completare, e la creazione rapida con dati minimi
+  (`planning-camere/page.jsx`, `creaNuovoOspite()`) resta per design senza
+  alcun controllo. Se in futuro emergono altri campi che vanno resi
+  obbligatori o tracciati come mancanti (es. per un secondo adempimento
+  normativo, o per qualità dati CRM), vale la pena valutare un meccanismo
+  generale invece di un altro contatore ad hoc per ogni campo — ma non
+  prima che il titolare lo chieda, stesso principio del resto di questo
+  file.
+
+  Segnalato anche (titolare, 28/08/2026, stesso giorno): lo stesso
+  segnale "Clienti da completare" andrebbe esposto anche in Dashboard
+  (`frontend/app/home/page.jsx`), non solo in `/clienti`. Punto di
+  innesto probabile: l'alert generico già esistente lì (`GET
+  /api/dashboard/alert` + componente `AlertItem`, con `link`
+  cliccabile verso `/clienti`) — ma oggi quell'alert è visibile solo ad
+  admin/titolare, quindi va deciso se questo segnale debba avere la
+  stessa restrizione o essere più ampio. Non sviluppare ora, solo
+  segnalato.
+
 Modulo 5.1 — riordino menu/sidebar (segnalato dal titolare 03/08/2026, non
   sviluppare ora). Aggiungendo "Arrivi/Partenze" la sezione OSPITALITÀ della
   sidebar arriva a 7 voci — il titolare ha notato che il menu sta
@@ -646,6 +675,38 @@ Modulo 5.2 Fase B — testo consenso privacy nel form pubblico di pre check-in
   scritto in modo pragmatico durante lo sviluppo, MAI fatto verificare da un
   legale/DPO. Da rivedere prima che il form sia davvero raggiunto da ospiti
   reali (quindi comunque non prima di 1.10 Deploy VPS).
+
+✅ Modulo 2.3/5.2 — schermata di check-in multi-ospite dedicata (segnalato
+  da Marco 28/08/2026, ⚠️ FONDAMENTALE secondo il titolare — IMPLEMENTATA
+  29/08/2026, da verificare in locale, non ancora testata da Marco): il
+  check-in ora apre da sola `PannelloMultiCheckIn`
+  (frontend/app/planning-camere/page.jsx) quando il gate di aggiornaStato()
+  blocca la transizione a check_in per dati incompleti (nuovo campo
+  `codice: 'DATI_INCOMPLETI'` nella risposta 400, prima solo testo). Editor
+  completo per ogni ospite del soggiorno (non solo i campi mancanti —
+  decisione esplicita del titolare: corregge anche un dato sbagliato, non
+  solo un vuoto), con i campi mancanti evidenziati in rosso. Salva via
+  `PATCH /api/ospiti/:id` (riuso diretto, nessun endpoint nuovo per il
+  salvataggio) e riprova da sola il check-in (retry automatico, decisione
+  esplicita) — se manca ancora qualcosa resta aperta con l'elenco
+  aggiornato. Nuovo endpoint di sola lettura
+  `GET /api/prenotazioni/:id/check-in-dettaglio` (checkInDettaglio in
+  prenotazioniController.js): stessa identica funzione condivisa
+  (`caricaOspitiCheckIn`) usata anche dal gate bloccante, per non poter mai
+  avere schermata e gate disallineati. Permesso `ospiti.scrittura` esteso a
+  portiere_notte (shared/ruoli.js, decisione esplicita del titolare, non
+  la granularità più stretta proposta): prima poteva vedere ma non
+  correggere i dati mancanti, rendendo la schermata inutile proprio nel
+  check-in notturno — nota collaterale: il permesso è globale, vale anche
+  per /clienti e ogni altro punto che scrive su un ospite, non solo qui.
+  Un soggiorno senza nessun ospite assegnato resta deliberatamente fuori
+  scope (solo avviso, si assegna dal dettaglio prenotazione) — caso raro,
+  dati storici/seed.
+  ✅ Verificato da Marco in locale (29/08/2026 mattina): `npm test` tutto
+  verde (969 test — inclusi i 12 corretti in `prenotazioni.test.js` e
+  `pre-checkin.test.js`, fixture mai aggiornati dopo il gate del 28/08
+  notte, scoperto proprio lanciando la suite per la prima volta dopo
+  quella sessione) e prova a mano superata. Considerata chiusa.
 
 Trasversale — CampoData (selettore anno sui calendari, 05/08/2026):
   segnalato dal titolare che il calendario nativo del browser costringe ad

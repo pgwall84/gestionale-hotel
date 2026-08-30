@@ -6503,3 +6503,256 @@ fatto interamente dal titolare in locale. Solo questo diario e
 `STATO_PROGETTO.md` sono stati aggiornati da questa sessione Cowork per
 riflettere l'esito reale, e vengono consegnati con `SendUserFile` +
 `device_commit_files` come di consueto.
+
+
+### Risposta Regione Liguria su RIMOVCLI + primo file di test C/59 (27/08/2026)
+
+Marco ha condiviso la risposta di Regione Liguria al punto rimasto aperto
+il 24/08 (se l'invio a regime, dopo l'abilitazione, resti upload manuale o
+passi da un canale diverso): **confermato upload manuale esclusivo**,
+frequenza giornaliera consigliata, settimanale ammessa (invio cumulativo
+dei 7 giorni precedenti). Nessuna automazione browser necessaria oltre al
+generatore XML — lo scenario "canale manuale" già previsto in EVOLUTIVE.md
+si è verificato, non serve un nuovo modulo di invio.
+
+Marco ha poi chiesto di generare un file per ROSS1000/RIMOVCLI ("cmq
+procedi"). Prima di generarlo, verificato con la lettura diretta di
+`docs/rimovcli/ModelloC59.xsd` e dell'esempio ufficiale
+`docs/rimovcli/COD1_20130813.xml` (non solo dedotto dai diari precedenti)
+che lo schema richiesto da RIMOVCLI è **radicalmente diverso** da quello
+prodotto da `backend/lib/ross1000Xml.js`/`ross1000Controller.js`: questi
+generano record nominativi per singolo ospite (`<arrivo><idswh><sesso>
+<cittadinanza>...`, tracciato del webservice SOAP nazionale
+ROSS1000/Turismo5), mentre ModelloC59.xsd vuole un file per struttura per
+giorno con un blocco `<giornaliero>` di righe `<rigac59>` **aggregate per
+provincia italiana o stato estero di provenienza** (arrivati/partiti/
+presenti/diurni) — conferma concreta, non solo di principio, che quel
+codice resta non riusabile per la Liguria.
+
+**Generato un primo file di TEST** conforme allo schema
+(`docs/ross1000/test-certificazione/DA_CONFIGURARE_TEST.xml`, validato con
+`xmllint --schema ModelloC59.xsd` → `validates`), da inviare a
+movimentoturistico.istat@regione.liguria.it per la certificazione, come
+da procedura confermata il 24/08. Valori nel file **dichiaratamente
+placeholder**, non reali, per due motivi distinti (entrambi documentati
+nel commento XML del file stesso):
+- Uno script preparato per calcolare camere/letti/occupazione dal DB reale
+  (`config/db.js`, stessa query di `calcolaCapacitaStruttura()` già in
+  `ross1000Xml.js`) non è riuscito a connettersi
+  (`ECONNREFUSED 127.0.0.1:5432`) — il Postgres locale sul computer di
+  Marco non risultava raggiungibile da questa sessione in quel momento. Da
+  rilanciare (`node`, script lasciato solo nello scratch temporaneo di
+  questa sessione, non salvato nel repo) quando il DB è attivo, se serve
+  un file con capacità reale prima dell'invio.
+- Le righe `<rigac59>` (conteggi per provincia/stato) non hanno oggi
+  nessuna fonte: il DB salva la residenza degli ospiti con i codici a 9
+  cifre di Alloggiati Web (`ospiti.stato_residenza_codice`/
+  `comune_residenza_codice`, migration 029), mentre `rigac59@residenza`
+  richiede codici ISTAT a 3 cifre (province italiane / stati esteri,
+  tabelle in `docs/rimovcli/ISTAT - PROVINCE.XLSX` e allegato circolare
+  ISTAT n.5/2012) — **nessuna mappatura tra i due spazi di codice esiste
+  nel codice oggi**. Per un test di sola conformità schema non serve
+  (Regione Liguria valida la struttura XML, non i valori), ma è un
+  prerequisito reale prima di costruire il generatore di produzione.
+
+**Non affrontato ora, segnalato per quando si costruisce il generatore
+vero** (dalla lettura 24/08 di `docs/rimovcli`, non una scoperta di
+oggi): il portale RIMOVCLI valida la continuità giorno-su-giorno (presenti
+di oggi = presenti di ieri + arrivati − partiti, per ciascuna provenienza)
+— il generatore dovrà riprodurre questa logica esattamente, non solo
+calcolare uno snapshot giornaliero isolato.
+
+`ross1000Xml.js`/`ross1000Controller.js` **non toccati** (confermato non
+riusabili per RIMOVCLI, non solo "canale sbagliato" come nota precedente —
+sono un tracciato diverso). Nessun `idstruttura` reale disponibile: resta
+il placeholder `DA_CONFIGURARE` finché l'esito del test non arriva.
+`STATO_PROGETTO.md` (riga 2.6) aggiornato di conseguenza.
+
+Consegna: `docs/ross1000/test-certificazione/DA_CONFIGURARE_TEST.xml`
+(nuovo) scritto direttamente sul computer di Marco con `device_bash`
+(nessun `SendUserFile`/`device_commit_files` necessario, file già nella
+cartella collegata); `STATO_PROGETTO.md` e questo diario aggiornati allo
+stesso modo.
+
+
+### Generatore RIMOVCLI reale — mappatura codici + aggregazione (27/08/2026, stessa giornata bis)
+
+Marco ha chiesto di avviare il blocco successivo ("avvia questo blocco"):
+costruire la mappatura codici residenza e il generatore vero, lasciati come
+lavoro aperto nella voce precedente di oggi.
+
+**DB locale ancora irraggiungibile** dalla sessione Cowork (stesso
+`ECONNREFUSED 127.0.0.1:5432` di prima) — sembra un limite della VM di
+questa sessione (rete isolata dal Windows host), non un servizio da
+avviare. Verificato anche tentando `node scripts/generaC59.js` a fine
+lavoro: fallisce solo alla query, non prima — conferma che il limite è la
+connessione, non il codice.
+
+**Trovata la fonte per la mappatura residenza → ISTAT 3 cifre**, già nel
+repo, senza bisogno del DB: `docs/alloggiati web/comuni.csv` (11295
+righe, Codice a 9 cifre uguale a `ospiti.comune_residenza_codice` →
+Provincia in sigla) e `stati.csv` (stesso schema per gli stati, conferma
+`100000100` = ITALIA, stesso valore già usato in `ross1000Xml.js`).
+Mancava solo il passaggio sigla provincia → codice ISTAT 3 cifre e nome
+paese → codice ISTAT 3 cifre: convertiti `docs/rimovcli/ISTAT -
+PROVINCE.XLSX` (110 province, foglio `dbo_PROVINCIA`) e `stati esteri
+excel.xls` (58 paesi) in `docs/rimovcli/province.json` e
+`stati_esteri.json` (letti con openpyxl/xlrd nel workspace cloud, dove
+python è disponibile — nessun dato di ospiti coinvolto, solo tabelle di
+codifica pubbliche).
+
+**Tre file nuovi in `gestionale-hotel`**:
+- `backend/lib/rimovcliResidenza.js` — `risolviResidenza({stato_residenza_codice, comune_residenza_codice})`,
+  due salti (comune→sigla→codice provincia per l'Italia; stato→nome→codice
+  per l'estero, con normalizzazione + una tabella di alias per i nomi
+  Alloggiati Web che non coincidono testualmente con la tabella ISTAT,
+  es. "REGNO UNITO DI GRAN BRETAGNA..." → "REGNO UNITO"). Nessun
+  abbinamento indovinato: un passaggio che fallisce restituisce
+  `{errore}`, mai un codice a caso — stesso principio già in
+  `ross1000Xml.js` per i dati obbligatori mancanti.
+- `backend/lib/rimovcliC59.js` — `generaGiornoC59({idstruttura, giorno})`,
+  aggrega arrivati/partiti/presenti/diurni per provenienza da una query sul
+  giorno singolo (stesso pattern di intervalli già usato in
+  `ross1000Xml.js`), esclude e segnala gli ospiti non risolvibili, segnala
+  esplicitamente le giornate "a movimenti 0" (il portale le richiede
+  comunque). Continuità giorno-su-giorno non è una riconciliazione
+  aggiuntiva: vale per costruzione se i conteggi derivano dagli stessi
+  dati con lo stesso criterio di intervallo — verificato con un test
+  sintetico a 3 giorni (presenti(26) = presenti(25) + arrivati(26) −
+  partiti(26), confermato).
+- `backend/scripts/generaC59.js` — CLI, `node scripts/generaC59.js
+  YYYY-MM-DD [IDSTRUTTURA]`, scrive in `docs/ross1000/test-certificazione/`.
+
+**Come validato senza accesso al DB reale**: montato un mirror minimo in
+uno scratch del workspace cloud (stessi file `comuni.csv`/`stati.csv`/
+`province.json`/`stati_esteri.json`, un pool DB stub) e lanciato la
+logica pura con dati sintetici — 3 soggiorni su 3 giorni, verificata la
+continuità e prodotto un XML che `xmllint --schema ModelloC59.xsd`
+conferma valido. Confermato anche sul computer di Marco, con i file veri
+del repo, che `risolviResidenza` risolve correttamente casi reali
+(Lerici → SP → 011, Germania → 004) e che la CLI arriva fino alla query
+DB senza errori di codice.
+
+**Non fatto, per Marco**: nessuna query reale eseguita (DB irraggiungibile
+da qui). Prossimo passo: lanciare `node scripts/generaC59.js YYYY-MM-DD`
+in locale, leggere gli avvisi in testa al file XML (ospiti esclusi dal
+conteggio) e, se compaiono paesi esteri non riconosciuti, ampliare
+`ALIAS_STATI` in `rimovcliResidenza.js` — poi inviare il file per la
+certificazione a movimentoturistico.istat@regione.liguria.it.
+
+`ross1000Xml.js`/`ross1000Controller.js` non toccati. `STATO_PROGETTO.md`
+(riga 2.6) aggiornato di conseguenza.
+
+Consegna: i 5 file nuovi (`backend/lib/rimovcliResidenza.js`,
+`backend/lib/rimovcliC59.js`, `backend/scripts/generaC59.js`,
+`docs/rimovcli/province.json`, `docs/rimovcli/stati_esteri.json`) scritti
+direttamente sul computer di Marco con `device_bash` (nessuna card
+`SendUserFile`); `STATO_PROGETTO.md` e questo diario aggiornati allo
+stesso modo.
+
+
+### Stato di residenza obbligatorio al check-in, pre-checkin e scheda cliente (28/08/2026)
+
+Marco, dopo aver visto gli avvisi nel primo file RIMOVCLI reale (8 ospiti
+esclusi per residenza mancante): "si necessario rendere obbligatorio lo
+stato di residenza per il capofamiglia/capogruppo al check-in e nel
+pre-checkin da inviare". Poi, dopo la prima parte: "chiudi anche quella"
+(riferito al gap residuo sulla scheda cliente, segnalato spontaneamente).
+
+**Check-in** (`prenotazioniController.js`, `aggiornaStato`): alla
+transizione verso `check_in` blocca (ROLLBACK + 400) se manca lo stato di
+residenza per l'intestatario (16/17/18) di un soggiorno della prenotazione
+— LEFT JOIN apposta, blocca anche se non c'è nessun intestatario assegnato.
+
+**Pre-checkin — problema di disegno reale, non banale**: il form pubblico
+self-service (`preCheckinPubblicoController.js`, `pre-checkin/[token]/page.jsx`)
+non ha ALCUN concetto di tipo_alloggiato — capofamiglia/capogruppo viene
+deciso dopo, in revisione dalla reception (`preCheckinController.js`,
+`applica()`). Richiedere la residenza "per il capofamiglia" alla lettera,
+nel form pubblico, è quindi impossibile: non si sa ancora chi lo sarà.
+Risolto riusando una convenzione già presente nel codice (in
+`pre-checkin/page.jsx`, `primoDelSoggiorno` è il default con cui la
+reception stessa preassegna il capofamiglia in revisione): si richiede la
+residenza al primo ospite inserito per ciascuna camera, sia lato server
+(`invia()`, 400 se manca) sia lato client (validazione immediata + nota
+visiva sul primo ospite). Rete di sicurezza indipendente in `applica()`:
+se in revisione la reception assegna l'intestatario a un ospite diverso da
+quello che aveva compilato la residenza, blocca comunque — dati già nel
+body, nessuna query aggiuntiva. `CODICE_ITALIA_ALLOGGIATI` esportato da
+`rimovcliResidenza.js` per evitare di duplicare il valore magico nei due
+controller.
+
+**Scheda cliente** (`clienti/[id]/page.jsx`): gap segnalato a Marco di mia
+iniziativa dopo la prima parte — restava possibile creare/modificare un
+cliente senza residenza fuori da check-in e pre-checkin. Marco ha chiesto
+di chiudere anche questo. **Non l'ho implementato come blocco generale**:
+ho verificato che `POST /api/ospiti` (`anagraficaOspitiController.js`,
+`crea()`) viene usato altrove apposta con solo nome+cognome — creazione
+rapida ospite in `planning-camere/page.jsx` (`creaNuovoOspite()`) e
+auto-creazione del referente camera dal nome digitato — bloccarli lì
+avrebbe rotto due flussi reali già in uso, non solo un'ipotesi. Ho quindi
+richiesto la residenza solo nel salvataggio della scheda cliente completa
+(`salvaModifiche()`, il bottone "Salva" del form di modifica) — lato
+client, senza toccare il backend (`crea()`/`aggiorna()` restano invariati)
+né i toggle singoli (VIP/blacklist/tag/consenso), che passano per funzioni
+separate e non sono coinvolti.
+
+**Non toccato**: `ross1000Xml.js`/`ross1000Controller.js` (schema
+sbagliato, mai riusabile qui). Nessuna query reale eseguita da questa
+sessione — tutte le modifiche sono state scritte ed edite direttamente sul
+computer di Marco (`device_bash`, pattern base64 read-modify-write con
+verifica di unicità della stringa sostituita), verificate con `node -c`
+per i tre file backend e con lettura diretta della sezione modificata per
+i due file `.jsx` (nessun linter JSX disponibile in locale). Consegna:
+`backend/lib/rimovcliResidenza.js` (export aggiuntivo),
+`backend/controllers/preCheckinPubblicoController.js`,
+`backend/controllers/preCheckinController.js`,
+`frontend/app/pre-checkin/[token]/page.jsx`,
+`frontend/app/clienti/[id]/page.jsx`, `STATO_PROGETTO.md` (righe 2.6 e
+Fase 2D) e questo diario, tutti scritti direttamente sul computer di
+Marco.
+
+
+### Contatore "Clienti da completare" + segnalata evoluzione anagrafica (28/08/2026, stessa giornata bis)
+
+Marco: "si nella scheda 'gestione clienti' aggiungiamo un contatore con
+scritto 'Clienti da completare' che rimanda all'anagrafica dove come
+vista avrà quelli da completare. E poi aggiorna che va evoluta
+l'anagrafica clienti, ora non completa."
+
+**Contatore**: `GET /api/ospiti/da-completare-count` (nuovo, stesso giro
+di permessi di `tagSuggeriti` — lettura, non l'azione più stretta di
+`unisci` usata da `duplicati-sospetti`) conta i clienti attivi senza
+`stato_residenza_codice`. `GET /api/ospiti` esteso con un filtro
+`senza_residenza=true` che usa lo stesso criterio — nessuna query
+duplicata, la vista filtrata e il conteggio condividono la stessa
+condizione SQL. In `/clienti`: banner ambra cliccabile (stesso stile del
+banner duplicati sospetti già esistente, componente diverso) che applica
+il filtro sulla stessa pagina — non una pagina/rotta separata, "rimanda
+alla vista" qui significa cambiare cosa mostra la tabella già in pagina,
+coerente con `filtroVip`/`filtroBlacklist` già presenti — più un
+bottone di toggle equivalente accanto agli altri filtri.
+
+**Evoluzione anagrafica**: aggiunta una voce in `docs/EVOLUTIVE.md`
+("Modulo 2.1 — Anagrafica clienti da evolvere, oggi non completa") che
+inquadra il lavoro di oggi (residenza obbligatoria in 3 punti + questo
+contatore) come un rattoppo mirato su un solo campo, non una soluzione
+generale: l'anagrafica non ha un concetto di "scheda completa" che copra
+altri campi (documento, data di nascita, cittadinanza...), e la
+creazione rapida con dati minimi resta senza alcun controllo per design.
+Non sviluppare ora, stesso principio del resto del file — solo
+segnalato per quando servirà.
+
+**Trasferimento file**: dopo un errore di sintassi su un primo tentativo
+con un blob base64 troppo grande copiato a mano in `device_bash`
+(6 byte persi nella copia, causa probabile: dimensione — corretto,
+nessun file toccato perché l'errore era in fase di parsing, prima di
+qualunque `fs.writeFileSync`), gli script successivi sono stati divisi
+in file più piccoli e ogni base64 verificato con `sha256sum` sia lato
+cloud sia lato dispositivo prima dell'esecuzione — stesso checksum
+confermato per tutti i trasferimenti di questa voce.
+
+Consegna: `backend/controllers/anagraficaOspitiController.js`,
+`backend/routes/ospiti.js`, `frontend/app/clienti/page.jsx`,
+`docs/EVOLUTIVE.md`, `STATO_PROGETTO.md` e questo diario, scritti
+direttamente sul computer di Marco.

@@ -245,6 +245,14 @@ export default function PaginaDettaglioCliente() {
   }
 
   async function salvaModifiche() {
+    if (!statoResidenzaCodice) {
+      setErrore('Lo stato di residenza è obbligatorio per salvare la scheda.');
+      return;
+    }
+    if (statoResidenzaCodice === '100000100' && !comuneResidenzaCodice) {
+      setErrore('Il comune di residenza è obbligatorio per i residenti in Italia.');
+      return;
+    }
     setSalvataggio(true);
     setErrore('');
     try {
@@ -640,7 +648,7 @@ export default function PaginaDettaglioCliente() {
                        className="px-3" style={inputStyle} />
               </div>
               <div>
-                <label className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Stato di residenza</label>
+                <label className="text-[11px]" style={{ color: 'var(--muted-foreground)' }}>Stato di residenza *</label>
                 <SelettoreCodiceAlloggiati tabella="Luoghi" testo={statoResidenzaTesto} codice={statoResidenzaCodice}
                   onCambiamento={(t, c) => { setStatoResidenzaTesto(t); setStatoResidenzaCodice(c); }} placeholder="Es. Italia" />
               </div>

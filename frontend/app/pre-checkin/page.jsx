@@ -111,7 +111,24 @@ function riconciliaRiga(o) {
     ospite_id_esistente: null,
     ospite_esistente_etichetta: null,
     tipo_alloggiato: '19',
+    // Solo per righe non-intestatario (19/20) — spunta "deriva residenza
+    // dal capofamiglia/intestatario della camera" (modulo 2.6, 28/08/2026
+    // bis). Mai inviata al backend, vedi applica().
+    derivaResidenza: false,
   };
+}
+
+const TIPI_INTESTATARIO = ['16', '17', '18'];
+
+// Riga-riferimento per la derivazione della residenza: il primo ospite
+// della stessa camera con tipo_alloggiato intestatario (16/17/18), a
+// prescindere da quale riga fosse "il primo inserito" — la reception può
+// aver riassegnato il tipo. Se nessuna riga della camera è oggi un
+// intestatario, torna null: la spunta resta senza effetto e la
+// validazione lato backend (ora richiesta per OGNI ospite) segnalerà
+// comunque cosa manca.
+function trovaRiferimentoResidenza(righe, soggiornoId) {
+  return righe.find(r => r.soggiorno_id === soggiornoId && TIPI_INTESTATARIO.includes(r.tipo_alloggiato)) || null;
 }
 
 function PannelloRevisione({ id, onChiudi, onFatto }) {
@@ -187,8 +204,25 @@ function PannelloRevisione({ id, onChiudi, onFatto }) {
     setSalvataggio(true);
     setErrore('');
     try {
+      // Copia la residenza dal riferimento della camera SOLO ora, al
+      // momento dell'invio — mai un valore salvato prima, così resta
+      // coerente anche se il riferimento è stato corretto dopo aver
+      // spuntato la casella per le altre righe (stesso principio del
+      // form pubblico, vedi app/pre-checkin/[token]/page.jsx).
+      const righeConDerivazione = righe.map(r => {
+        if (!r.derivaResidenza) return r;
+        const riferimento = trovaRiferimentoResidenza(righe, r.soggiorno_id);
+        if (!riferimento) return r;
+        return {
+          ...r,
+          stato_residenza_testo: riferimento.stato_residenza_testo,
+          stato_residenza_codice: riferimento.stato_residenza_codice,
+          comune_residenza_testo: riferimento.comune_residenza_testo,
+          comune_residenza_codice: riferimento.comune_residenza_codice,
+        };
+      });
       await api.post(`/pre-checkin/${id}/applica`, {
-        ospiti: righe.map(({ ospite_esistente_etichetta, pre_checkin_ospiti_id, ...resto }) => ({
+        ospiti: righeConDerivazione.map(({ ospite_esistente_etichetta, pre_checkin_ospiti_id, derivaResidenza, ...resto }) => ({
           ...resto,
           pre_checkin_ospiti_id,
           data_nascita: resto.data_nascita || null,
@@ -246,6 +280,9 @@ function PannelloRevisione({ id, onChiudi, onFatto }) {
                   </p>
                   {righe.map((riga, indice) => {
                     if (riga.soggiorno_id !== sog.soggiorno_id) return null;
+                    const nonIntestatario = !TIPI_INTESTATARIO.includes(riga.tipo_alloggiato);
+                    const riferimento = nonIntestatario ? trovaRiferimentoResidenza(righe, riga.soggiorno_id) : null;
+                    const residenzaMostrata = (riga.derivaResidenza && riferimento) ? riferimento : riga;
                     return (
                       <div key={indice} className="rounded-lg p-3 space-y-2" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
                         <div className="flex items-center justify-between gap-2">
@@ -313,10 +350,19 @@ function PannelloRevisione({ id, onChiudi, onFatto }) {
                           <SelettoreProvincia valore={riga.provincia_nascita}
                                                onCambiamento={v => aggiornaRiga(indice, 'provincia_nascita', v)}
                                                placeholder="Provincia nascita" />
-                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={riga.stato_residenza_testo} codice={riga.stato_residenza_codice}
+                          {nonIntestatario && riferimento && (
+                            <label className="col-span-2 flex items-center gap-2 text-xs" style={{ color: 'var(--foreground)' }}>
+                              <input type="checkbox" checked={!!riga.derivaResidenza}
+                                     onChange={e => aggiornaRiga(indice, 'derivaResidenza', e.target.checked)} />
+                              Deriva residenza dall'intestatario della camera ({riferimento.nome} {riferimento.cognome})
+                            </label>
+                          )}
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={residenzaMostrata.stato_residenza_testo} codice={residenzaMostrata.stato_residenza_codice}
+                                                      disabled={riga.derivaResidenza && !!riferimento}
                                                       placeholder="Stato di residenza"
                                                       onCambiamento={(t, c) => aggiornaCoppiaRiga(indice, 'stato_residenza_testo', 'stato_residenza_codice', t, c)} />
-                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={riga.comune_residenza_testo} codice={riga.comune_residenza_codice}
+                          <SelettoreCodiceAlloggiati tabella="Luoghi" testo={residenzaMostrata.comune_residenza_testo} codice={residenzaMostrata.comune_residenza_codice}
+                                                      disabled={riga.derivaResidenza && !!riferimento}
                                                       placeholder="Comune di residenza (se Italia)"
                                                       onCambiamento={(t, c) => aggiornaCoppiaRiga(indice, 'comune_residenza_testo', 'comune_residenza_codice', t, c)} />
                         </div>

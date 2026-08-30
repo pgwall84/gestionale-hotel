@@ -30,9 +30,16 @@ router.use(cors({
     : true,
 }));
 
+// Max 30 richieste per IP ogni 15 minuti IN PRODUZIONE. Allargato altrove
+// (test e sviluppo locale, 28/08/2026 — stesso principio applicato agli
+// altri due rate limit pubblici, login in app.js e pre-checkin in
+// preCheckinPubblico.js, per lo stesso motivo: i test manuali esaurivano
+// in fretta una quota pensata per il traffico reale). Il valore di
+// produzione (30) resta da verificare sul campo — vedi STATO_PROGETTO.md
+// sezione Rate limit pubblici.
 const bookingRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 30,
+  max: process.env.NODE_ENV === 'production' ? 30 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Troppe richieste. Riprova tra qualche minuto.' },

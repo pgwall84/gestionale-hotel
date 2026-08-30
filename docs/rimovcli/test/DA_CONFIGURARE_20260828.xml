@@ -1,0 +1,22 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!-- AVVISI (7) — verificare prima dell'invio:
+  - Soggiorno 3871, camera 1: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3893, camera 5: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3904, camera 7: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3923, camera 11: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3926, camera 12: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3960, camera 18: escluso dal conteggio — stato di residenza mancante
+  - Soggiorno 3972, camera 20: escluso dal conteggio — stato di residenza mancante
+-->
+<rm:c59 idstruttura="DA_CONFIGURARE" data="2026-08-28" xmlns:rm="http://www.regione.liguria.it/turismo/rimovcli" xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance">
+	<mensile numcameredisp="23" numlettidisp="44" softwaregestionale="GestionaleHotelDelGolfo"/>
+	<giornaliero numcamereoccupate="15">
+		<rigac59 nazione="i" residenza="011" arrivati="1" partiti="0" presenti="4"/>
+		<rigac59 nazione="i" residenza="018" arrivati="1" partiti="1" presenti="3"/>
+		<rigac59 nazione="i" residenza="001" arrivati="1" partiti="0" presenti="5"/>
+		<rigac59 nazione="i" residenza="015" arrivati="1" partiti="0" presenti="2"/>
+		<rigac59 nazione="i" residenza="058" arrivati="0" partiti="0" presenti="1"/>
+		<rigac59 nazione="i" residenza="010" arrivati="0" partiti="1" presenti="0"/>
+		<rigac59 nazione="i" residenza="027" arrivati="0" partiti="1" presenti="1"/>
+	</giornaliero>
+</rm:c59>

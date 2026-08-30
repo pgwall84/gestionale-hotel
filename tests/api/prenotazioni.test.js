@@ -50,8 +50,29 @@ beforeAll(async () => {
   );
   cameraTestId = camera.rows[0].id;
 
+  // Dati Alloggiati Web + residenza al minimo indispensabile (29/08/2026,
+  // seguito al gate check-in esteso del 28/08 — vedi
+  // prenotazioniController.aggiornaStato/caricaOspitiCheckIn): un ospite
+  // con solo nome/cognome viene bloccato da PATCH .../stato {check_in} da
+  // quando il gate copre anche sesso/nascita/cittadinanza/documento, non
+  // solo la residenza RIMOVCLI. Stesso trucco già in uso in
+  // tests/api/alloggiati.test.js e alloggiatiSchedina.test.js: stato di
+  // nascita/residenza NON Italia ('999999999', codice di fantasia) evita
+  // l'obbligo di comune/provincia — il tipo_alloggiato di default
+  // assegnato da crea() è '17' (capofamiglia, TIPI_CON_DOCUMENTO), quindi
+  // servono anche i dati documento.
   const ospite = await db.query(
-    `INSERT INTO ospiti (nome, cognome) VALUES ('Mario', $1) RETURNING id`,
+    `INSERT INTO ospiti (
+       nome, cognome, sesso, data_nascita,
+       stato_nascita_codice, cittadinanza_codice,
+       documento_tipo_codice, documento_numero, luogo_rilascio_codice,
+       stato_residenza_codice
+     ) VALUES (
+       'Mario', $1, 'M', '1980-01-01',
+       '999999999', '999999999',
+       'CI', 'AB1234567', '999999999',
+       '999999999'
+     ) RETURNING id`,
     [`TestPrenotazioni${SUFFISSO}`]
   );
   ospiteTestId = ospite.rows[0].id;

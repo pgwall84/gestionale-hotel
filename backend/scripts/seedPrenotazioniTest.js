@@ -23,8 +23,11 @@
 // — usa --pulisci per cancellarle tutte prima di rigenerare.
 //
 // Uso:
-//   node backend/scripts/seedPrenotazioniTest.js            → crea
+//   node backend/scripts/seedPrenotazioniTest.js            → crea (±15 giorni da oggi)
 //   node backend/scripts/seedPrenotazioniTest.js --pulisci   → cancella tutto quello seminato
+//   node backend/scripts/seedPrenotazioniTest.js --da=2026-08-28 --a=2026-09-15 --quota-camere=0.55 --completi
+//     → finestra custom, ~55% delle camere usate (le altre restano libere),
+//       anagrafiche complete (email, telefono, documento, residenza)
 
 const path = require('path');
 require('dotenv').config({ path: path.join(__dirname, '..', '.env'), quiet: true });
@@ -34,6 +37,13 @@ const { ITALIA_CODICE } = require('../lib/alloggiatiSchedina');
 const GIORNI_INDIETRO = 15;
 const GIORNI_AVANTI = 15;
 const PREFISSO = 'SEED-TEST-';
+const ALLERGIE = [null, null, null, 'glutine', 'lattosio', 'frutta a guscio', 'nessuna nota alimentare'];
+const TAG_CANALE = [['telefono'], ['booking.com'], ['sito'], ['walk-in'], ['email']];
+
+function argomento(nome) {
+  const arg = process.argv.find(a => a.startsWith(`--${nome}=`));
+  return arg ? arg.split('=')[1] : null;
+}
 
 // Province delle città usate per le nascite/residenze in Italia — non
 // deducibile dalle colonne di alloggiati_codici (struttura di "Luoghi" solo
@@ -80,6 +90,17 @@ function documentoNumeroCasuale() {
   const lettere = 'ABCDEFGHJKLMNPQRSTUVWXYZ';
   return `${pick(lettere.split(''))}${pick(lettere.split(''))}${randInt(1000000, 9999999)}`;
 }
+function emailCasuale(nome, cognome) {
+  const slug = `${nome}.${cognome}`
+    .toLowerCase()
+    .normalize('NFD')
+    .replace(/[\u0300-\u036f]/g, '')
+    .replace(/[^a-z0-9]+/g, '.');
+  return `${slug}.${randInt(10, 99)}@example.test`;
+}
+function telefonoCasuale() {
+  return `+39 3${randInt(30, 99)} ${randInt(100, 999)} ${randInt(1000, 9999)}`;
+}
 
 async function caricaAnagraficheDisponibili() {
   const comuni = [];
@@ -109,11 +130,11 @@ async function caricaAnagraficheDisponibili() {
 // sincronizzati) / ~20% incompleti (mancano volutamente dei dati, per poter
 // vedere gli avvisi "dati mancanti" di Test/ROSS1000 con dati veri, non solo
 // nel caso ideale). ~15% nati all'estero quando esistono paesi sincronizzati.
-function generaOspite({ comuni, esteri, documenti }) {
+function generaOspite({ comuni, esteri, documenti, forzaCompleto = false, cognomeFisso = null }) {
   const sesso = Math.random() < 0.5 ? 'M' : 'F';
   const nome = pick(sesso === 'M' ? NOMI_M : NOMI_F);
-  const cognome = pick(COGNOMI);
-  const completo = Math.random() < 0.8;
+  const cognome = cognomeFisso || pick(COGNOMI);
+  const completo = forzaCompleto || Math.random() < 0.8;
   const nascitaEstero = completo && esteri.length > 0 && Math.random() < 0.15;
 
   let statoNascitaCodice, statoNascitaTesto, comuneNascitaCodice, comuneNascitaTesto, provinciaNascita;
@@ -169,6 +190,11 @@ function generaOspite({ comuni, esteri, documenti }) {
     stato_residenza_codice: statoResidenzaCodice, stato_residenza_testo: statoResidenzaTesto,
     comune_residenza_codice: comuneResidenzaCodice, comune_residenza_testo: comuneResidenzaTesto,
     consenso_marketing: Math.random() < 0.4,
+    email: completo ? emailCasuale(nome, cognome) : null,
+    telefono: completo ? telefonoCasuale() : null,
+    vip: completo && Math.random() < 0.08,
+    allergie: completo ? pick(ALLERGIE) : null,
+    tag: completo ? pick(TAG_CANALE) : [],
   };
 }
 
@@ -183,8 +209,8 @@ async function inserisciOspite(client, o) {
        luogo_rilascio_codice, luogo_rilascio_testo,
        stato_residenza_codice, stato_residenza_testo,
        comune_residenza_codice, comune_residenza_testo,
-       consenso_marketing, note
-     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23)
+       consenso_marketing, email, telefono, vip, allergie, tag, note
+     ) VALUES ($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22,$23,$24,$25,$26,$27,$28)
      RETURNING id`,
     [
       o.nome, o.cognome, o.sesso, o.data_nascita,
@@ -195,7 +221,8 @@ async function inserisciOspite(client, o) {
       o.luogo_rilascio_codice, o.luogo_rilascio_testo,
       o.stato_residenza_codice, o.stato_residenza_testo,
       o.comune_residenza_codice, o.comune_residenza_testo,
-      o.consenso_marketing, 'Ospite di test — generato da seedPrenotazioniTest.js',
+      o.consenso_marketing, o.email, o.telefono, o.vip ?? false, o.allergie, o.tag || [],
+      'Ospite di test — generato da seedPrenotazioniTest.js',
     ]
   );
   return res.rows[0].id;
@@ -214,7 +241,8 @@ async function contaSeedEsistenti() {
 
 async function pulisci() {
   const res = await pool.query(
-    `SELECT s.id AS soggiorno_id, p.id AS prenotazione_id, so.ospite_id
+    `SELECT s.id AS soggiorno_id, p.id AS prenotazione_id,
+            COALESCE(so.ospite_id, s.ospite_id) AS ospite_id
      FROM prenotazioni p
      JOIN soggiorni s ON s.prenotazione_id = p.id
      LEFT JOIN soggiorno_ospiti so ON so.soggiorno_id = s.id
@@ -229,10 +257,32 @@ async function pulisci() {
   const prenotazioneIds = [...new Set(res.rows.map(r => r.prenotazione_id))];
   const ospiteIds = [...new Set(res.rows.map(r => r.ospite_id).filter(Boolean))];
 
+  await pool.query(`DELETE FROM addebiti_extra WHERE soggiorno_id = ANY($1)`, [soggiornoIds]);
+  await pool.query(`UPDATE comande SET soggiorno_id = NULL WHERE soggiorno_id = ANY($1)`, [soggiornoIds]);
+  await pool.query(`DELETE FROM tasse_soggiorno WHERE soggiorno_id = ANY($1)`, [soggiornoIds]);
+  await pool.query(`DELETE FROM alloggiati_invii WHERE soggiorno_id = ANY($1)`, [soggiornoIds]);
+  await pool.query(
+    `DELETE FROM pre_checkin_ospiti WHERE soggiorno_id = ANY($1) OR richiesta_id IN (
+       SELECT id FROM pre_checkin_richieste WHERE prenotazione_id = ANY($2)
+     )`,
+    [soggiornoIds, prenotazioneIds]
+  );
+  await pool.query(`DELETE FROM pre_checkin_richieste WHERE prenotazione_id = ANY($1)`, [prenotazioneIds]);
+  await pool.query(`DELETE FROM pagamenti WHERE prenotazione_id = ANY($1)`, [prenotazioneIds]);
   await pool.query(`DELETE FROM soggiorno_ospiti WHERE soggiorno_id = ANY($1)`, [soggiornoIds]);
   await pool.query(`DELETE FROM soggiorni WHERE id = ANY($1)`, [soggiornoIds]);
   await pool.query(`DELETE FROM prenotazioni WHERE id = ANY($1)`, [prenotazioneIds]);
   await pool.query(`DELETE FROM ospiti WHERE id = ANY($1)`, [ospiteIds]);
+  const orfani = await pool.query(
+    `DELETE FROM ospiti
+     WHERE note LIKE '%seedPrenotazioniTest.js%'
+       AND NOT EXISTS (SELECT 1 FROM soggiorni s WHERE s.ospite_id = ospiti.id)
+       AND NOT EXISTS (SELECT 1 FROM soggiorno_ospiti so WHERE so.ospite_id = ospiti.id)
+     RETURNING id`
+  );
+  if (orfani.rowCount > 0) {
+    console.log(`Rimossi anche ${orfani.rowCount} ospiti di test orfani.`);
+  }
 
   console.log(`Puliti: ${prenotazioneIds.length} prenotazioni, ${soggiornoIds.length} soggiorni, ${ospiteIds.length} ospiti.`);
 }
@@ -256,7 +306,13 @@ async function crea() {
     return;
   }
 
-  const camereRes = await pool.query(`SELECT id, numero FROM camere WHERE attivo = true ORDER BY id`);
+  const camereRes = await pool.query(
+    `SELECT id, numero FROM camere
+     WHERE attivo = true
+       AND numero NOT ILIKE 'TEST%'
+       AND numero <> 'app'
+     ORDER BY id`
+  );
   if (camereRes.rows.length === 0) {
     console.error('Nessuna camera attiva trovata.');
     process.exit(1);
@@ -268,16 +324,27 @@ async function crea() {
   }
 
   const oggi = fmtData(new Date());
-  const dataInizio = aggiungiGiorni(oggi, -GIORNI_INDIETRO);
-  const dataFine = aggiungiGiorni(oggi, GIORNI_AVANTI);
+  const dataInizio = argomento('da') || aggiungiGiorni(oggi, -GIORNI_INDIETRO);
+  const dataFine = argomento('a') || aggiungiGiorni(oggi, GIORNI_AVANTI);
+  const quotaCamere = Number(argomento('quota-camere') || '1');
+  const forzaCompleto = process.argv.includes('--completi');
 
   const contatori = { check_out: 0, check_in: 0, confermata: 0, opzione: 0 };
   let totalePrenotazioni = 0;
 
-  for (const camera of camereRes.rows) {
+  const camereScelte = camereRes.rows.filter(() => Math.random() < quotaCamere);
+  if (camereScelte.length === 0 && camereRes.rows.length > 0) {
+    camereScelte.push(pick(camereRes.rows));
+  }
+
+  for (const camera of camereScelte) {
     let cursore = dataInizio;
+    let primoSlot = true;
     while (cursore < dataFine) {
-      const gap = randInt(0, 3);
+      // Gap più ampi dopo il primo soggiorno: alcune notti restano libere.
+      // Il primo slot parte da dataInizio (oggi) così ci sono anche check-in in corso.
+      const gap = primoSlot ? 0 : (quotaCamere < 1 ? randInt(1, 5) : randInt(0, 3));
+      primoSlot = false;
       cursore = aggiungiGiorni(cursore, gap);
       if (cursore >= dataFine) break;
 
@@ -293,17 +360,19 @@ async function crea() {
       }
 
       const stato = determinaStato(arrivo, partenza, oggi);
-      const coppia = Math.random() < 0.25;
+      const coppia = Math.random() < 0.35;
 
       const client = await pool.connect();
       try {
         await client.query('BEGIN');
 
-        const ospite1 = generaOspite({ comuni, esteri, documenti });
+        const ospite1 = generaOspite({ comuni, esteri, documenti, forzaCompleto });
         const ospite1Id = await inserisciOspite(client, ospite1);
         let ospite2Id = null;
         if (coppia) {
-          const ospite2 = generaOspite({ comuni, esteri, documenti });
+          const ospite2 = generaOspite({
+            comuni, esteri, documenti, forzaCompleto, cognomeFisso: ospite1.cognome,
+          });
           ospite2Id = await inserisciOspite(client, ospite2);
         }
 
@@ -348,7 +417,7 @@ async function crea() {
     }
   }
 
-  console.log(`\nCreate ${totalePrenotazioni} prenotazioni di test (${dataInizio} → ${dataFine}):`);
+  console.log(`\nCreate ${totalePrenotazioni} prenotazioni di test (${dataInizio} → ${dataFine}) su ${camereScelte.length}/${camereRes.rows.length} camere:`);
   console.log(`  Passate (check_out): ${contatori.check_out}`);
   console.log(`  In corso (check_in): ${contatori.check_in}`);
   console.log(`  Confermate future: ${contatori.confermata}`);

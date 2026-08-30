@@ -28,7 +28,7 @@ import SelettoreProvincia from '@/components/ui/SelettoreProvincia';
 import ScannerDocumento from '@/components/ui/ScannerDocumento';
 import CampoData, { ANNO_CORRENTE } from '@/components/ui/CampoData';
 import Link from 'next/link';
-import { Search, Plus, Star, ShieldAlert, AlertTriangle } from 'lucide-react';
+import { Search, Plus, Star, ShieldAlert, AlertTriangle, FileWarning } from 'lucide-react';
 
 // ICAO alpha-3 → testo leggibile, solo per i casi più comuni tra gli ospiti
 // dell'hotel — riempie il campo cittadinanza con un punto di partenza dopo
@@ -79,9 +79,11 @@ export default function PaginaClienti() {
   const [filtroTag, setFiltroTag] = useState('');
   const [filtroVip, setFiltroVip] = useState(false);
   const [filtroBlacklist, setFiltroBlacklist] = useState(false);
+  const [filtroSenzaResidenza, setFiltroSenzaResidenza] = useState(false);
   const [ordina, setOrdina] = useState('cognome');
   const [tagDisponibili, setTagDisponibili] = useState([]);
   const [duplicatiCount, setDuplicatiCount] = useState(0);
+  const [daCompletareCount, setDaCompletareCount] = useState(0);
 
   const puoUnire = utente && RUOLI_UNISCI.includes(utente.ruolo);
 
@@ -97,6 +99,7 @@ export default function PaginaClienti() {
       if (filtroTag) parametri.set('tag', filtroTag);
       if (filtroVip) parametri.set('vip', 'true');
       if (filtroBlacklist) parametri.set('blacklist', 'true');
+      if (filtroSenzaResidenza) parametri.set('senza_residenza', 'true');
       const res = await api.get(`/ospiti?${parametri.toString()}`);
       setClienti(res.data);
     } catch (err) {
@@ -104,7 +107,7 @@ export default function PaginaClienti() {
     } finally {
       setCaricamento(false);
     }
-  }, [ordina, filtroTag, filtroVip, filtroBlacklist]);
+  }, [ordina, filtroTag, filtroVip, filtroBlacklist, filtroSenzaResidenza]);
 
   // Debounce leggero sulla ricerca — evita una chiamata ad ogni tasto premuto.
   useEffect(() => {
@@ -127,6 +130,13 @@ export default function PaginaClienti() {
       .then(res => setDuplicatiCount(res.data.length))
       .catch(() => setDuplicatiCount(0));
   }, [puoUnire]);
+
+  useEffect(() => {
+    if (!utente || !RUOLI_LETTURA.includes(utente.ruolo)) return;
+    api.get('/ospiti/da-completare-count')
+      .then(res => setDaCompletareCount(res.data.count))
+      .catch(() => setDaCompletareCount(0));
+  }, [utente]);
 
   if (loading || !utente) return null;
 
@@ -179,6 +189,17 @@ export default function PaginaClienti() {
         </Link>
       )}
 
+      {daCompletareCount > 0 && (
+        <button
+          onClick={() => setFiltroSenzaResidenza(true)}
+          className="flex items-center gap-2 px-3 py-2.5 rounded-lg text-[13px] mb-4 w-full text-left"
+          style={{ background: 'var(--status-amber-bg)', color: 'var(--status-amber-text)' }}
+        >
+          <FileWarning size={15} />
+          Clienti da completare: {daCompletareCount} senza stato di residenza →
+        </button>
+      )}
+
       <div className="flex items-center gap-2 mb-2 flex-wrap">
         <div className="relative flex-1 max-w-md">
           <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--muted-foreground)' }} />
@@ -224,6 +245,13 @@ export default function PaginaClienti() {
           style={filtroBlacklist ? { background: 'var(--status-red-text)', color: '#fff', borderColor: 'var(--status-red-text)' } : {}}
         >
           <ShieldAlert size={12} /> Solo blacklist
+        </button>
+        <button
+          onClick={() => setFiltroSenzaResidenza(v => !v)}
+          className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border"
+          style={filtroSenzaResidenza ? { background: 'var(--status-amber-text)', color: '#fff', borderColor: 'var(--status-amber-text)' } : {}}
+        >
+          <FileWarning size={12} /> Da completare
         </button>
         <select value={ordina} onChange={e => setOrdina(e.target.value)}
                 className="text-xs border rounded-lg px-2 py-1.5" style={{ height: '32px' }}>
