@@ -80,6 +80,9 @@ async function getToken() {
 // modifiedFrom/modifiedTo: formato Beds24 YYYY-MM-DDTHH:MM:SS (senza
 // millisecondi né Z) — usato dal job di riconciliazione notturna per le
 // modifiche successive all'ultima sincronizzazione.
+// id: array di booking id — usato dal webhook (routes/beds24.js) per
+// recuperare la versione completa di una prenotazione appena notificata
+// (il corpo del webhook non contiene i dati ospite, vedi routes/beds24.js).
 // status: Beds24 filtra di DEFAULT solo su confirmed/new/request — le
 // cancellazioni NON tornano se non richieste esplicitamente (confermato
 // sullo Swagger reale). Il default qui include sempre 'cancelled':
@@ -87,7 +90,7 @@ async function getToken() {
 // persi, cancellazioni comprese) non vedrebbe mai una cancellazione
 // persa. 'black'/'inquiry' restano esclusi: non sono prenotazioni ospite
 // reali per Fase 1.
-async function getBookings({ modifiedFrom, modifiedTo, status } = {}) {
+async function getBookings({ modifiedFrom, modifiedTo, status, id } = {}) {
   const token = await getToken();
   const statiRichiesti = status || ['confirmed', 'new', 'request', 'cancelled'];
 
@@ -100,6 +103,7 @@ async function getBookings({ modifiedFrom, modifiedTo, status } = {}) {
     if (modifiedFrom) url.searchParams.set('modifiedFrom', modifiedFrom);
     if (modifiedTo) url.searchParams.set('modifiedTo', modifiedTo);
     statiRichiesti.forEach((s) => url.searchParams.append('status', s));
+    if (id) id.forEach((i) => url.searchParams.append('id', String(i)));
     if (pagina > 1) url.searchParams.set('page', String(pagina));
 
     const risposta = await fetch(url, { headers: { token } });

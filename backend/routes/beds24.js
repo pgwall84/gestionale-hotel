@@ -10,6 +10,7 @@ const rateLimit = require('express-rate-limit');
 const pool = require('../config/db');
 const { verificaToken, richiedeAzione } = require('../middleware/auth');
 const { processaBooking } = require('../controllers/beds24SyncController');
+const beds24Client = require('../lib/beds24Client');
 
 const webhookRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
@@ -41,20 +42,45 @@ async function scriviWebhookLog(payload, errore) {
 // Corpo incapsulato — confermato sullo Swagger reale (30/08/2026):
 // { timeStamp, booking: {...}, infoItems, invoiceItems, messages, retries }
 // NON un oggetto booking nudo. Logghiamo sempre il payload grezzo intero
-// (con l'involucro) per tracciabilità, ma processiamo solo booking.
-// ATTENZIONE — nota aperta: l'oggetto booking del webhook NON contiene
-// firstName/lastName/email/phone (a differenza di GET /bookings). Finché
-// non si decide una correzione, processaBooking crea/aggiorna con questi
-// campi vuoti sul percorso webhook — vedi conversazione 30/08/2026.
+// (con l'involucro) per tracciabilità.
+//
+// L'oggetto booking del webhook NON contiene firstName/lastName/email/
+// phone (a differenza di GET /bookings) — confermato il 30/08/2026, non
+// un'ipotesi. Processarlo così com'è farebbe creare a trovaOCreaOspite
+// (beds24SyncController.js) un ospite vuoto ad OGNI notifica webhook,
+// anche per la stessa prenotazione più volte (nessuna corrispondenza per
+// email possibile con email null) — non un caso limite raro, il
+// comportamento di default. Per questo arricchiamo sempre con una
+// GET /bookings?id= prima di processare, invece di usare il corpo del
+// webhook direttamente. Se l'arricchimento fallisce o non trova nulla,
+// NON processiamo con dati incompleti: meglio lasciare che il job di
+// riconciliazione notturna (rete di sicurezza, dati sempre completi)
+// recuperi questa prenotazione al giro successivo, piuttosto che creare
+// un ospite vuoto adesso.
 router.post('/webhook/bookings', webhookRateLimit, async (req, res) => {
   const payloadGrezzo = req.body || {};
-  const booking = payloadGrezzo.booking || {};
+  const bookingWebhook = payloadGrezzo.booking || {};
   try {
-    if (!booking.id || !booking.roomId) {
+    if (!bookingWebhook.id || !bookingWebhook.roomId) {
       await scriviWebhookLog(payloadGrezzo, 'payload senza booking.id o booking.roomId');
       return res.status(200).json({ ricevuto: true });
     }
-    await processaBooking(booking);
+
+    let bookingCompleto;
+    try {
+      const risultati = await beds24Client.getBookings({ id: [bookingWebhook.id] });
+      bookingCompleto = risultati[0];
+    } catch (errArricchimento) {
+      await scriviWebhookLog(payloadGrezzo, `arricchimento GET /bookings fallito: ${errArricchimento.message}`);
+      return res.status(200).json({ ricevuto: true });
+    }
+
+    if (!bookingCompleto) {
+      await scriviWebhookLog(payloadGrezzo, `GET /bookings non ha restituito la prenotazione ${bookingWebhook.id}`);
+      return res.status(200).json({ ricevuto: true });
+    }
+
+    await processaBooking(bookingCompleto);
     await scriviWebhookLog(payloadGrezzo, null);
     res.status(200).json({ ricevuto: true });
   } catch (err) {

@@ -3,14 +3,23 @@ const request = require('supertest');
 const app = require('../../backend/app');
 const pool = require('../../backend/config/db');
 const { authHeader } = require('../helpers/auth');
+const beds24Client = require('../../backend/lib/beds24Client');
 
 describe('POST /api/beds24/webhook/bookings', () => {
   afterEach(async () => {
+    jest.restoreAllMocks();
     await pool.query(`DELETE FROM webhook_log WHERE fonte = 'beds24'`);
     await pool.query(`DELETE FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999777'`);
   });
 
-  test('logga sempre il payload grezzo (incapsulato) su webhook_log, anche se il roomId non è mappato', async () => {
+  test('arricchisce con GET /bookings prima di processare, poi logga il payload grezzo (incapsulato)', async () => {
+    const bookingCompleto = {
+      id: 999777, roomId: 88888, arrival: '2026-12-01', departure: '2026-12-02',
+      numAdult: 1, numChild: 0, firstName: 'Test', lastName: 'Webhook',
+      email: 'webhook.beds24test@example.com', phone: null, status: 'confirmed',
+    };
+    const getBookingsSpy = jest.spyOn(beds24Client, 'getBookings').mockResolvedValue([bookingCompleto]);
+
     const risposta = await request(app)
       .post('/api/beds24/webhook/bookings')
       .send({
@@ -20,11 +29,29 @@ describe('POST /api/beds24/webhook/bookings', () => {
       });
 
     expect(risposta.status).toBe(200);
+    expect(getBookingsSpy).toHaveBeenCalledWith({ id: [999777] });
     const log = await pool.query(`SELECT * FROM webhook_log WHERE fonte = 'beds24' ORDER BY id DESC LIMIT 1`);
     expect(log.rows).toHaveLength(1);
     expect(log.rows[0].payload_raw.booking.id).toBe(999777);
+    // roomId 88888 non è mappato in tipi_camera_canali → finisce in coda,
+    // ma con i dati ospite VERI (dalla GET arricchita), non da null.
     const coda = await pool.query(`SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999777'`);
     expect(coda.rows).toHaveLength(1);
+    expect(coda.rows[0].payload_raw.email).toBe('webhook.beds24test@example.com');
+  });
+
+  test('se GET /bookings di arricchimento fallisce, non processa e non crea ospiti vuoti', async () => {
+    jest.spyOn(beds24Client, 'getBookings').mockRejectedValue(new Error('rete non raggiungibile'));
+
+    const risposta = await request(app)
+      .post('/api/beds24/webhook/bookings')
+      .send({ booking: { id: 999777, roomId: 88888, status: 'confirmed' } });
+
+    expect(risposta.status).toBe(200);
+    const log = await pool.query(`SELECT errore FROM webhook_log WHERE fonte = 'beds24' ORDER BY id DESC LIMIT 1`);
+    expect(log.rows[0].errore).toMatch(/arricchimento/);
+    const coda = await pool.query(`SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999777'`);
+    expect(coda.rows).toHaveLength(0);
   });
 
   test('risponde 200 anche se il payload è vuoto/malformato, senza andare in crash', async () => {
