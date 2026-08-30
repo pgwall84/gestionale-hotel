@@ -6,6 +6,7 @@
 // receptionist (shared/ruoli.js sezione 'pre_checkin').
 
 const pool = require('../config/db');
+const { CODICE_ITALIA_ALLOGGIATI } = require('../lib/rimovcliResidenza');
 
 // Stesso vincolo applicativo di soggiorniController.js: un soggiorno deve
 // avere esattamente un intestatario (singolo/capofamiglia/capogruppo).
@@ -86,6 +87,22 @@ const applica = async (req, res) => {
     }
     if (!TIPI_VALIDI.includes(o.tipo_alloggiato)) {
       return res.status(400).json({ error: `tipo_alloggiato deve essere uno tra: ${TIPI_VALIDI.join(', ')}.` });
+    }
+  }
+  // Vincolo ISTAT C/59 (Marco, 28/08/2026, ESTESO 28/08/2026 bis): ogni
+  // ospite deve avere la residenza compilata prima di applicare, non solo
+  // l'intestatario — gemello del vincolo (esteso) al check-in in
+  // prenotazioniController.js. La documentazione RIMOVCLI non prevede
+  // eccezioni per familiari/minori: arrivati/partiti/presenti contano ogni
+  // persona. Controllato anche il comune (non solo lo stato) quando la
+  // residenza è in Italia — mancava nella prima versione del vincolo. Dati
+  // già nel body, nessuna query aggiuntiva necessaria.
+  for (const o of ospiti) {
+    if (!o.stato_residenza_codice) {
+      return res.status(400).json({ error: `Manca lo stato di residenza per ${o.nome} ${o.cognome}: obbligatorio per applicare il pre-checkin.` });
+    }
+    if (o.stato_residenza_codice === CODICE_ITALIA_ALLOGGIATI && !o.comune_residenza_codice) {
+      return res.status(400).json({ error: `Manca il comune di residenza per ${o.nome} ${o.cognome} (residente in Italia): obbligatorio per applicare il pre-checkin.` });
     }
   }
   // Un solo intestatario (16/17/18) per soggiorno tra le righe inviate.

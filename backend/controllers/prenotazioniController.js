@@ -11,6 +11,8 @@ const { gestisciConflittoCamera } = require('../utils/erroriDb');
 const { inviaConfermaPrenotazione, inviaPromemoriaPreArrivo, inviaRichiestaRecensione, inviaInvitoPreCheckin } = require('../lib/emailPrenotazioni');
 const { verificaLimitiListino } = require('../utils/verificaLimitiListino');
 const { logAudit } = require('./auditController');
+const { CODICE_ITALIA_ALLOGGIATI } = require('../lib/rimovcliResidenza');
+const { campiObbligatoriMancanti } = require('../lib/alloggiatiSchedina');
 
 // Mappa esplicita delle transizioni di stato ammesse — non if/else sparsi.
 // Qualunque transizione fuori da questa mappa è un 400.
@@ -20,6 +22,67 @@ const TRANSIZIONI_VALIDE = {
   check_in:   ['check_out'],
   check_out:  ['chiusa'],
 };
+
+// Righe ospiti/soggiorni di una prenotazione con i dati completi per il
+// check-in — UNICA fonte di verità riusata sia dal gate bloccante in
+// aggiornaStato() sia da checkInDettaglio() (schermata multi check-in,
+// 29/08/2026): stessa query, stesso calcolo di 'mancanti', per non poter
+// mai avere una schermata che dice "tutto ok" e un gate che blocca lo
+// stesso identico check-in (o viceversa). Riceve `db` (pool o client di
+// una transazione) invece di importare pool direttamente, per restare
+// utilizzabile dentro la transazione di aggiornaStato() (serve la stessa
+// FOR UPDATE/BEGIN di quella funzione) e fuori (checkInDettaglio, sola
+// lettura). Una riga per ogni ospite collegato a un soggiorno; se un
+// soggiorno non ha ALCUN ospite collegato (dato storico/seed, non il
+// percorso normale di prenotazione) restituisce comunque una riga con
+// ospite_id null — il chiamante decide come segnalarlo.
+// ATTENZIONE SICUREZZA: la riga include documento_numero in chiaro (serve
+// a campiObbligatoriMancanti() per calcolare 'mancanti') — chi espone
+// questi dati verso il frontend (checkInDettaglio) deve escluderlo
+// esplicitamente dalla risposta, mai un semplice spread. Vedi
+// DOC_MASCHERATO/COLONNE_PUBBLICHE in anagraficaOspitiController.js per
+// la stessa regola applicata al resto dell'anagrafica.
+async function caricaOspitiCheckIn(db, prenotazioneId) {
+  const result = await db.query(
+    `SELECT s.id AS soggiorno_id, c.numero AS camera_numero,
+            s.data_arrivo, s.data_partenza,
+            so.tipo_alloggiato,
+            o.id AS ospite_id, o.nome, o.cognome, o.sesso, o.data_nascita,
+            o.stato_nascita_codice, o.stato_nascita_testo,
+            o.comune_nascita_codice, o.comune_nascita_testo,
+            o.provincia_nascita,
+            o.cittadinanza_codice, o.cittadinanza_testo,
+            o.documento_tipo_codice, o.documento_tipo_testo,
+            o.documento_numero, o.documento_scadenza,
+            o.luogo_rilascio_codice, o.luogo_rilascio_testo,
+            o.stato_residenza_codice, o.stato_residenza_testo,
+            o.comune_residenza_codice, o.comune_residenza_testo,
+            ${DOC_MASCHERATO}
+     FROM soggiorni s
+     JOIN camere c ON c.id = s.camera_id
+     LEFT JOIN soggiorno_ospiti so ON so.soggiorno_id = s.id
+     LEFT JOIN ospiti o ON o.id = so.ospite_id
+     WHERE s.prenotazione_id = $1 AND s.cancellato = false
+     ORDER BY s.data_arrivo, c.numero, o.cognome`,
+    [prenotazioneId]
+  );
+
+  // Stessi due controlli del vincolo RIMOVCLI + Alloggiati Web già in uso
+  // altrove nel file (residenza gestita qui perché non è nel perimetro di
+  // campiObbligatoriMancanti — normativa diversa, vedi commento originale
+  // nel gate) — riuso diretto della funzione per il resto, non una
+  // riscrittura.
+  return result.rows.map(r => {
+    if (!r.ospite_id) return { ...r, mancanti: null };
+    const mancanti = [];
+    if (!r.stato_residenza_codice) mancanti.push('stato di residenza');
+    if (r.stato_residenza_codice === CODICE_ITALIA_ALLOGGIATI && !r.comune_residenza_codice) {
+      mancanti.push('comune di residenza');
+    }
+    mancanti.push(...campiObbligatoriMancanti(r));
+    return { ...r, mancanti };
+  });
+}
 
 // GET /api/prenotazioni/griglia?data_inizio=&data_fine= — vista planning.
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
@@ -46,6 +109,13 @@ const TRANSIZIONI_VALIDE = {
 // in backend/lib/emailPrenotazioni.js (recuperaSoggiorni/nomeCameraVisibile),
 // per non mostrare mai un tipo diverso tra mail e planning per lo stesso
 // soggiorno.
+//
+// pre_checkin_inviato_at + pcr.stato (LATERAL su pre_checkin_richieste,
+// Marco 28/08/2026 notte): dati grezzi per l'icona di stato pre-checkin nel
+// planning (vista Griglia) — nessun nuovo stato in prenotazioni.stato, solo
+// informazione calcolata lato frontend (non_inviato/inviato/ricevuto/
+// applicato). Stesso pattern già usato in preCheckinPubblicoController.js
+// per prendere la richiesta più recente non scartata di una prenotazione.
 async function griglia(req, res) {
   const { data_inizio, data_fine } = req.query;
   if (!data_inizio || !data_fine) {
@@ -58,6 +128,7 @@ async function griglia(req, res) {
               s.id AS soggiorno_id, s.data_arrivo, s.data_partenza, s.num_ospiti, s.tariffa_totale,
               s.trattamento, COALESCE(tcv.nome, tc.nome) AS tipo_camera_venduto_nome,
               p.id AS prenotazione_id, p.stato AS prenotazione_stato, p.gruppo_id,
+              p.pre_checkin_inviato_at, pcr.stato AS pre_checkin_richiesta_stato,
               o.id AS ospite_id, o.nome AS ospite_nome, o.cognome AS ospite_cognome
        FROM camere c
        LEFT JOIN soggiorni s ON s.camera_id = c.id AND s.cancellato = false
@@ -66,6 +137,11 @@ async function griglia(req, res) {
        LEFT JOIN ospiti o ON o.id = s.ospite_id
        LEFT JOIN tipi_camera tc ON tc.id = c.tipo_camera_id
        LEFT JOIN tipi_camera tcv ON tcv.id = s.tipo_camera_venduto_id
+       LEFT JOIN LATERAL (
+         SELECT stato FROM pre_checkin_richieste
+         WHERE prenotazione_id = p.id AND stato != 'scartata'
+         ORDER BY creato_at DESC LIMIT 1
+       ) pcr ON true
        WHERE c.attivo = true
        ORDER BY c.piano NULLS LAST,
                 CASE WHEN c.numero ~ '^\\d+$' THEN c.numero::INTEGER ELSE 999999 END,
@@ -622,6 +698,66 @@ async function aggiornaStato(req, res) {
       });
     }
 
+    // Vincolo ISTAT C/59 (modulo 2.6, RIMOVCLI — richiesto da Marco il
+    // 27/08/2026 dopo aver trovato ospiti esclusi dal generatore
+    // rimovcliC59.js per mancanza dello stato di residenza). ESTESO
+    // 28/08/2026 (bis): il vincolo copriva solo l'intestatario del
+    // soggiorno (tipo_alloggiato '16'/'17'/'18') — troppo stretto. La
+    // documentazione RIMOVCLI (docs/rimovcli/ModelloC59.xsd + Manuale
+    // Utente ImportC59.pdf) non prevede alcuna eccezione per familiari o
+    // minori: arrivati/partiti/presenti contano OGNI persona, quindi al
+    // check-in deve avere residenza compilata OGNI ospite del soggiorno,
+    // non solo l'intestatario — altrimenti quell'ospite viene
+    // silenziosamente escluso dall'export RIMOVCLI del giorno. Controllato
+    // anche il comune di residenza (non solo lo stato) quando la residenza
+    // è in Italia — stesso identico dato richiesto da rimovcliResidenza.js
+    // per risolvere la provincia, mancava anche questo nel vincolo
+    // originale. Blocca la transizione (non un avviso ignorabile): il
+    // momento del check-in è quando la reception ha l'ospite davanti per
+    // chiedere il dato, non dopo. LEFT JOIN apposta: un soggiorno senza
+    // nessun ospite assegnato (non dovrebbe succedere, vincolo applicativo
+    // non CHECK DB) blocca comunque, invece di passare inosservato.
+    if (statoRichiesto === 'check_in') {
+      // ESTESO 28/08/2026 (notte, richiesta esplicita del titolare, seguito
+      // alla ristrutturazione degli stati prenotazione): il gate copriva
+      // solo la residenza (RIMOVCLI). Ora copre anche tutti gli altri campi
+      // obbligatori per Alloggiati Web (sesso, data/luogo nascita,
+      // cittadinanza, documento per l'intestatario) — stessa identica
+      // funzione già collaudata che decide chi resta fuori dalla schedina,
+      // `campiObbligatoriMancanti()` in lib/alloggiatiSchedina.js: NON una
+      // riscrittura, un riuso diretto, per non avere due liste di campi
+      // obbligatori che possono disallinearsi nel tempo. I due controlli
+      // (residenza / Alloggiati Web) restano concettualmente separati —
+      // normative diverse — ma il messaggio di blocco li unisce in un
+      // elenco solo, per camera/ospite.
+      // 29/08/2026: query+calcolo estratti in caricaOspitiCheckIn(), condivisa
+      // con checkInDettaglio() (schermata multi check-in) — stesso identico
+      // controllo, non due liste che possono disallinearsi. codice
+      // 'DATI_INCOMPLETI' nella risposta: il frontend lo usa per aprire la
+      // schermata multi check-in invece di mostrare solo il testo
+      // dell'errore (prima l'unica via era la scheda cliente singola).
+      const righe = await caricaOspitiCheckIn(client, req.params.id);
+
+      const problemi = [];
+      for (const r of righe) {
+        const etichetta = (r.nome && r.cognome)
+          ? `${r.cognome} ${r.nome} (camera ${r.camera_numero})`
+          : `camera ${r.camera_numero}`;
+        if (!r.ospite_id) {
+          problemi.push(`${etichetta}: nessun ospite assegnato`);
+          continue;
+        }
+        if (r.mancanti.length) problemi.push(`${etichetta}: manca ${r.mancanti.join(', ')}`);
+      }
+      if (problemi.length > 0) {
+        await client.query('ROLLBACK');
+        return res.status(400).json({
+          error: `Check-in bloccato — dati incompleti: ${problemi.join('; ')}.`,
+          codice: 'DATI_INCOMPLETI',
+        });
+      }
+    }
+
     const result = await client.query(
       `UPDATE prenotazioni SET stato = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
       [statoRichiesto, req.params.id]
@@ -667,6 +803,62 @@ async function aggiornaStato(req, res) {
     res.status(500).json({ error: 'Errore interno' });
   } finally {
     client.release();
+  }
+}
+
+// GET /api/prenotazioni/:id/check-in-dettaglio — dati per la schermata
+// multi check-in (29/08/2026): per ogni soggiorno attivo della
+// prenotazione, l'elenco degli ospiti collegati con TUTTI i campi
+// modificabili (non solo quelli mancanti — decisione esplicita del
+// titolare, la schermata deve poter correggere anche un dato sbagliato,
+// non solo compilare un vuoto) più 'mancanti', calcolato dalla stessa
+// caricaOspitiCheckIn() del gate bloccante: se questo endpoint dice che
+// un ospite non ha più nulla di mancante, il PATCH .../stato successivo
+// deve andare a buon fine, altrimenti è un bug qui o lì, mai un
+// disallineamento normale. Sola lettura, stessi permessi di
+// 'prenotazioni'.lettura (admin/titolare/receptionist/portiere_notte) —
+// portiere_notte ci deve arrivare, è il caso d'uso principale (check-in
+// notturno). documento_numero NON deve mai comparire nella risposta: solo
+// documento_mascherato, stessa regola non derogabile di
+// anagraficaOspitiController.js.
+async function checkInDettaglio(req, res) {
+  try {
+    const prenotazione = await pool.query('SELECT id FROM prenotazioni WHERE id = $1', [req.params.id]);
+    if (!prenotazione.rows.length) {
+      return res.status(404).json({ error: 'Prenotazione non trovata' });
+    }
+
+    const righe = await caricaOspitiCheckIn(pool, req.params.id);
+
+    const soggiorni = [];
+    const indiceSoggiorni = new Map();
+    for (const r of righe) {
+      let sog = indiceSoggiorni.get(r.soggiorno_id);
+      if (!sog) {
+        sog = {
+          soggiorno_id: r.soggiorno_id,
+          camera_numero: r.camera_numero,
+          data_arrivo: r.data_arrivo,
+          data_partenza: r.data_partenza,
+          ospiti: [],
+        };
+        indiceSoggiorni.set(r.soggiorno_id, sog);
+        soggiorni.push(sog);
+      }
+      if (!r.ospite_id) continue; // "nessun ospite assegnato" — ospiti resta [], il frontend mostra solo l'avviso
+      // Esclusione esplicita di documento_numero (mai in chiaro) e delle
+      // colonne di raggruppamento (già in sog) — MAI uno spread di r intero.
+      const {
+        documento_numero, soggiorno_id, camera_numero, data_arrivo, data_partenza, ospite_id,
+        ...campi
+      } = r;
+      sog.ospiti.push({ id: ospite_id, ...campi });
+    }
+
+    res.json({ soggiorni });
+  } catch (err) {
+    console.error('check-in dettaglio prenotazione error:', err);
+    res.status(500).json({ error: 'Errore interno' });
   }
 }
 
@@ -724,4 +916,4 @@ async function inviaPreCheckin(req, res) {
   }
 }
 
-module.exports = { griglia, disponibilita, lista, dettaglio, conto, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };
+module.exports = { griglia, disponibilita, lista, dettaglio, conto, crea, aggiungiSoggiorno, aggiorna, aggiornaStato, checkInDettaglio, testEmail, inviaPreCheckin, TRANSIZIONI_VALIDE };
