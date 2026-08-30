@@ -14,3 +14,9 @@ backend/uploads/
 frontend/.next/
 test-results/
 playwright-report/
+
+# Scarti locali / scorciatoie Windows, mai da versionare
+*.lnk
+run-test.ps1
+test.bat
+_to_delete/
