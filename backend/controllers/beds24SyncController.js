@@ -56,6 +56,19 @@ async function trovaCameraLibera(client, tipoCameraId, dataArrivo, dataPartenza)
   return risultato.rows[0]?.id || null;
 }
 
+// Scrive una prenotazione non assegnabile automaticamente nella coda di
+// revisione manuale (camera non mappata o nessuna camera fisica libera).
+// Va chiamata DOPO il ROLLBACK della transazione principale, come query
+// indipendente (la riga di coda deve sopravvivere anche se la transazione
+// che tentava l'upsert è stata annullata).
+async function scriviInCoda(externalBookingId, payload, motivo) {
+  await pool.query(
+    `INSERT INTO beds24_prenotazioni_da_revisionare (external_booking_id, payload_raw, motivo)
+     VALUES ($1, $2, $3)`,
+    [externalBookingId, JSON.stringify(payload), motivo]
+  );
+}
+
 // Elabora una prenotazione grezza ricevuta da Beds24 (webhook o job di
 // riconciliazione). Idempotente: la stessa external_booking_id aggiorna
 // la riga esistente invece di duplicarla.
@@ -79,6 +92,7 @@ async function processaBooking(booking) {
     );
     if (!mappatura.rows.length) {
       await client.query('ROLLBACK');
+      await scriviInCoda(externalBookingId, booking, 'camera_non_mappata');
       return { esito: 'in_coda', dettaglio: { motivo: 'camera_non_mappata' } };
     }
     const tipoCameraId = mappatura.rows[0].tipo_camera_id;
@@ -114,6 +128,7 @@ async function processaBooking(booking) {
     const cameraId = await trovaCameraLibera(client, tipoCameraId, booking.arrival, booking.departure);
     if (!cameraId) {
       await client.query('ROLLBACK');
+      await scriviInCoda(externalBookingId, booking, 'nessuna_camera_disponibile');
       return { esito: 'in_coda', dettaglio: { motivo: 'nessuna_camera_disponibile' } };
     }
 

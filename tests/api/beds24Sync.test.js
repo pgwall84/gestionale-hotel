@@ -146,3 +146,61 @@ describe('beds24SyncController — processaBooking, cancellazioni', () => {
     expect(prenotazione.rows[0].stato).not.toBe('interrotta');
   });
 });
+
+describe('beds24SyncController — processaBooking, coda da revisionare', () => {
+  afterEach(async () => {
+    await pool.query(`DELETE FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id IN ('555444', '555555')`);
+  });
+
+  test('roomId non mappato finisce in coda con il motivo corretto, nessuna scrittura su prenotazioni', async () => {
+    const risultato = await processaBooking({
+      id: 555444, roomId: 12345999, arrival: '2026-11-22', departure: '2026-11-23',
+      numAdult: 1, numChild: 0, firstName: 'Test', lastName: 'NonMappato', email: 'nonmappato.beds24test@example.com', status: 'confirmed',
+    });
+
+    expect(risultato.esito).toBe('in_coda');
+    expect(risultato.dettaglio.motivo).toBe('camera_non_mappata');
+    const coda = await pool.query(
+      `SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '555444'`
+    );
+    expect(coda.rows).toHaveLength(1);
+    expect(coda.rows[0].motivo).toBe('camera_non_mappata');
+    expect(coda.rows[0].risolto).toBe(false);
+    const prenotazione = await pool.query(
+      `SELECT * FROM prenotazioni WHERE external_booking_id = '555444'`
+    );
+    expect(prenotazione.rows).toHaveLength(0);
+  });
+
+  test('camera mappata ma tutte occupate finisce in coda con motivo nessuna_camera_disponibile', async () => {
+    const tc = await pool.query(`INSERT INTO tipi_camera (nome, capienza_max) VALUES ('Singola Piena Test', 1) RETURNING id`);
+    const c = await pool.query(`INSERT INTO camere (numero, nome, attivo) VALUES ('T26', 'Camera Piena Test', true) RETURNING id`);
+    await pool.query(`INSERT INTO tipi_camera_camere (tipo_camera_id, camera_id) VALUES ($1, $2)`, [tc.rows[0].id, c.rows[0].id]);
+    await pool.query(`INSERT INTO tipi_camera_canali (tipo_camera_id, canale, codice_esterno) VALUES ($1, 'beds24', '777000')`, [tc.rows[0].id]);
+    const ospite = await pool.query(`INSERT INTO ospiti (nome, cognome) VALUES ('Occupante', 'Test') RETURNING id`);
+    const prenotazioneEsistente = await pool.query(
+      `INSERT INTO prenotazioni (canale_origine, stato) VALUES ('test_interno', 'confermata') RETURNING id`
+    );
+    await pool.query(
+      `INSERT INTO soggiorni (prenotazione_id, camera_id, ospite_id, data_arrivo, data_partenza, num_ospiti)
+       VALUES ($1, $2, $3, '2026-11-25', '2026-11-27', 1)`,
+      [prenotazioneEsistente.rows[0].id, c.rows[0].id, ospite.rows[0].id]
+    );
+
+    const risultato = await processaBooking({
+      id: 555555, roomId: 777000, arrival: '2026-11-25', departure: '2026-11-27',
+      numAdult: 1, numChild: 0, firstName: 'Test', lastName: 'SenzaCamera', email: 'senzacamera.beds24test@example.com', status: 'confirmed',
+    });
+
+    expect(risultato.esito).toBe('in_coda');
+    expect(risultato.dettaglio.motivo).toBe('nessuna_camera_disponibile');
+
+    await pool.query(`DELETE FROM soggiorni WHERE prenotazione_id = $1`, [prenotazioneEsistente.rows[0].id]);
+    await pool.query(`DELETE FROM prenotazioni WHERE id = $1`, [prenotazioneEsistente.rows[0].id]);
+    await pool.query(`DELETE FROM ospiti WHERE id = $1`, [ospite.rows[0].id]);
+    await pool.query(`DELETE FROM tipi_camera_canali WHERE tipo_camera_id = $1`, [tc.rows[0].id]);
+    await pool.query(`DELETE FROM tipi_camera_camere WHERE camera_id = $1`, [c.rows[0].id]);
+    await pool.query(`DELETE FROM camere WHERE id = $1`, [c.rows[0].id]);
+    await pool.query(`DELETE FROM tipi_camera WHERE id = $1`, [tc.rows[0].id]);
+  });
+});
