@@ -3,6 +3,12 @@
 Data: 30/08/2026
 Stato: approvato da Marco in sessione di brainstorming — scope C, sottoinsieme della strategia A discussa in sessione. In attesa di piano di implementazione (writing-plans).
 
+**Correzione (30/08/2026, in fase di scrittura del piano)**: il meccanismo
+"da revisionare" descritto sotto è stato ridisegnato — non è tecnicamente
+costruibile come flag su `soggiorni` (vedi sezione Gestione errori punto 2
+per il motivo). Marco ha confermato la correzione durante la stesura del
+piano, nessuna riapertura di brainstorming.
+
 ## Contesto
 
 Modulo 2.3 — Beds24 scelto il 19/08/2026 al posto di WuBook/WooDoo (RoomCloud
@@ -105,9 +111,12 @@ logiche di scrittura da mantenere allineate.
 
 ## Componenti nuovi
 
-- `database/migrations/0XX_beds24_config.sql` — tabella singleton (stesso
-  pattern di `configurazione_ztl`): `refresh_token`, `token`,
-  `token_scade_at`, `ultima_sincronizzazione_at`.
+- `database/migrations/055_beds24.sql` — due tabelle: `beds24_config`
+  (singleton, stesso pattern di `configurazione_ztl`: `refresh_token`,
+  `token`, `token_scade_at`, `ultima_sincronizzazione_at`) e
+  `beds24_prenotazioni_da_revisionare` (coda per le prenotazioni che non
+  si possono scrivere automaticamente su `prenotazioni`/`soggiorni` —
+  vedi Gestione errori punto 2).
 - `backend/lib/beds24Client.js` — client HTTP: header `token`, refresh
   automatico, rispetto del rate limit (100 crediti/5min per account,
   retry su 429/esaurimento crediti).
@@ -142,12 +151,31 @@ aggiornando poi `ultima_sincronizzazione_at`.
    tocca lo stato della prenotazione — la segnala per revisione umana.
    Nessuna nuova transizione automatica `check_in → interrotta` nella
    state machine.
-2. **Camera non mappata** (`roomId` senza corrispondenza in
-   `tipi_camera_canali`): la prenotazione **non viene scartata** — si
-   salva comunque con un flag "da revisionare" e viene segnalata. Stesso
-   principio già applicato al fix "ospite vuoto che sparisce" in
-   Alloggiati Web (28/08/2026): mai uno scarto silenzioso su dati che
-   riguardano occupazione/soldi.
+2. **Prenotazione non assegnabile automaticamente** — due motivi
+   possibili: (a) `roomId` Beds24 senza corrispondenza in
+   `tipi_camera_canali`, oppure (b) `roomId` mappato correttamente ma
+   nessuna camera fisica libera per quelle date (**atteso in Fase 1**:
+   senza il punto 2 del modulo — invio disponibilità verso Beds24 — gli
+   OTA non conoscono l'occupazione reale, quindi un conflitto di date non
+   è un'eccezione rara). In nessuno dei due casi la prenotazione viene
+   scartata: **non tocca `prenotazioni`/`soggiorni`** (impossibile
+   comunque, vedi sotto) — finisce nella coda
+   `beds24_prenotazioni_da_revisionare` con il payload grezzo e il
+   motivo, e la reception la registra a mano con lo stesso strumento già
+   in uso oggi per una prenotazione telefonica, poi la segna risolta.
+
+   **Perché non un flag su `soggiorni` (come nella versione precedente di
+   questa spec)**: `soggiorni.camera_id` è `NOT NULL` e ha un vincolo
+   `EXCLUDE` a livello di database (migration 017) che impedisce
+   fisicamente due soggiorni sulla stessa camera con date sovrapposte —
+   senza una camera fisica libera da assegnare, la riga non si può
+   scrivere, un flag non risolve il problema. Ampliare lo schema
+   (`camera_id` nullable) è stato scartato: tocca una tabella centrale
+   usata da tutto il modulo Prenotazioni/planning, sproporzionato per una
+   Fase 1 di sola lettura. Stesso principio di fondo di "ospite vuoto che
+   sparisce" in Alloggiati Web (28/08/2026): mai uno scarto silenzioso su
+   dati che riguardano occupazione/soldi — cambia solo il meccanismo con
+   cui si evita lo scarto.
 3. **Setup credenziali**: vedi sezione Autenticazione — script CLI
    one-shot, refresh token in tabella DB (ruota), mai in `.env`/Git.
 4. **Anagrafica ospite**: creazione minima nome+cognome all'arrivo del
@@ -174,8 +202,11 @@ aggiornando poi `ultima_sincronizzazione_at`.
 `tests/api/beds24.test.js`, stesso schema degli altri moduli:
 - Payload valido → upsert corretto (nuova prenotazione).
 - `external_booking_id` duplicato → aggiornamento, nessun doppione.
-- `roomId` non mappato → flag "da revisionare", nessun crash, nessuno
-  scarto silenzioso.
+- `roomId` non mappato → riga in coda `beds24_prenotazioni_da_revisionare`
+  con motivo `'camera_non_mappata'`, nessun crash, nessuno scarto
+  silenzioso, nessuna scrittura su `prenotazioni`/`soggiorni`.
+- `roomId` mappato ma nessuna camera libera per le date richieste → riga
+  in coda con motivo `'nessuna_camera_disponibile'`, stesso trattamento.
 - Cancellazione pre check-in → `stato='interrotta'`.
 - Cancellazione post check-in → nessuna transizione automatica, solo
   segnalazione.
