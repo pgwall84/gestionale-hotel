@@ -29,7 +29,7 @@
 **Interfaces:**
 - Produces: tabella `beds24_config` (colonne: `id`, `refresh_token`, `token`, `token_scade_at`, `ultima_sincronizzazione_at`, `updated_at`) e tabella `beds24_prenotazioni_da_revisionare` (colonne: `id`, `external_booking_id`, `payload_raw`, `motivo`, `risolto`, `created_at`, `updated_at`) — usate da tutti i task successivi.
 
-- [ ] **Step 1: Scrivere la migration**
+- [x] **Step 1: Scrivere la migration**
 
 ```sql
 -- Migration 055 — Integrazione Beds24, Fase 1 (lettura prenotazioni OTA).
@@ -80,7 +80,7 @@ Expected: `CREATE TABLE` x2, `CREATE INDEX` x1, nessun errore.
 Run: `psql -U <utente> -d gestionale_hotel -c "\d beds24_config" -c "\d beds24_prenotazioni_da_revisionare"`
 Expected: le colonne elencate sopra, il CHECK su `id` e quello su `motivo` visibili in output.
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add database/migrations/055_beds24.sql
@@ -99,7 +99,7 @@ git commit -m "feat(beds24): migration tabelle config e coda prenotazioni da rev
 - Consumes: tabella `beds24_config` (Task 1).
 - Produces: `scambiaInviteCode(inviteCode)` → `Promise<{ token, refreshToken, expiresIn }>`, salva su `beds24_config`. `getToken()` → `Promise<string>` (token valido, rinnovato automaticamente se scaduto). Usati da Task 4 (`beds24Setup.js`) e Task 5/6/7 (`beds24SyncController.js`, job di riconciliazione).
 
-- [ ] **Step 1: Scrivere il test per `getToken()` con token ancora valido**
+- [x] **Step 1: Scrivere il test per `getToken()` con token ancora valido**
 
 ```javascript
 // tests/lib/beds24Client.test.js
@@ -132,7 +132,7 @@ describe('beds24Client — getToken', () => {
 Run: `npx jest tests/lib/beds24Client.test.js -v`
 Expected: FAIL — `Cannot find module '../../backend/lib/beds24Client'`.
 
-- [ ] **Step 3: Scrivere l'implementazione minima (`getToken` + `scambiaInviteCode`)**
+- [x] **Step 3: Scrivere l'implementazione minima (`getToken` + `scambiaInviteCode`)**
 
 ```javascript
 // backend/lib/beds24Client.js
@@ -219,7 +219,7 @@ module.exports = { scambiaInviteCode, getToken };
 Run: `npx jest tests/lib/beds24Client.test.js -v`
 Expected: PASS.
 
-- [ ] **Step 5: Scrivere il test per il rinnovo automatico**
+- [x] **Step 5: Scrivere il test per il rinnovo automatico**
 
 ```javascript
 test('rinnova il token se scaduto e salva il nuovo su beds24_config', async () => {
@@ -245,7 +245,7 @@ test('rinnova il token se scaduto e salva il nuovo su beds24_config', async () =
 Run: `npx jest tests/lib/beds24Client.test.js -v`
 Expected: PASS (2/2).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/lib/beds24Client.js tests/lib/beds24Client.test.js
@@ -264,7 +264,7 @@ git commit -m "feat(beds24): client autenticazione con rinnovo automatico token"
 - Consumes: `getToken()` (Task 2).
 - Produces: `getBookings({ modifiedSince })` → `Promise<Array<object>>` (array di prenotazioni grezze Beds24). Usata dal job di riconciliazione (Task 10).
 
-- [ ] **Step 1: Scrivere il test**
+- [x] **Step 1: Scrivere il test**
 
 ```javascript
 test('getBookings passa il token e modifiedSince, restituisce un array', async () => {
@@ -291,7 +291,7 @@ test('getBookings passa il token e modifiedSince, restituisce un array', async (
 Run: `npx jest tests/lib/beds24Client.test.js -v`
 Expected: FAIL — `beds24Client.getBookings is not a function`.
 
-- [ ] **Step 3: Implementare `getBookings`**
+- [x] **Step 3: Implementare `getBookings`**
 
 ```javascript
 // Aggiungere a backend/lib/beds24Client.js, sopra module.exports.
@@ -317,7 +317,7 @@ async function getBookings({ modifiedSince } = {}) {
 }
 ```
 
-- [ ] **Step 4: Aggiornare `module.exports`**
+- [x] **Step 4: Aggiornare `module.exports`**
 
 ```javascript
 module.exports = { scambiaInviteCode, getToken, getBookings };
@@ -328,7 +328,7 @@ module.exports = { scambiaInviteCode, getToken, getBookings };
 Run: `npx jest tests/lib/beds24Client.test.js -v`
 Expected: PASS (3/3).
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/lib/beds24Client.js tests/lib/beds24Client.test.js
@@ -346,7 +346,7 @@ git commit -m "feat(beds24): getBookings con supporto modifiedSince"
 - Consumes: `scambiaInviteCode(inviteCode)` (Task 2).
 - Produces: script CLI eseguito a mano da Marco, nessuna interfaccia consumata da altri task.
 
-- [ ] **Step 1: Scrivere lo script**
+- [x] **Step 1: Scrivere lo script**
 
 ```javascript
 // backend/scripts/beds24Setup.js
@@ -380,12 +380,12 @@ async function main() {
 main();
 ```
 
-- [ ] **Step 2: Verificare che lo script parta senza errori di sintassi**
+- [x] **Step 2: Verificare che lo script parta senza errori di sintassi**
 
 Run: `node -c backend/scripts/beds24Setup.js`
 Expected: nessun output (nessun errore di sintassi).
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add backend/scripts/beds24Setup.js
@@ -404,7 +404,7 @@ git commit -m "feat(beds24): script CLI setup credenziali one-shot"
 - Consumes: `tipi_camera_canali` (mappatura `roomId`→`tipo_camera_id`), pattern di assegnazione camera già in uso in `bookingPubblicoController.js` (query `camere`/`tipi_camera_camere` con `FOR UPDATE SKIP LOCKED`).
 - Produces: `processaBooking(bookingBeds24)` → `Promise<{ esito: string, dettaglio?: object }>`. `esito` può essere `'creata'`, `'aggiornata'`, `'cancellata'`, `'cancellazione_ignorata_post_checkin'`, `'in_coda'`. Usata da Task 8 (route webhook) e Task 10 (job riconciliazione).
 
-- [ ] **Step 1: Scrivere il test per la creazione di una nuova prenotazione**
+- [x] **Step 1: Scrivere il test per la creazione di una nuova prenotazione**
 
 ```javascript
 // tests/api/beds24Sync.test.js
@@ -495,7 +495,7 @@ describe('beds24SyncController — processaBooking, creazione', () => {
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: FAIL — `Cannot find module '../../backend/controllers/beds24SyncController'`.
 
-- [ ] **Step 3: Implementare la creazione/aggiornamento (senza ancora cancellazioni/coda — arrivano nei Task 6 e 7)**
+- [x] **Step 3: Implementare la creazione/aggiornamento (senza ancora cancellazioni/coda — arrivano nei Task 6 e 7)**
 
 ```javascript
 // backend/controllers/beds24SyncController.js
@@ -638,7 +638,7 @@ module.exports = { processaBooking };
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: PASS (2/2).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/controllers/beds24SyncController.js tests/api/beds24Sync.test.js
@@ -657,7 +657,7 @@ git commit -m "feat(beds24): upsert idempotente prenotazioni (creazione/aggiorna
 - Consumes: `processaBooking` esistente (Task 5), colonna `soggiorni.check_in_effettuato_at`, colonna `soggiorni.cancellato`.
 - Produces: `processaBooking` ora gestisce anche `booking.status === 'cancelled'`.
 
-- [ ] **Step 1: Scrivere i due test di cancellazione**
+- [x] **Step 1: Scrivere i due test di cancellazione**
 
 ```javascript
 describe('beds24SyncController — processaBooking, cancellazioni', () => {
@@ -733,7 +733,7 @@ describe('beds24SyncController — processaBooking, cancellazioni', () => {
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: FAIL — entrambi i nuovi test falliscono (`esito` resta `'aggiornata'`, mai `'cancellata'` o `'cancellazione_ignorata_post_checkin'`).
 
-- [ ] **Step 3: Implementare la gestione delle cancellazioni**
+- [x] **Step 3: Implementare la gestione delle cancellazioni**
 
 ```javascript
 // Sostituire, dentro processaBooking, il blocco:
@@ -777,7 +777,7 @@ Expected: FAIL — entrambi i nuovi test falliscono (`esito` resta `'aggiornata'
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: PASS (4/4).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/controllers/beds24SyncController.js tests/api/beds24Sync.test.js
@@ -796,7 +796,7 @@ git commit -m "feat(beds24): gestione cancellazioni, mai automatiche dopo il che
 - Consumes: tabella `beds24_prenotazioni_da_revisionare` (Task 1).
 - Produces: `processaBooking` ora scrive in coda invece di limitarsi a restituire `esito: 'in_coda'` senza traccia persistita.
 
-- [ ] **Step 1: Scrivere i due test (camera non mappata, nessuna camera disponibile)**
+- [x] **Step 1: Scrivere i due test (camera non mappata, nessuna camera disponibile)**
 
 ```javascript
 describe('beds24SyncController — processaBooking, coda da revisionare', () => {
@@ -863,7 +863,7 @@ describe('beds24SyncController — processaBooking, coda da revisionare', () => 
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: FAIL — `beds24_prenotazioni_da_revisionare` resta vuota in entrambi i casi (la funzione oggi fa solo `ROLLBACK` e ritorna, non scrive la coda).
 
-- [ ] **Step 3: Scrivere la coda nei due punti di uscita "in_coda"**
+- [x] **Step 3: Scrivere la coda nei due punti di uscita "in_coda"**
 
 ```javascript
 // In processaBooking, sostituire i due `return { esito: 'in_coda', ... }`
@@ -899,7 +899,7 @@ async function scriviInCoda(externalBookingId, payload, motivo) {
 Run: `npx jest tests/api/beds24Sync.test.js -v`
 Expected: PASS (6/6).
 
-- [ ] **Step 5: Commit**
+- [x] **Step 5: Commit**
 
 ```bash
 git add backend/controllers/beds24SyncController.js tests/api/beds24Sync.test.js
@@ -919,7 +919,7 @@ git commit -m "feat(beds24): coda persistita per prenotazioni non assegnabili au
 - Consumes: `processaBooking` (Task 5/6/7).
 - Produces: `POST /api/beds24/webhook/bookings`, pubblica, montata in `app.js`.
 
-- [ ] **Step 1: Scrivere il test del webhook**
+- [x] **Step 1: Scrivere il test del webhook**
 
 ```javascript
 // tests/api/beds24Webhook.test.js
@@ -958,7 +958,7 @@ describe('POST /api/beds24/webhook/bookings', () => {
 Run: `npx jest tests/api/beds24Webhook.test.js -v`
 Expected: FAIL — `404` (`Route non trovata`), la rotta non esiste ancora.
 
-- [ ] **Step 3: Implementare la rotta**
+- [x] **Step 3: Implementare la rotta**
 
 ```javascript
 // backend/routes/beds24.js
@@ -1049,7 +1049,7 @@ router.patch('/da-revisionare/:id/risolvi', verificaToken, richiedeAzione('beds2
 module.exports = router;
 ```
 
-- [ ] **Step 4: Montare la rotta in `app.js`**
+- [x] **Step 4: Montare la rotta in `app.js`**
 
 ```javascript
 // Aggiungere vicino alle altre const require('./routes/...') — accanto a canaliOtaRoutes:
@@ -1059,7 +1059,7 @@ const beds24Routes = require('./routes/beds24');
 app.use('/api/beds24', beds24Routes);
 ```
 
-- [ ] **Step 5: Aggiungere il permesso `beds24` a `shared/ruoli.js`**
+- [x] **Step 5: Aggiungere il permesso `beds24` a `shared/ruoli.js`**
 
 ```javascript
 // In PERMESSI_SEZIONI, vicino a canali_ota — lettura e risoluzione anche
@@ -1076,7 +1076,7 @@ beds24: {
 Run: `npx jest tests/api/beds24Webhook.test.js -v`
 Expected: PASS (2/2).
 
-- [ ] **Step 7: Commit**
+- [x] **Step 7: Commit**
 
 ```bash
 git add backend/routes/beds24.js backend/app.js shared/ruoli.js tests/api/beds24Webhook.test.js
@@ -1093,7 +1093,7 @@ git commit -m "feat(beds24): rotta webhook prenotazioni + coda da-revisionare"
 **Interfaces:**
 - Consumes: `GET /api/beds24/da-revisionare`, `PATCH /api/beds24/da-revisionare/:id/risolvi` (Task 8), helper `tests/helpers/auth.js` per token di test per ruolo.
 
-- [ ] **Step 1: Scrivere i test di permesso (senza token, ruolo non abilitato, ruolo abilitato)**
+- [x] **Step 1: Scrivere i test di permesso (senza token, ruolo non abilitato, ruolo abilitato)**
 
 ```javascript
 const { ottieniTokenPerRuolo } = require('../helpers/auth'); // helper già esistente nel progetto
@@ -1124,7 +1124,7 @@ describe('GET /api/beds24/da-revisionare — permessi', () => {
 Run: `npx jest tests/api/beds24Webhook.test.js -v`
 Expected: PASS (5/5) — la logica dei permessi è già quella generica di `richiedeAzione`/`verificaToken`, questo task verifica che il collegamento in Task 8 sia corretto, non introduce codice nuovo.
 
-- [ ] **Step 3: Commit**
+- [x] **Step 3: Commit**
 
 ```bash
 git add tests/api/beds24Webhook.test.js
@@ -1143,7 +1143,7 @@ git commit -m "test(beds24): copertura permessi per ruolo sulla coda da-revision
 - Consumes: `getBookings` (Task 3), `processaBooking` (Task 5/6/7), tabella `beds24_config.ultima_sincronizzazione_at`.
 - Produces: `avviaJobRiconciliazioneBeds24()`, chiamata solo da `server.js`.
 
-- [ ] **Step 1: Scrivere il job**
+- [x] **Step 1: Scrivere il job**
 
 ```javascript
 // backend/jobs/beds24Riconciliazione.js
@@ -1195,12 +1195,12 @@ function avviaJobRiconciliazioneBeds24() {
 module.exports = { avviaJobRiconciliazioneBeds24, eseguiRiconciliazione };
 ```
 
-- [ ] **Step 2: Verificare che il file non abbia errori di sintassi**
+- [x] **Step 2: Verificare che il file non abbia errori di sintassi**
 
 Run: `node -c backend/jobs/beds24Riconciliazione.js`
 Expected: nessun output.
 
-- [ ] **Step 3: Scrivere un test manuale per `eseguiRiconciliazione` (non lo schedule, la funzione)**
+- [x] **Step 3: Scrivere un test manuale per `eseguiRiconciliazione` (non lo schedule, la funzione)**
 
 ```javascript
 // tests/lib/beds24Riconciliazione.test.js
@@ -1242,7 +1242,7 @@ describe('eseguiRiconciliazione', () => {
 Run: `npx jest tests/lib/beds24Riconciliazione.test.js -v`
 Expected: PASS (2/2).
 
-- [ ] **Step 5: Collegare il job a `server.js`**
+- [x] **Step 5: Collegare il job a `server.js`**
 
 ```javascript
 // Aggiungere vicino alle altre const require('./jobs/...'):
@@ -1255,7 +1255,7 @@ const { avviaJobRiconciliazioneBeds24 } = require('./jobs/beds24Riconciliazione'
   avviaJobRiconciliazioneBeds24();
 ```
 
-- [ ] **Step 6: Commit**
+- [x] **Step 6: Commit**
 
 ```bash
 git add backend/jobs/beds24Riconciliazione.js backend/server.js tests/lib/beds24Riconciliazione.test.js
@@ -1272,7 +1272,7 @@ git commit -m "feat(beds24): job notturno di riconciliazione come rete di sicure
 **Interfaces:**
 - Consumes: `PUT /api/canali-ota/:tipoCameraId` (già esistente, nessuna modifica backend necessaria — il campo `canale` era già libero).
 
-- [ ] **Step 1: Aggiornare il commento e il badge di `SezioneCanaliOta`**
+- [x] **Step 1: Aggiornare il commento e il badge di `SezioneCanaliOta`**
 
 Nel file, sostituire (righe indicative, verificare l'esatto punto nel file al momento dell'implementazione):
 
@@ -1324,7 +1324,7 @@ Nel file, sostituire (righe indicative, verificare l'esatto punto nel file al mo
       await api.put(`/canali-ota/${riga.tipo_camera_id}`, { canale: 'beds24', codice_esterno: codice || null });
 ```
 
-- [ ] **Step 2: Verificare che non ci siano errori di sintassi**
+- [x] **Step 2: Verificare che non ci siano errori di sintassi**
 
 Run: `npx tsc --noEmit -p .verify.tsconfig.json` (tsconfig di scratch scoped al solo file, pattern già in uso in questo repo — vedi la nota di memoria `sito_hotel_verifica_tsc_reale` se serve replicarlo qui) oppure, più semplice per un file `.jsx`: verifica con un babel transform locale o direttamente in `npm run dev`.
 Expected: nessun errore di parsing.
@@ -1333,7 +1333,7 @@ Expected: nessun errore di parsing.
 
 Aprire `/tariffe`, controllare che il badge mostri "Canale: Beds24" e che salvare un codice per una categoria camera chiami `PUT /api/canali-ota/:id` con `canale: 'beds24'` (verificabile dal tab Network del browser).
 
-- [ ] **Step 4: Commit**
+- [x] **Step 4: Commit**
 
 ```bash
 git add frontend/app/tariffe/page.jsx
@@ -1362,3 +1362,30 @@ git commit -m "fix(tariffe): canale mappatura OTA da wubook a beds24"
 - I Task 1-10 sono nell'ordine giusto per TDD e commit frequenti; il Task 11 (frontend) è indipendente e può essere fatto in qualunque momento dopo il Task 1. Il Task 12 richiede credenziali reali e va fatto per ultimo, con Marco.
 - Nessun task di questo piano scrive disponibilità o prezzi verso Beds24 — è deliberatamente fuori scope (vedi spec, punti 2 e 3 del modulo 2.3).
 - La coda `beds24_prenotazioni_da_revisionare` non ha un pannello frontend dedicato in questa fase (fuori scope, spec approvata da Marco) — durante la prova gratuita è consultabile solo via `GET /api/beds24/da-revisionare` (es. da Postman/curl con un cookie di sessione valido) finché non nasce l'esigenza di una pagina vera.
+
+## Stato avanzamento (30/08/2026)
+
+Task 1-11: codice scritto, testato con `node -c`/trasformazione babel (solo
+sintassi) e committato su `feat/beds24-fase1` (11 commit). Ogni checkbox
+"Scrivere/Implementare/Commit/Verificare sintassi" sopra è spuntata di
+conseguenza.
+
+**Nessuna checkbox "Eseguire i test e verificare che falliscano/passino" è
+spuntata, e non lo è per un motivo preciso**: `npx jest` non è mai stato
+eseguito con successo in questa sessione — il container non raggiunge il
+Postgres locale di Marco (limite noto, non specifico a questo modulo).
+Nessun test scritto in questo piano ha quindi una conferma reale di essere
+verde. Da fare in locale da Marco: applicare la migration 055, poi
+`npm test` sulla suite intera (non solo i file beds24 — un fallimento
+altrove non è comunque da ignorare).
+
+Corretto nel frattempo un bug indipendente scoperto verificando la
+copertura: `jest.config.js` aveva `testMatch` limitato a `tests/api/**`,
+quindi i test di `tests/lib/` (Task 2/3/10, 5 test) sarebbero rimasti
+invisibili a `npm test` per sempre, silenziosamente — non è un task di
+questo piano, ma senza la correzione i Task 2/3/10 sarebbero risultati
+"testati" solo sulla carta. Commit `af4d5d3`.
+
+Task 11, Step 3 (verifica manuale su `/tariffe`) e Task 12 (intero, richiede
+credenziali reali Beds24): non spuntati, esplicitamente di competenza di
+Marco.
