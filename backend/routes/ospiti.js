@@ -17,6 +17,7 @@ router.use(verificaToken);
 // id letterale "tag" o "duplicati-sospetti".
 router.get('/tag',                  richiedeAzione('ospiti', 'lettura'),         ctrl.tagSuggeriti);
 router.get('/duplicati-sospetti',   richiedeAzione('ospiti', 'unisci'),          ctrl.duplicatiSospetti);
+router.get('/da-completare-count',  richiedeAzione('ospiti', 'lettura'),         ctrl.daCompletareCount);
 
 router.get('/',                     richiedeAzione('ospiti', 'lettura'),         ctrl.lista);
 router.get('/:id',                  richiedeAzione('ospiti', 'lettura'),         ctrl.dettaglio);

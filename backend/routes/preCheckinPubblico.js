@@ -10,9 +10,17 @@ const rateLimit = require('express-rate-limit');
 const ctrl = require('../controllers/preCheckinPubblicoController');
 const { listaCodici } = require('../controllers/alloggiatiController');
 
+// Max 30 richieste per IP ogni 15 minuti IN PRODUZIONE (conta anche
+// GET /codici, chiamata ad ogni digitazione nei campi con suggerimenti —
+// non solo l'invio). Allargato altrove (test e sviluppo locale,
+// 28/08/2026 — segnalato da Marco durante i test manuali del vincolo
+// residenza: bastano pochi minuti di digitazione nei campi per esaurire
+// la quota). Il valore di produzione (30) resta da verificare sul campo
+// una volta in uso reale — vedi STATO_PROGETTO.md sezione Rate limit
+// pubblici.
 const preCheckinRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 30,
+  max: process.env.NODE_ENV === 'production' ? 30 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { error: 'Troppe richieste. Riprova tra qualche minuto.' },

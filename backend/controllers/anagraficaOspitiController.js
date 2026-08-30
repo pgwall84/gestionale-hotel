@@ -98,7 +98,7 @@ const COLONNE_ORDINAMENTO = {
 // Accessibile a: admin, titolare, receptionist, portiere_notte (lettura).
 async function lista(req, res) {
   const search = (req.query.search || '').trim();
-  const { tag, vip, blacklist, consenso_marketing, allergia, ordina, direzione, includi_duplicati } = req.query;
+  const { tag, vip, blacklist, consenso_marketing, allergia, ordina, direzione, includi_duplicati, senza_residenza } = req.query;
 
   const limitRichiesto = parseInt(req.query.limit, 10);
   const limit = Number.isFinite(limitRichiesto) ? Math.min(Math.max(limitRichiesto, 1), 200) : 20;
@@ -136,7 +136,10 @@ async function lista(req, res) {
   }
   if (blacklist === 'true' || blacklist === 'false') {
     parametri.push(blacklist === 'true');
-    condizioni.push(`blacklist = $${parametri.length}`);
+    condizioni.push(`blacklist = ${parametri.length}`);
+  }
+  if (senza_residenza === 'true') {
+    condizioni.push('stato_residenza_codice IS NULL');
   }
   if (consenso_marketing === 'true' || consenso_marketing === 'false') {
     parametri.push(consenso_marketing === 'true');
@@ -542,7 +545,19 @@ async function impostaNucleo(req, res) {
   }
 }
 
+async function daCompletareCount(req, res) {
+  try {
+    const result = await pool.query(
+      `SELECT COUNT(*) AS totale FROM ospiti WHERE duplicato_di IS NULL AND stato_residenza_codice IS NULL`
+    );
+    res.json({ count: parseInt(result.rows[0].totale, 10) });
+  } catch (err) {
+    console.error('da completare count ospiti error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+}
+
 module.exports = {
   lista, dettaglio, crea, aggiorna, svelaDocumento, impostaNucleo,
-  tagSuggeriti, duplicatiSospetti, unisci, DOC_MASCHERATO,
+  tagSuggeriti, duplicatiSospetti, unisci, daCompletareCount, DOC_MASCHERATO,
 };

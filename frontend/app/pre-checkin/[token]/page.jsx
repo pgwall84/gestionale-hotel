@@ -44,6 +44,10 @@ function nuovoOspiteVuoto(soggiornoId) {
     documento_scadenza: '', luogo_nascita_testo: '', provincia_nascita: '',
     stato_residenza_testo: '', stato_residenza_codice: null,
     comune_residenza_testo: '', comune_residenza_codice: null,
+    // Solo per ospiti oltre il primo (referente principale) — spunta
+    // "deriva residenza dal referente principale" (modulo 2.6, 28/08/2026
+    // bis). Mai inviata al backend, vedi invia().
+    derivaResidenza: false,
   };
 }
 
@@ -133,10 +137,64 @@ export default function PaginaPreCheckinPubblica() {
       setErroreInvio("Devi accettare l'informativa privacy per continuare.");
       return;
     }
-    const ospiti = Object.values(ospitiPerSoggiorno).flat().filter(o => o.nome.trim() && o.cognome.trim());
-    if (!ospiti.length) {
-      setErroreInvio('Inserisci almeno nome e cognome di un ospite.');
-      return;
+    // Per ogni camera: se un ospite oltre al primo ha spuntato "deriva
+    // residenza dal referente principale", sostituisco i suoi campi di
+    // residenza con quelli ATTUALI del referente (indice 0) — copia fatta
+    // solo ora, al momento dell'invio, mai un riferimento salvato prima:
+    // così è sempre coerente con l'ultimo valore che il referente ha
+    // inserito, anche se lo cambia dopo aver spuntato la casella per gli
+    // altri.
+    const soggiorniConDerivazione = Object.fromEntries(
+      Object.entries(ospitiPerSoggiorno).map(([soggiornoId, lista]) => {
+        const referente = lista[0];
+        return [soggiornoId, lista.map((o, i) => (i > 0 && o.derivaResidenza)
+          ? {
+              ...o,
+              stato_residenza_testo: referente.stato_residenza_testo,
+              stato_residenza_codice: referente.stato_residenza_codice,
+              comune_residenza_testo: referente.comune_residenza_testo,
+              comune_residenza_codice: referente.comune_residenza_codice,
+            }
+          : o
+        )];
+      })
+    );
+    // Niente più filtro silenzioso sulle righe vuote (Marco, 28/08/2026
+    // sera): un ospite lasciato incompleto spariva dall'invio senza
+    // nessun avviso, e il numero di persone poteva non combaciare con
+    // num_ospiti (già noto da prima: prenotazione online o inserito dalla
+    // reception per le prenotazioni telefoniche). Ora si blocca con un
+    // messaggio chiaro invece di inviare dati silenziosamente incompleti
+    // — stesso vincolo che il backend applica comunque come ultima difesa
+    // (vedi preCheckinPubblicoController.js).
+    for (const s of dati.soggiorni) {
+      const lista = soggiorniConDerivazione[s.id] || [];
+      if (lista.length !== s.num_ospiti) {
+        setErroreInvio(`Camera ${s.camera_numero}: attesi ${s.num_ospiti} ospit${s.num_ospiti === 1 ? 'e' : 'i'}, ${lista.length > s.num_ospiti ? 'ce ne sono di troppo' : 'ne mancano'} — usa "Aggiungi un altro ospite" o il cestino per arrivare al numero giusto.`);
+        return;
+      }
+      const incompleto = lista.find(o => !o.nome.trim() || !o.cognome.trim());
+      if (incompleto) {
+        setErroreInvio(`Camera ${s.camera_numero}: completa nome e cognome per tutti gli ospiti inseriti (una riga è vuota o incompleta).`);
+        return;
+      }
+    }
+    const ospiti = Object.values(soggiorniConDerivazione).flat();
+    // Vincolo ISTAT C/59 (Marco, 28/08/2026, ESTESO 28/08/2026 bis): la
+    // documentazione RIMOVCLI non prevede eccezioni per familiari/minori
+    // (arrivati/partiti/presenti contano ogni persona) — la residenza è
+    // richiesta per OGNI ospite inserito, non solo il primo. La spunta
+    // "deriva dal referente principale" resta il modo rapido per
+    // compilarla per gli altri componenti della camera.
+    for (const o of ospiti) {
+      if (!o.stato_residenza_codice) {
+        setErroreInvio(`Manca lo stato di residenza per ${o.nome} ${o.cognome}.`);
+        return;
+      }
+      if (o.stato_residenza_codice === '100000100' && !o.comune_residenza_codice) {
+        setErroreInvio(`Manca il comune di residenza per ${o.nome} ${o.cognome} (residente in Italia).`);
+        return;
+      }
     }
     setInvio(true);
     setErroreInvio(null);
@@ -144,7 +202,7 @@ export default function PaginaPreCheckinPubblica() {
       await api.post(`/pre-checkin-pubblico/${token}`, {
         consenso_privacy_accettato: true,
         note_referente: noteReferente || null,
-        ospiti: ospiti.map(o => ({ ...o, data_nascita: o.data_nascita || null, documento_scadenza: o.documento_scadenza || null })),
+        ospiti: ospiti.map(({ derivaResidenza, ...o }) => ({ ...o, data_nascita: o.data_nascita || null, documento_scadenza: o.documento_scadenza || null })),
       });
       setInviato(true);
     } catch (err) {
@@ -201,22 +259,36 @@ export default function PaginaPreCheckinPubblica() {
           </div>
         )}
 
-        {dati.soggiorni.map(s => (
+        {dati.soggiorni.map(s => {
+          const listaCamera = ospitiPerSoggiorno[s.id] || [];
+          const compilati = listaCamera.filter(o => o.nome.trim() && o.cognome.trim()).length;
+          const numeroOk = listaCamera.length === s.num_ospiti;
+          return (
           <div key={s.id} className="rounded-xl p-4 space-y-3" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
-            <p className="text-sm font-semibold">
-              Camera {s.camera_numero} — dal {formatDataEstesa(s.data_arrivo)} al {formatDataEstesa(s.data_partenza)}
-            </p>
+            <div className="flex items-center justify-between">
+              <p className="text-sm font-semibold">
+                Camera {s.camera_numero} — dal {formatDataEstesa(s.data_arrivo)} al {formatDataEstesa(s.data_partenza)}
+              </p>
+              <p className="text-xs font-medium" style={{ color: (numeroOk && compilati === s.num_ospiti) ? 'var(--status-green-text)' : 'var(--status-red-text)' }}>
+                {compilati}/{s.num_ospiti} ospiti compilati
+              </p>
+            </div>
 
-            {ospitiPerSoggiorno[s.id]?.map((ospite, indice) => (
+            {ospitiPerSoggiorno[s.id]?.map((ospite, indice) => {
+              const referente = ospitiPerSoggiorno[s.id][0];
+              const residenzaMostrata = (indice > 0 && ospite.derivaResidenza) ? referente : ospite;
+              return (
               <div key={indice} className="rounded-lg p-3 space-y-2" style={{ background: 'var(--background)', border: '0.5px solid var(--border)' }}>
                 <div className="flex items-center justify-between">
-                  <p className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>Ospite {indice + 1}</p>
+                  <p className="text-xs font-medium" style={{ color: 'var(--muted-foreground)' }}>
+                    {indice === 0 ? 'Referente principale' : `Altro ospite ${indice}`}
+                  </p>
                   {ospitiPerSoggiorno[s.id].length > 1 && (
                     <button onClick={() => rimuoviOspite(s.id, indice)}><Trash2 size={13} style={{ color: 'var(--status-red-text)' }} /></button>
                   )}
                 </div>
 
-                {OCR_ATTIVO && (
+                {indice === 0 && OCR_ATTIVO && (
                   <ScannerDocumento onDatiEstratti={d => applicaDatiOcr(s.id, indice, d)} />
                 )}
 
@@ -242,41 +314,62 @@ export default function PaginaPreCheckinPubblica() {
                   <input placeholder="Luogo di nascita" value={ospite.luogo_nascita_testo}
                          onChange={e => aggiornaCampo(s.id, indice, 'luogo_nascita_testo', e.target.value)}
                          className="px-3 rounded-lg text-sm outline-none" style={inputStyle} />
-                  <SelettoreCodiceAlloggiati tabella="Tipi_Documento" endpoint="/pre-checkin-pubblico/codici"
-                                              testo={ospite.documento_tipo_testo} codice={ospite.documento_tipo_codice}
-                                              placeholder="Tipo documento (es. Carta d'identità)"
-                                              onCambiamento={(t, c) => aggiornaCoppia(s.id, indice, 'documento_tipo_testo', 'documento_tipo_codice', t, c)} />
-                  <input placeholder="Numero documento" value={ospite.documento_numero}
-                         onChange={e => aggiornaCampo(s.id, indice, 'documento_numero', e.target.value)}
-                         className="px-3 rounded-lg text-sm outline-none" style={inputStyle} />
-                  <div className="flex flex-col gap-0.5">
-                    <label className="text-[10px]" style={{ color: 'var(--muted-foreground)' }}>Scadenza documento</label>
-                    <CampoData value={ospite.documento_scadenza}
-                           onChange={v => aggiornaCampo(s.id, indice, 'documento_scadenza', v)}
-                           minAnno={ANNO_CORRENTE - 1} maxAnno={ANNO_CORRENTE + 11}
-                           className="px-3" style={inputStyle} />
-                  </div>
                   <SelettoreProvincia valore={ospite.provincia_nascita}
                                        onCambiamento={v => aggiornaCampo(s.id, indice, 'provincia_nascita', v)}
                                        placeholder="Provincia nascita (se Italia)" />
+                  {indice === 0 && (
+                    <>
+                      <SelettoreCodiceAlloggiati tabella="Tipi_Documento" endpoint="/pre-checkin-pubblico/codici"
+                                                  testo={ospite.documento_tipo_testo} codice={ospite.documento_tipo_codice}
+                                                  placeholder="Tipo documento (es. Carta d'identità)"
+                                                  onCambiamento={(t, c) => aggiornaCoppia(s.id, indice, 'documento_tipo_testo', 'documento_tipo_codice', t, c)} />
+                      <input placeholder="Numero documento" value={ospite.documento_numero}
+                             onChange={e => aggiornaCampo(s.id, indice, 'documento_numero', e.target.value)}
+                             className="px-3 rounded-lg text-sm outline-none" style={inputStyle} />
+                      <div className="flex flex-col gap-0.5">
+                        <label className="text-[10px]" style={{ color: 'var(--muted-foreground)' }}>Scadenza documento</label>
+                        <CampoData value={ospite.documento_scadenza}
+                               onChange={v => aggiornaCampo(s.id, indice, 'documento_scadenza', v)}
+                               minAnno={ANNO_CORRENTE - 1} maxAnno={ANNO_CORRENTE + 11}
+                               className="px-3" style={inputStyle} />
+                      </div>
+                    </>
+                  )}
+                  <p className="col-span-2 text-[11px]" style={{ color: 'var(--muted-foreground)' }}>
+                    {indice === 0
+                      ? 'Stato (ed eventuale comune) di residenza obbligatori.'
+                      : 'Stato (ed eventuale comune) di residenza obbligatori anche per questo ospite — puoi derivarli dal referente principale con la spunta qui sotto.'}
+                  </p>
+                  {indice > 0 && (
+                    <label className="col-span-2 flex items-center gap-2 text-xs" style={{ color: 'var(--foreground)' }}>
+                      <input type="checkbox" checked={!!ospite.derivaResidenza}
+                             onChange={e => aggiornaCampo(s.id, indice, 'derivaResidenza', e.target.checked)} />
+                      Deriva residenza dal referente principale
+                    </label>
+                  )}
                   <SelettoreCodiceAlloggiati tabella="Luoghi" endpoint="/pre-checkin-pubblico/codici"
-                                              testo={ospite.stato_residenza_testo} codice={ospite.stato_residenza_codice}
-                                              placeholder="Stato di residenza"
+                                              testo={residenzaMostrata.stato_residenza_testo} codice={residenzaMostrata.stato_residenza_codice}
+                                              disabled={indice > 0 && ospite.derivaResidenza}
+                                              placeholder="Stato di residenza *"
                                               onCambiamento={(t, c) => aggiornaCoppia(s.id, indice, 'stato_residenza_testo', 'stato_residenza_codice', t, c)} />
                   <SelettoreCodiceAlloggiati tabella="Luoghi" endpoint="/pre-checkin-pubblico/codici"
-                                              testo={ospite.comune_residenza_testo} codice={ospite.comune_residenza_codice}
+                                              testo={residenzaMostrata.comune_residenza_testo} codice={residenzaMostrata.comune_residenza_codice}
+                                              disabled={indice > 0 && ospite.derivaResidenza}
                                               placeholder="Comune di residenza (se Italia)"
                                               onCambiamento={(t, c) => aggiornaCoppia(s.id, indice, 'comune_residenza_testo', 'comune_residenza_codice', t, c)} />
                 </div>
               </div>
-            ))}
+              );
+            })}
+
 
             <button onClick={() => aggiungiOspite(s.id)}
                     className="flex items-center gap-1 text-xs font-medium px-2.5 py-1.5 rounded-lg border">
               <Plus size={13} /> Aggiungi un altro ospite per questa camera
             </button>
           </div>
-        ))}
+          );
+        })}
 
         <div className="rounded-xl p-4 space-y-2" style={{ background: 'var(--card)', border: '0.5px solid var(--border)' }}>
           <textarea placeholder="Note per la reception (opzionale)" value={noteReferente}
