@@ -29,6 +29,13 @@ const pool = new Pool({
   database: process.env.DB_NAME,
   user: process.env.DB_USER,
   password: process.env.DB_PASSWORD,
+  // Default di node-pg: 0 = attesa infinita di una connessione libera. Se
+  // l'acquisizione si blocca (event loop del processo impallato, Postgres
+  // occupato) la query non fallisce mai — nei test Jest la vede solo come
+  // timeout del test su una riga a caso, in produzione come richiesta HTTP
+  // appesa. 5s: un DB in LAN/localhost risponde in <100ms, se non ce la fa
+  // in 5s è un problema vero e vogliamo un errore chiaro, non uno stallo.
+  connectionTimeoutMillis: 5000,
 });
 
 // Test immediato alla partenza del server: se il DB non risponde, lo vediamo subito

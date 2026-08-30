@@ -14,6 +14,10 @@ function getPool() {
       database: process.env.DB_NAME,
       user:     process.env.DB_USER,
       password: process.env.DB_PASSWORD,
+      // Stesso motivo di backend/config/db.js: senza questo un'acquisizione
+      // di connessione bloccata resta appesa all'infinito e un test lento
+      // sembra un bug nel codice invece che uno stallo di ambiente.
+      connectionTimeoutMillis: 5000,
     });
   }
   return pool;
