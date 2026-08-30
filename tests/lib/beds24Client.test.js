@@ -2,6 +2,30 @@
 const pool = require('../../backend/config/db');
 const beds24Client = require('../../backend/lib/beds24Client');
 
+describe('beds24Client — scambiaInviteCode', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM beds24_config');
+    jest.restoreAllMocks();
+  });
+
+  test('salva token, refresh token e valorizza ultima_sincronizzazione_at (bootstrap del job notturno)', async () => {
+    jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ({ token: 'token_iniziale', refreshToken: 'rt_iniziale', expiresIn: 86400 }),
+    });
+
+    const risultato = await beds24Client.scambiaInviteCode('invite_fittizio');
+
+    expect(risultato).toEqual({ token: 'token_iniziale', refreshToken: 'rt_iniziale', expiresIn: 86400 });
+    const riga = await pool.query('SELECT refresh_token, token, ultima_sincronizzazione_at FROM beds24_config WHERE id = 1');
+    expect(riga.rows).toHaveLength(1);
+    expect(riga.rows[0].refresh_token).toBe('rt_iniziale');
+    // Se questa è null, eseguiRiconciliazione() salterà per sempre —
+    // vedi commento in beds24Client.js.
+    expect(riga.rows[0].ultima_sincronizzazione_at).not.toBeNull();
+  });
+});
+
 describe('beds24Client — getToken', () => {
   afterEach(async () => {
     await pool.query('DELETE FROM beds24_config');

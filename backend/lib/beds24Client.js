@@ -26,13 +26,23 @@ async function scambiaInviteCode(inviteCode) {
   const dati = await risposta.json();
   const scadeAt = new Date(Date.now() + dati.expiresIn * 1000);
 
+  // ultima_sincronizzazione_at = now() qui è ESSENZIALE, non solo un
+  // dato in più: eseguiRiconciliazione() (beds24Riconciliazione.js) si
+  // rifiuta di girare finché questa colonna è NULL, e nient'altro nel
+  // codice la valorizza mai — senza questa riga il job notturno
+  // salterebbe ogni notte per sempre, silenziosamente, senza mai
+  // "accendersi" da solo (bug trovato il 30/08/2026 al primo
+  // collegamento reale). Sovrascriverla anche in caso di riconnessione
+  // (nuovo invite code dopo una revoca) è corretto: non c'è motivo di
+  // fidarsi di un punto di partenza vecchio dopo un'interruzione.
   await pool.query(
-    `INSERT INTO beds24_config (id, refresh_token, token, token_scade_at, updated_at)
-     VALUES (1, $1, $2, $3, now())
+    `INSERT INTO beds24_config (id, refresh_token, token, token_scade_at, ultima_sincronizzazione_at, updated_at)
+     VALUES (1, $1, $2, $3, now(), now())
      ON CONFLICT (id) DO UPDATE SET
        refresh_token = EXCLUDED.refresh_token,
        token         = EXCLUDED.token,
        token_scade_at = EXCLUDED.token_scade_at,
+       ultima_sincronizzazione_at = now(),
        updated_at    = now()`,
     [dati.refreshToken, dati.token, scadeAt]
   );
