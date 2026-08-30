@@ -240,12 +240,16 @@ describe('POST /api/ospiti', () => {
     expect(res.status).toBe(403);
   });
 
-  test('portiere_notte → 403 (sola lettura, niente scrittura)', async () => {
+  // Scrittura estesa a portiere_notte il 29/08/2026 (schermata multi
+  // check-in, decisione esplicita del titolare) — prima 403, vedi
+  // shared/ruoli.js sezione 'ospiti'.scrittura.
+  test('portiere_notte → 201 (scrittura estesa 29/08/2026, multi check-in)', async () => {
     const res = await request(app)
       .post('/api/ospiti')
       .set(authHeader.portiere_notte())
-      .send({ nome: 'Luigi', cognome: 'Verdi' });
-    expect(res.status).toBe(403);
+      .send({ nome: 'Luigi', cognome: `${COGNOME_TEST}_portiere_notte` });
+    expect(res.status).toBe(201);
+    await getPool().query('DELETE FROM ospiti WHERE id = $1', [res.body.id]);
   });
 
   test('receptionist senza cognome → 400', async () => {
@@ -313,12 +317,16 @@ describe('PATCH /api/ospiti/:id', () => {
     expect(res.status).toBe(401);
   });
 
-  test('portiere_notte → 403 (sola lettura, niente scrittura)', async () => {
+  // Scrittura estesa a portiere_notte il 29/08/2026 (schermata multi
+  // check-in, decisione esplicita del titolare) — prima 403. Stesso valore
+  // già usato dal test admin sotto: idempotente, non sposta lo stato per
+  // quel test.
+  test('portiere_notte → 200 (scrittura estesa 29/08/2026, multi check-in)', async () => {
     const res = await request(app)
       .patch(`/api/ospiti/${ospiteId}`)
       .set(authHeader.portiere_notte())
       .send({ telefono: '3339999999' });
-    expect(res.status).toBe(403);
+    expect(res.status).toBe(200);
   });
 
   test('id inesistente → 404', async () => {
