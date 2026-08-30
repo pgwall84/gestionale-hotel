@@ -157,11 +157,11 @@ if (process.env.NODE_ENV !== 'production') {
 }
 app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
-// '/api/rimovcli' (Statistiche Liguria / RIMOVCLI C59): riattivare la
-// riga qui sotto quando backend/routes/rimovcliC59.js e le sue dipendenze
-// (lib/rimovcliC59.js, lib/rimovcliResidenza.js, controller) entrano nel
-// repo — oggi sono file non committati e un checkout pulito va in crash.
-// app.use('/api/rimovcli',          require('./routes/rimovcliC59'));
+// '/api/rimovcli' (Statistiche Liguria / RIMOVCLI C59) — attivata il
+// 30/08/2026: backend/routes/rimovcliC59.js e le sue dipendenze
+// (lib/rimovcliC59.js, lib/rimovcliResidenza.js, controller) sono ora
+// committate (merge 82501da).
+app.use('/api/rimovcli',             require('./routes/rimovcliC59'));
 app.use('/api/manutenzione',         manutenzioneRoutes);
 app.use('/api/impostazioni/catalogo-addebiti', catalogoAddebitiRoutes);
 app.use('/api/registro-haccp',       registroHaccpRoutes);
