@@ -3,8 +3,8 @@
 
 /** @type {import('jest').Config} */
 module.exports = {
-  // Cerca i test solo nella cartella tests/api
-  testMatch: ['**/tests/api/**/*.test.js'],
+  // Cerca i test in tests/api (Supertest) e tests/lib (unit — aggiunta 30/08/2026, modulo Beds24, per non lasciare tests/lib/*.test.js invisibili a `npm test`)
+  testMatch: ['**/tests/api/**/*.test.js', '**/tests/lib/**/*.test.js'],
 
   // Carica le variabili d'ambiente di test prima di ogni suite
   globalSetup: './tests/setup.js',
