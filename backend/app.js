@@ -31,6 +31,7 @@ const planningTariffeRoutes = require('./routes/planningTariffe');
 const tariffeDerivateRoutes = require('./routes/tariffeDerivate');
 const pacchettiRoutes    = require('./routes/pacchetti');
 const canaliOtaRoutes    = require('./routes/canaliOta');
+const beds24Routes       = require('./routes/beds24');
 const tassaSoggiornoRoutes = require('./routes/tassaSoggiorno');
 const alloggiatiRoutes = require('./routes/alloggiati');
 const emailTemplateRoutes = require('./routes/emailTemplate');
@@ -39,8 +40,13 @@ const preCheckinRoutes         = require('./routes/preCheckin');
 const preCheckinPubblicoRoutes = require('./routes/preCheckinPubblico');
 const bookingPubblicoRoutes    = require('./routes/bookingPubblico');
 const stripeWebhookRoutes      = require('./routes/stripeWebhook');
+// Integrazione Nexi XPay di TEST (29/08/2026) — vedi
+// docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md.
+const xpayTestRoutes           = require('./routes/xpayTest');
+const xpayNotificaRoutes       = require('./routes/xpayNotifica');
 const nucleiFamiliariRoutes    = require('./routes/nucleiFamiliari');
 const ross1000Routes           = require('./routes/ross1000');
+const rimovcliRoutes           = require('./routes/rimovcliC59');
 const manutenzioneRoutes       = require('./routes/manutenzione');
 const catalogoAddebitiRoutes   = require('./routes/catalogoAddebiti');
 const registroHaccpRoutes      = require('./routes/registroHaccp');
@@ -86,11 +92,16 @@ app.use('/api/stripe/webhook', stripeWebhookRoutes);
 
 app.use(express.json());
 
-// Rate limit login: max 5 tentativi per IP ogni 15 minuti.
-// In ambiente test viene disabilitato impostando NODE_ENV=test.
+// Rate limit login: max 5 tentativi per IP ogni 15 minuti IN PRODUZIONE.
+// Allargato altrove (test e sviluppo locale, 28/08/2026 — segnalato da
+// Marco: durante i test manuali il limite stretto si esauriva in fretta,
+// non lasciando distinguere un vero problema da un limite troppo basso
+// per il lavoro di verifica). Il valore di produzione (5) è quello da
+// tenere sotto osservazione una volta in uso reale — vedi
+// STATO_PROGETTO.md sezione Rate limit pubblici per il dimensionamento.
 const loginRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
-  max: process.env.NODE_ENV === 'test' ? 1000 : 5,
+  max: process.env.NODE_ENV === 'production' ? 5 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
   message: { errore: 'Troppi tentativi di accesso. Riprova tra 15 minuti.' },
@@ -122,6 +133,7 @@ app.use('/api/planning-tariffe', planningTariffeRoutes);
 app.use('/api/tariffe-derivate', tariffeDerivateRoutes);
 app.use('/api/pacchetti',    pacchettiRoutes);
 app.use('/api/canali-ota',   canaliOtaRoutes);
+app.use('/api/beds24',        beds24Routes);
 app.use('/api/tassa-soggiorno', tassaSoggiornoRoutes);
 app.use('/api/alloggiati', alloggiatiRoutes);
 app.use('/api/email-template', emailTemplateRoutes);
@@ -134,8 +146,16 @@ app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
 // Pubblica (nessun verificaToken), stesso principio di /api/pre-checkin-pubblico
 // — Booking Engine Diretto, modulo 19/08/2026.
 app.use('/api/booking-pubblico',     bookingPubblicoRoutes);
+// Route di TEST per l'integrazione Nexi XPay (29/08/2026) — SOLO fuori
+// produzione, percorso isolato non collegato al booking pubblico reale.
+// Vedi docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md.
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/xpay-test', xpayTestRoutes);
+  app.use('/api/xpay/notifica', xpayNotificaRoutes);
+}
 app.use('/api/nuclei-familiari',     nucleiFamiliariRoutes);
 app.use('/api/ross1000',             ross1000Routes);
+app.use('/api/rimovcli',             rimovcliRoutes);
 app.use('/api/manutenzione',         manutenzioneRoutes);
 app.use('/api/impostazioni/catalogo-addebiti', catalogoAddebitiRoutes);
 app.use('/api/registro-haccp',       registroHaccpRoutes);

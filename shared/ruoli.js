@@ -78,7 +78,19 @@ const PERMESSI_SEZIONI = {
   // mai svela documento. Vedi docs/PRENOTAZIONI_FASE2.md Parte A.1.
   ospiti: {
     lettura:          [A, T, R, P],
-    scrittura:        [A, T, R],
+    // Scrittura estesa a portiere_notte il 29/08/2026 (schermata multi
+    // check-in, richiesta esplicita del titolare) — prima solo A/T/R.
+    // portiere_notte è l'unico ruolo isolato per la transizione di stato
+    // 'check_in' notturna (vedi 'stato_check_in' sopra e
+    // richiedeTransizioneStato in backend/routes/prenotazioni.js): senza
+    // questo permesso poteva vedere quali dati Alloggiati Web mancavano
+    // ma non correggerli, rendendo la schermata inutile proprio nel turno
+    // per cui è nata. Nota: resta un permesso GLOBALE su ospiti, non
+    // limitato alla schermata multi check-in — vale anche per /clienti e
+    // ogni altro punto che scrive su un ospite. svela_documento (sotto)
+    // resta invariato: portiere_notte non vede mai documento_numero in
+    // chiaro, in nessun caso.
+    scrittura:        [A, T, R, P],
     svela_documento:  [A, T, R],
     // Unione duplicati (CRM ospiti, 14/08/2026) — deliberatamente più
     // stretta di scrittura: un'unione sbagliata sposta lo storico
@@ -148,6 +160,14 @@ const PERMESSI_SEZIONI = {
     scrittura:  [A, T],
   },
 
+  // Beds24 (Modulo 2.3, Fase 1) — lettura/risoluzione anche a
+  // receptionist: è chi crea a mano la prenotazione mancante e chiude la
+  // riga in coda, stesso ruolo operativo di chi gestisce il check-in.
+  beds24: {
+    lettura:   [A, T, R],
+    scrittura: [A, T, R],
+  },
+
   // Tassa di soggiorno (Modulo 2.4, Fase 2A) — lettura/scrittura (calcolo e
   // riscossione) anche a receptionist, che gestisce il check-out; 'configurazione'
   // (nuova aliquota) riservata ad admin/titolare, stesso criterio di
@@ -212,6 +232,15 @@ const PERMESSI_SEZIONI = {
   // generazione XML per verifica manuale, nessun invio reale. Dati di
   // pubblica sicurezza/statistica, riservato ad admin/titolare.
   ross1000: {
+    lettura: [A, T],
+  },
+
+  // Statistiche Liguria — RIMOVCLI/ISTAT C/59 (Modulo 2.6, ripreso
+  // 28/08/2026): generazione XML giornaliero (docs/rimovcli/ModelloC59.xsd)
+  // per upload manuale sul portale RIMOVCLI di Regione Liguria — schema
+  // diverso da 'ross1000' sopra (webservice SOAP nazionale, non toccato).
+  // Stessi dati di pubblica sicurezza/statistica, stessi ruoli.
+  rimovcli: {
     lettura: [A, T],
   },
 
