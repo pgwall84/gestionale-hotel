@@ -87,6 +87,21 @@ async function processaBooking(booking) {
 
     if (esistente.rows.length) {
       const riga = esistente.rows[0];
+
+      if (booking.status === 'cancelled') {
+        const soggiornoAttuale = await client.query(
+          `SELECT check_in_effettuato_at FROM soggiorni WHERE id = $1`, [riga.soggiorno_id]
+        );
+        if (soggiornoAttuale.rows[0].check_in_effettuato_at) {
+          await client.query('ROLLBACK');
+          return { esito: 'cancellazione_ignorata_post_checkin' };
+        }
+        await client.query(`UPDATE soggiorni SET cancellato = true, updated_at = now() WHERE id = $1`, [riga.soggiorno_id]);
+        await client.query(`UPDATE prenotazioni SET stato = 'interrotta', updated_at = now() WHERE id = $1`, [riga.prenotazione_id]);
+        await client.query('COMMIT');
+        return { esito: 'cancellata' };
+      }
+
       await client.query(
         `UPDATE soggiorni SET data_arrivo = $2, data_partenza = $3, num_ospiti = $4, ospite_id = $5, updated_at = now()
          WHERE id = $1`,
