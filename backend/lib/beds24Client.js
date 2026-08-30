@@ -74,4 +74,24 @@ async function getToken() {
   return dati.token;
 }
 
-module.exports = { scambiaInviteCode, getToken };
+// Legge le prenotazioni da Beds24. modifiedSince è opzionale (formato ISO
+// 8601) — usato dal job di riconciliazione notturna per recuperare solo
+// le modifiche successive all'ultima sincronizzazione. Nome del parametro
+// non confermato dallo Swagger ufficiale (bloccato al fetch automatico) —
+// verificare nel Task 12 contro l'account reale.
+async function getBookings({ modifiedSince } = {}) {
+  const token = await getToken();
+  const url = new URL(`${BASE_URL}/bookings`);
+  if (modifiedSince) {
+    url.searchParams.set('modifiedSince', modifiedSince);
+  }
+
+  const risposta = await fetch(url, { headers: { token } });
+  if (!risposta.ok) {
+    throw new Error(`GET /bookings fallita: HTTP ${risposta.status}`);
+  }
+  const dati = await risposta.json();
+  return Array.isArray(dati) ? dati : (dati.data || []);
+}
+
+module.exports = { scambiaInviteCode, getToken, getBookings };
