@@ -2,6 +2,7 @@
 const request = require('supertest');
 const app = require('../../backend/app');
 const pool = require('../../backend/config/db');
+const { authHeader } = require('../helpers/auth');
 
 describe('POST /api/beds24/webhook/bookings', () => {
   afterEach(async () => {
@@ -25,5 +26,23 @@ describe('POST /api/beds24/webhook/bookings', () => {
   test('risponde 200 anche se il payload è vuoto/malformato, senza andare in crash', async () => {
     const risposta = await request(app).post('/api/beds24/webhook/bookings').send({});
     expect(risposta.status).toBe(200);
+  });
+});
+
+describe('GET /api/beds24/da-revisionare — permessi', () => {
+  test('senza token → 401', async () => {
+    const risposta = await request(app).get('/api/beds24/da-revisionare');
+    expect(risposta.status).toBe(401);
+  });
+
+  test('con ruolo cameriere → 403', async () => {
+    const risposta = await request(app).get('/api/beds24/da-revisionare').set(authHeader.cameriere());
+    expect(risposta.status).toBe(403);
+  });
+
+  test('con ruolo receptionist → 200', async () => {
+    const risposta = await request(app).get('/api/beds24/da-revisionare').set(authHeader.receptionist());
+    expect(risposta.status).toBe(200);
+    expect(Array.isArray(risposta.body)).toBe(true);
   });
 });
