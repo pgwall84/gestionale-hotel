@@ -369,10 +369,12 @@ function ModalPrezzoTipologia({ tipo, tipiCamera, periodiStagionali, tariffeTutt
 }
 
 // ── Codici canale OTA (Modulo 2.3, Fase 1) ───────────────────────────────────
-// Una riga per categoria camera, un solo canale oggi (WuBook — badge fisso
-// in intestazione, non un selettore: non ha senso mostrare una scelta con
-// una sola opzione). Salvataggio per riga, non un form unico, come
-// l'assegnazione categoria→camera in /impostazioni/camere.
+// Una riga per categoria camera, un solo canale oggi (Beds24 — badge
+// fisso in intestazione, non un selettore: non ha senso mostrare una
+// scelta con una sola opzione). Canale cambiato da WuBook a Beds24 il
+// 19/08/2026 (WuBook/WooDoo scartati) — vedi docs/EVOLUTIVE.md.
+// Salvataggio per riga, non un form unico, come l'assegnazione
+// categoria→camera in /impostazioni/camere.
 
 function SezioneCanaliOta({ canaliOta, puoScrivere, onCambiato, onErrore, onSuccesso }) {
   return (
@@ -381,11 +383,11 @@ function SezioneCanaliOta({ canaliOta, puoScrivere, onCambiato, onErrore, onSucc
         <h3 className="text-sm font-semibold" style={{ color: 'var(--foreground)' }}>Codici canale OTA</h3>
         <span className="text-xs px-2.5 py-1 rounded-full"
               style={{ background: 'var(--hotel-amber-light)', color: 'var(--hotel-amber-dark)' }}>
-          Canale: WuBook / WooDoo
+          Canale: Beds24
         </span>
       </div>
       <p className="text-xs mb-3" style={{ color: 'var(--muted-foreground)' }}>
-        Codice della camera così come appare nell'estranet WuBook, per ogni categoria. Serve alla mappatura del modulo 2.3, non ancora attiva (in attesa dell'account WuBook).
+        Codice della camera (roomId) così come appare nel pannello Beds24, per ogni categoria — serve alla mappatura usata dall'integrazione Beds24 (lettura prenotazioni).
       </p>
 
       <div className="rounded-lg overflow-hidden" style={{ border: '0.5px solid var(--border)' }}>
@@ -417,7 +419,7 @@ function RigaCanaleOta({ riga, pari, ultima, puoScrivere, onCambiato, onErrore, 
   async function salva() {
     setSalvataggio(true);
     try {
-      await api.put(`/canali-ota/${riga.tipo_camera_id}`, { canale: 'wubook', codice_esterno: codice || null });
+      await api.put(`/canali-ota/${riga.tipo_camera_id}`, { canale: 'beds24', codice_esterno: codice || null });
       onSuccesso('Codice canale salvato.');
       onCambiato();
     } catch (err) {
