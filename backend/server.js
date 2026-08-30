@@ -6,6 +6,7 @@ const app  = require('./app');
 const { avviaJobPromemoriaEmail } = require('./jobs/promemoriaEmail');
 const { avviaJobInvioAlloggiatiWeb } = require('./jobs/invioAlloggiatiWeb');
 const { avviaJobScadenzaHoldBookingEngine } = require('./jobs/scadenzaHoldBookingEngine');
+const { avviaJobRiconciliazioneBeds24 } = require('./jobs/beds24Riconciliazione');
 const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
@@ -26,4 +27,8 @@ app.listen(PORT, () => {
   // Job pulizia blocchi scaduti Booking Engine Diretto (modulo 19/08/2026)
   // — stesso motivo, mai in app.js.
   avviaJobScadenzaHoldBookingEngine();
+
+  // Job riconciliazione notturna Beds24 (modulo 2.3, Fase 1) — mai in
+  // app.js, stesso motivo degli altri job: girerebbe anche durante i test.
+  avviaJobRiconciliazioneBeds24();
 });
