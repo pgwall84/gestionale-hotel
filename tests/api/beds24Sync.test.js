@@ -99,7 +99,7 @@ describe('beds24SyncController — processaBooking, cancellazioni', () => {
   afterAll(async () => {
     await pool.query(`DELETE FROM soggiorno_ospiti WHERE soggiorno_id IN (SELECT id FROM soggiorni WHERE camera_id = $1)`, [cameraId]);
     await pool.query(`DELETE FROM soggiorni WHERE camera_id = $1`, [cameraId]);
-    await pool.query(`DELETE FROM prenotazioni WHERE canale_origine = 'beds24' AND external_booking_id IN ('555222', '555333')`);
+    await pool.query(`DELETE FROM prenotazioni WHERE canale_origine = 'beds24' AND external_booking_id IN ('555222', '555333', '555666')`);
     await pool.query(`DELETE FROM tipi_camera_canali WHERE tipo_camera_id = $1`, [tipoCameraId]);
     await pool.query(`DELETE FROM tipi_camera_camere WHERE camera_id = $1`, [cameraId]);
     await pool.query(`DELETE FROM camere WHERE id = $1`, [cameraId]);
@@ -144,6 +144,23 @@ describe('beds24SyncController — processaBooking, cancellazioni', () => {
       `SELECT stato FROM prenotazioni WHERE canale_origine = 'beds24' AND external_booking_id = '555333'`
     );
     expect(prenotazione.rows[0].stato).not.toBe('interrotta');
+  });
+
+  test('prenotazione mai vista prima e già cancellata su Beds24 viene ignorata, nessuna camera occupata', async () => {
+    const risultato = await processaBooking({
+      id: 555666, roomId: 999889, arrival: '2026-11-21', departure: '2026-11-23',
+      numAdult: 1, numChild: 0, firstName: 'Sara', lastName: 'Neri', email: 'sara.beds24test@example.com', status: 'cancelled',
+    });
+
+    expect(risultato.esito).toBe('ignorata_cancellata_alla_prima_vista');
+    const prenotazione = await pool.query(
+      `SELECT * FROM prenotazioni WHERE canale_origine = 'beds24' AND external_booking_id = '555666'`
+    );
+    expect(prenotazione.rows).toHaveLength(0);
+    const coda = await pool.query(
+      `SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '555666'`
+    );
+    expect(coda.rows).toHaveLength(0);
   });
 });
 

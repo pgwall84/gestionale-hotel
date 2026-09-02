@@ -86,6 +86,17 @@ async function processaBooking(booking) {
       [CANALE_ORIGINE, externalBookingId]
     );
 
+    // Una prenotazione mai vista prima e già cancellata su Beds24 va
+    // ignorata qui: il ramo di cancellazione qualche riga sotto scatta solo
+    // se esiste già una riga in prenotazioni/soggiorni. Senza questo
+    // controllo finirebbe nel blocco di creazione in fondo, che scrive
+    // sempre stato='confermata' senza guardare booking.status, occupando
+    // una camera fisica per una prenotazione che non è mai stata attiva.
+    if (!esistente.rows.length && booking.status === 'cancelled') {
+      await client.query('ROLLBACK');
+      return { esito: 'ignorata_cancellata_alla_prima_vista' };
+    }
+
     const mappatura = await client.query(
       `SELECT tipo_camera_id FROM tipi_camera_canali WHERE canale = 'beds24' AND codice_esterno = $1`,
       [String(booking.roomId)]
