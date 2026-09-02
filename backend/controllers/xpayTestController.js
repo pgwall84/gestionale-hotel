@@ -8,11 +8,14 @@
 // docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md e la
 // conversazione Cowork 29-31/08/2026 per il percorso completo.
 
-const crypto = require('crypto');
 const pool = require('../config/db');
+// macAvvioPagamento/macPagaNonce riusate da lib/payments/nexiProvider.js
+// (02/09/2026, Task 8 dello switch provider di pagamento) — stesso calcolo
+// verificato qui in isolamento il 31/08/2026, ora condiviso col percorso
+// di produzione (PAYMENT_PROVIDER=nexi) invece di duplicato.
+const { macAvvioPagamento, macPagaNonce } = require('../lib/payments/nexiProvider');
 
 const ALIAS = process.env.XPAY_BUILD_ALIAS;
-const CHIAVE_SEGRETA = process.env.XPAY_BUILD_MAC_KEY;
 // "int-" = ambiente di test/integrazione, stesso dominio del backoffice del
 // terminale 00103562 — NON xpaysandbox.nexigroup.com (quello era il
 // prodotto Intesa, sbagliato).
@@ -26,31 +29,12 @@ function generaTransactionId() {
   return `TEST${Date.now()}`;
 }
 
-function sha1(stringa) {
-  return crypto.createHash('sha1').update(stringa, 'utf8').digest('hex');
-}
-
-// "Calcolo MAC" — sezione "Form raccolta dati carta": codTrans, divisa,
-// importo, chiave segreta (in quest'ordine, senza separatori tra chiave e
-// valore oltre al segno "=").
-function macAvvioPagamento({ transactionId, amount, currency }) {
-  return sha1(`codTrans=${transactionId}divisa=${currency}importo=${amount}${CHIAVE_SEGRETA}`);
-}
-
-// "Calcolo MAC" — sezione "Pagamento" (pagaNonce): apiKey, codiceTransazione,
-// importo, divisa, xpayNonce, timeStamp, chiave segreta.
-function macPagaNonce({ transactionId, amount, currency, xpayNonce, timeStamp }) {
-  return sha1(
-    `apiKey=${ALIAS}codiceTransazione=${transactionId}importo=${amount}divisa=${currency}xpayNonce=${xpayNonce}timeStamp=${timeStamp}${CHIAVE_SEGRETA}`
-  );
-}
-
 // POST /api/xpay-test/prepara — genera i dati che il client deve passare a
 // XPay.setConfig(), incluso il MAC calcolato qui (la chiave segreta non
 // deve MAI arrivare al browser).
 exports.prepara = async (req, res) => {
   try {
-    if (!ALIAS || !CHIAVE_SEGRETA) {
+    if (!ALIAS || !process.env.XPAY_BUILD_MAC_KEY) {
       return res.status(500).json({
         errore: 'XPAY_BUILD_ALIAS o XPAY_BUILD_MAC_KEY non configurati in .env del backend.',
       });
