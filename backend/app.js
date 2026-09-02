@@ -138,6 +138,13 @@ app.use('/api/pre-checkin',          preCheckinRoutes);
 // evitare ambiguità di prefisso, anche se i path non si sovrappongono
 // (/api/pre-checkin/:id vs /api/pre-checkin-pubblico/:token).
 app.use('/api/pre-checkin-pubblico', preCheckinPubblicoRoutes);
+// Percorso di TEST isolato per l'integrazione Nexi XPay Build (terminale
+// XPay Only 00103562, dominio int-ecommerce.nexi.it — 31/08/2026). require
+// dentro la guardia: fuori scope in produzione, dove serve solo il flusso
+// reale. Vedi docs/superpowers/specs/2026-08-29-integrazione-nexi-xpay-design.md.
+if (process.env.NODE_ENV !== 'production') {
+  app.use('/api/xpay-test', require('./routes/xpayTest'));
+}
 // Pubblica (nessun verificaToken), stesso principio di /api/pre-checkin-pubblico
 // — Booking Engine Diretto, modulo 19/08/2026.
 app.use('/api/booking-pubblico',     bookingPubblicoRoutes);
