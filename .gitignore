@@ -20,3 +20,6 @@ playwright-report/
 run-test.ps1
 test.bat
 _to_delete/
+
+# File di esempio generati da RIMOVCLI in fase di test/certificazione
+docs/ross1000/test-certificazione/
