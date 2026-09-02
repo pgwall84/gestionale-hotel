@@ -1,0 +1,18 @@
+# Normalizza tutti i file di testo a LF nel repository.
+# Evita che i client Windows reintroducano CRLF a ogni git add
+# (rumore continuo nei diff di package-lock.json, app.js, ecc.).
+* text=auto eol=lf
+
+# File binari: mai toccati dalla normalizzazione di fine riga.
+*.pdf   binary
+*.xls   binary
+*.xlsx  binary
+*.png   binary
+*.jpg   binary
+*.jpeg  binary
+*.gif   binary
+*.ico   binary
+*.webp  binary
+*.woff  binary
+*.woff2 binary
+*.zip   binary
