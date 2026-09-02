@@ -16,7 +16,7 @@ const pool = require('../config/db');
 // (min_stay/chiuso_arrivo/chiuso_partenza/stop_sell).
 const { calcolaTariffaPerTrattamentiConPlanning, calcolaTariffaConPlanning } = require('./planningTariffeController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
-const stripe = require('../lib/stripeClient');
+const { providerAttivo, nomeProviderAttivo } = require('../lib/payments');
 
 const CANALE_ORIGINE_BOOKING_ENGINE = 'sito_diretto';
 const MINUTI_VALIDITA_HOLD = 15;
@@ -409,54 +409,53 @@ async function prenota(req, res) {
     // Stripe, in stripeWebhookController.js, avviene già dopo COMMIT). Ora si
     // fa COMMIT prima — la camera resta comunque riservata dal vincolo di
     // esclusione su `soggiorni` più il TTL dell'hold (MINUTI_VALIDITA_HOLD),
-    // non dal lock di transazione — poi si chiama Stripe fuori transazione,
-    // infine si scrive la riga `pagamenti` con un secondo INSERT (atomico di
-    // per sé, singola query).
+    // non dal lock di transazione — poi si chiama il provider di pagamento
+    // fuori transazione, infine si scrive la riga `pagamenti` con un
+    // secondo INSERT (atomico di per sé, singola query). Valido anche con
+    // Nexi (02/09/2026), pur essendo sincrono/senza rete: stesso schema per
+    // non avere due percorsi diversi a seconda del provider attivo.
     await client.query('COMMIT');
 
-    let paymentIntent;
+    let risultatoPagamento;
     try {
-      paymentIntent = await stripe.paymentIntents.create({
-        amount: Math.round(importoCaparra * 100),
-        currency: 'eur',
-        metadata: { prenotazione_id: String(prenotazione.id) },
-        description: `Caparra prenotazione #${prenotazione.id} — Hotel del Golfo`,
+      risultatoPagamento = await providerAttivo().avviaPagamento({
+        prenotazioneId: prenotazione.id,
+        importoEuro: importoCaparra,
       });
-    } catch (stripeErr) {
+    } catch (pagamentoErr) {
       // La prenotazione (hold) esiste già ma senza modo di pagarla: libero
       // subito la camera invece di aspettare la scadenza naturale del hold
       // — nessun motivo di tenerla bloccata sapendo già che questo tentativo
       // non avrà un pagamento.
-      console.error(`prenotazione ${prenotazione.id}: creazione PaymentIntent Stripe fallita, libero la prenotazione:`, stripeErr.message);
+      console.error(`prenotazione ${prenotazione.id}: avvio pagamento (${nomeProviderAttivo()}) fallito, libero la prenotazione:`, pagamentoErr.message);
       try {
         await client.query(`UPDATE prenotazioni SET stato = 'interrotta', updated_at = NOW() WHERE id = $1`, [prenotazione.id]);
         await client.query(`UPDATE soggiorni SET cancellato = true WHERE prenotazione_id = $1`, [prenotazione.id]);
       } catch (cleanupErr) {
-        console.error(`prenotazione ${prenotazione.id}: cleanup dopo fallimento Stripe — errore imprevisto:`, cleanupErr.message);
+        console.error(`prenotazione ${prenotazione.id}: cleanup dopo fallimento avvio pagamento — errore imprevisto:`, cleanupErr.message);
       }
       return res.status(502).json({ error: 'Impossibile avviare il pagamento in questo momento. Riprova tra qualche istante.' });
     }
 
     try {
       await client.query(
-        `INSERT INTO pagamenti (prenotazione_id, importo, tipo, stato, external_payment_id)
-         VALUES ($1, $2, 'caparra', 'pending', $3)`,
-        [prenotazione.id, importoCaparra, paymentIntent.id]
+        `INSERT INTO pagamenti (prenotazione_id, importo, tipo, stato, external_payment_id, metodo)
+         VALUES ($1, $2, 'caparra', 'pending', $3, $4)`,
+        [prenotazione.id, importoCaparra, risultatoPagamento.external_payment_id, nomeProviderAttivo()]
       );
     } catch (dbErr) {
-      // Caso limite: il PaymentIntent esiste già su Stripe ma la riga
+      // Caso limite: il pagamento esiste già presso il provider ma la riga
       // pagamenti non è stata scritta (fallimento DB proprio in questa
-      // finestra) — loggato per intervento manuale, perché il webhook non
-      // troverà nessuna riga 'pending' da aggiornare quando arriverà
-      // payment_intent.succeeded.
-      console.error(`prenotazione ${prenotazione.id}: PaymentIntent ${paymentIntent.id} creato ma riga pagamenti non scritta:`, dbErr.message);
+      // finestra) — loggato per intervento manuale, perché la conferma non
+      // troverà nessuna riga 'pending' da aggiornare quando arriverà.
+      console.error(`prenotazione ${prenotazione.id}: pagamento ${risultatoPagamento.external_payment_id} avviato ma riga pagamenti non scritta:`, dbErr.message);
       return res.status(500).json({ error: 'Errore interno' });
     }
 
     res.status(201).json({
       prenotazione_id: prenotazione.id,
       importo_caparra: importoCaparra,
-      client_secret: paymentIntent.client_secret,
+      [risultatoPagamento.chiaveRisposta]: risultatoPagamento.datiCliente,
       scadenza_hold: prenotazione.data_scadenza_opzione,
     });
   } catch (err) {
@@ -497,7 +496,7 @@ async function terminiCancellazione(req, res) {
 // che può disallinearsi silenziosamente. Nessun dato sensibile — è la
 // stessa percentuale già visibile a chiunque prenoti sul sito.
 async function configurazione(req, res) {
-  res.json({ percentuale_caparra: PERCENTUALE_CAPARRA });
+  res.json({ percentuale_caparra: PERCENTUALE_CAPARRA, provider: nomeProviderAttivo() });
 }
 
 module.exports = { disponibilita, disponibilitaMese, prenota, terminiCancellazione, configurazione, CANALE_ORIGINE_BOOKING_ENGINE, MINUTI_VALIDITA_HOLD, PERCENTUALE_CAPARRA };

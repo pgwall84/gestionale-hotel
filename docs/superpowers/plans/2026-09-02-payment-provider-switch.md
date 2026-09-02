@@ -19,140 +19,42 @@
 
 ---
 
-### Task 1: Infrastruttura di test (Jest + Supertest)
+### Task 1 (RIVISTO 02/09/2026, dopo scoperta in esecuzione) — Convenzioni di test reali
 
-**Files:**
-- Modify: `backend/package.json`
-- Create: `backend/jest.config.js`
-- Modify: `backend/config/db.js`
-- Create: `backend/.env.test.example`
-- Create: `backend/controllers/bookingPubblicoController.smoke.test.js`
+Il Task 1 originale (creare da zero Jest+Supertest+.env.test dentro backend/)
+era basato su una verifica incompleta — cercavo test solo dentro backend/,
+non alla radice del repo. Esiste gia' una suite matura: jest.config.js alla
+radice, tests/api/*.test.js (35+ file, incluso tests/api/bookingPubblico.test.js
+e tests/api/pagamenti.test.js), tests/lib/*.test.js, tests/helpers/db.js
+(getPool/chiudiPool/pulisciDatiTest), tests/setup.js (globalSetup, carica
+backend/.env — STESSO database di sviluppo, non uno isolato) e
+tests/setup-after-env.js (chiude il pool di backend/config/db.js per file).
 
-**Interfaces:**
-- Produce: script npm `test`; convenzione file test `*.test.js` accanto al file testato; `config/db.js` carica `.env.test` quando `NODE_ENV==='test'`.
+Convenzioni reali da seguire in tutti i task successivi, al posto di quelle
+originariamente scritte:
+- File di test in `tests/lib/payments/`, `tests/lib/prenotazioni/`,
+  `tests/api/` — MAI dentro `backend/**` (il testMatch di jest.config.js
+  cerca solo `tests/api/**` e `tests/lib/**`).
+- Nessun `.env.test` per il DB: i test girano contro lo stesso database di
+  `backend/.env` (dev), NON un database isolato — conseguenza pratica:
+  ogni fixture creata nei test va ripulita esplicitamente in `afterAll`
+  (delete per id, ordine inverso alle FK), stesso pattern di
+  `tests/api/pagamenti.test.js`.
+- Fixture via `require('../helpers/db').getPool()` per gli INSERT diretti,
+  MAI chiamare `pool.end()` sul pool di `backend/config/db.js` dentro un
+  test — gia' centralizzato in `tests/setup-after-env.js`.
+- `canale_origine` per prenotazioni di test: `'test_interno'` (valore gia'
+  riservato in questo progetto per dati di test, escluso esplicitamente dai
+  job schedulati reali — vedi jobs/invioAlloggiatiWeb.js), MAI
+  `'sito_diretto'` (canale reale) per non confondere dati di test con
+  prenotazioni vere nello stesso database.
+- Suffisso univoco (`Date.now()`) su valori con vincoli di unicita', date
+  lontane nel futuro dove serve una prenotazione reale via API — stesso
+  pattern di `tests/api/pagamenti.test.js`.
 
-- [ ] **Step 1: Aggiungere le dipendenze di test**
-
-Modifica `backend/package.json`:
-
-```json
-  "scripts": {
-    "start": "node server.js",
-    "dev": "nodemon server.js",
-    "test": "jest --runInBand"
-  },
-```
-
-(`--runInBand`: i test toccano lo stesso database reale in sequenza — girare i file di test in parallelo su tabelle condivise, `prenotazioni`/`pagamenti` in primis, produrrebbe race condition tra test, non nel codice.)
-
-```json
-  "devDependencies": {
-    "nodemon": "^3.1.4",
-    "jest": "^29.7.0",
-    "supertest": "^7.0.0"
-  }
-```
-
-Esegui: `npm install` dentro `backend/`.
-
-- [ ] **Step 2: Configurare Jest**
-
-Crea `backend/jest.config.js`:
-
-```javascript
-// jest.config.js — Jest imposta NODE_ENV='test' automaticamente se non è
-// già valorizzata (comportamento di default della CLI), quindi non serve
-// cross-env: config/db.js userà .env.test grazie a questo.
-module.exports = {
-  testEnvironment: 'node',
-  testMatch: ['**/*.test.js'],
-  testTimeout: 10000,
-};
-```
-
-- [ ] **Step 3: Far caricare `.env.test` invece di `.env` quando NODE_ENV=test**
-
-Modifica `backend/config/db.js`, riga 6:
-
-```javascript
-require('dotenv').config({ quiet: true });
-```
-
-diventa:
-
-```javascript
-// In test carica .env.test (database separato — mai i test contro il DB
-// di sviluppo/produzione) invece di .env. path relativo alla cwd del
-// processo node (backend/), stessa convenzione di dotenv di default.
-require('dotenv').config({
-  path: process.env.NODE_ENV === 'test' ? '.env.test' : '.env',
-  quiet: true,
-});
-```
-
-- [ ] **Step 4: Documentare le variabili del DB di test**
-
-Crea `backend/.env.test.example`:
-
-```
-# Database di TEST — separato da sviluppo/produzione. I test (npm test)
-# fanno scritture reali (INSERT/UPDATE/DELETE) su prenotazioni/pagamenti,
-# MAI puntare questo a un database con dati veri.
-#
-# Setup una tantum: crea un database Postgres vuoto (es. "gestionale_test")
-# ed esegui in ordine tutti i file in database/migrations/*.sql contro
-# quel database, stesso modo in cui e' stato creato il database di sviluppo.
-DB_HOST=localhost
-DB_PORT=5432
-DB_NAME=gestionale_test
-DB_USER=
-DB_PASSWORD=
-
-# Non serve STRIPE_SECRET_KEY/STRIPE_WEBHOOK_SECRET reali per i test dei
-# task successivi (i test del webhook usano stripe.webhooks.generateTestHeaderString,
-# nessuna chiamata di rete verso Stripe) — un valore placeholder basta.
-STRIPE_SECRET_KEY=sk_test_placeholder
-STRIPE_WEBHOOK_SECRET=whsec_test_placeholder
-```
-
-Copia manuale richiesta all'utente (non automatizzabile da qui): `cp backend/.env.test.example backend/.env.test` e compilare `DB_USER`/`DB_PASSWORD`, poi creare ed eseguire le migration sul database `gestionale_test` come descritto nel commento.
-
-- [ ] **Step 5: Primo test — verifica che l'infrastruttura funzioni end-to-end**
-
-Crea `backend/controllers/bookingPubblicoController.smoke.test.js`:
-
-```javascript
-const request = require('supertest');
-const app = require('../app');
-const pool = require('../config/db');
-
-describe('smoke test infrastruttura', () => {
-  afterAll(async () => {
-    await pool.end();
-  });
-
-  test('GET /api/booking-pubblico/configurazione risponde 200', async () => {
-    const res = await request(app).get('/api/booking-pubblico/configurazione');
-    expect(res.status).toBe(200);
-    expect(res.body).toHaveProperty('percentuale_caparra');
-  });
-});
-```
-
-- [ ] **Step 6: Eseguire e verificare**
-
-Run: `npm test` (dentro `backend/`, con `.env.test` configurato e database di test raggiungibile e migrato)
-Expected: 1 test PASS. Se fallisce con errore di connessione DB, il database di test non e' configurato correttamente (Step 4) — non procedere ai task successivi finche' questo non passa.
-
-- [ ] **Step 7: Commit**
-
-```bash
-git add package.json package-lock.json jest.config.js config/db.js .env.test.example controllers/bookingPubblicoController.smoke.test.js
-git commit -m "test: aggiunge infrastruttura Jest + Supertest (backend)"
-```
+Nessun task infrastrutturale da eseguire: si passa direttamente al Task 2.
 
 ---
-
 ### Task 2: Migration — nuovo stato `pagamenti.stato` per rimborsi manuali
 
 **Files:**

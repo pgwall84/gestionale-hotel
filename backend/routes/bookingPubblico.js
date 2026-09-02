@@ -7,6 +7,7 @@ const router = express.Router();
 const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const ctrl = require('../controllers/bookingPubblicoController');
+const ctrlPagamentoNexi = require('../controllers/bookingPagamentoNexiController');
 
 // CORS dedicato — audit mini-sicurezza pre-deploy 23/08/2026. Il CORS
 // globale di app.js consente una sola origine (FRONTEND_URL, il gestionale
@@ -52,5 +53,6 @@ router.get('/disponibilita-mese', ctrl.disponibilitaMese);
 router.post('/prenota', ctrl.prenota);
 router.get('/termini-cancellazione', ctrl.terminiCancellazione);
 router.get('/configurazione', ctrl.configurazione);
+router.post('/completa-pagamento-nexi', ctrlPagamentoNexi.completaPagamentoNexi);
 
 module.exports = router;
