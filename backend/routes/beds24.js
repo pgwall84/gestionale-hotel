@@ -37,12 +37,46 @@ async function scriviWebhookLog(payload, errore) {
   }
 }
 
+// Arricchisce una notifica webhook (di cui ci fidiamo solo per l'id della
+// prenotazione) con i dati completi da GET /bookings, poi la processa.
+// Usata sia dalla route POST che da quella GET qui sotto — stessa logica,
+// stesso principio prudente: mai processare con dati incompleti, meglio
+// lasciare che la riconciliazione notturna recuperi la prenotazione al
+// giro successivo.
+async function elaboraNotificaBooking(bookingId, payloadGrezzo) {
+  let bookingCompleto;
+  try {
+    const risultati = await beds24Client.getBookings({ id: [bookingId] });
+    bookingCompleto = risultati[0];
+  } catch (errArricchimento) {
+    await scriviWebhookLog(payloadGrezzo, `arricchimento GET /bookings fallito: ${errArricchimento.message}`);
+    return;
+  }
+
+  if (!bookingCompleto) {
+    await scriviWebhookLog(payloadGrezzo, `GET /bookings non ha restituito la prenotazione ${bookingId}`);
+    return;
+  }
+
+  await processaBooking(bookingCompleto);
+  await scriviWebhookLog(payloadGrezzo, null);
+}
+
 // POST /api/beds24/webhook/bookings — riceve le notifiche prenotazione da
 // Beds24. Pubblica (nessun token: è Beds24 a chiamarci).
 // Corpo incapsulato — confermato sullo Swagger reale (30/08/2026):
 // { timeStamp, booking: {...}, infoItems, invoiceItems, messages, retries }
 // NON un oggetto booking nudo. Logghiamo sempre il payload grezzo intero
 // (con l'involucro) per tracciabilità.
+//
+// ATTENZIONE — il 02/09/2026 il supporto Beds24 ha confermato (log lato
+// loro) che le notifiche reali per questa proprietà arrivano come GET su
+// /webhook/bookings?bookid=...&status=..., non come POST con questo corpo
+// — vedi la route GET subito sotto, che è quella effettivamente chiamata.
+// Questa POST resta attiva (non rimossa) per compatibilità, nel caso lo
+// Swagger descriva un meccanismo/tipo di evento diverso che in futuro
+// venga davvero usato — ma finché non arriva mai una chiamata reale qui,
+// è la route GET quella che conta.
 //
 // L'oggetto booking del webhook NON contiene firstName/lastName/email/
 // phone (a differenza di GET /bookings) — confermato il 30/08/2026, non
@@ -52,11 +86,7 @@ async function scriviWebhookLog(payload, errore) {
 // email possibile con email null) — non un caso limite raro, il
 // comportamento di default. Per questo arricchiamo sempre con una
 // GET /bookings?id= prima di processare, invece di usare il corpo del
-// webhook direttamente. Se l'arricchimento fallisce o non trova nulla,
-// NON processiamo con dati incompleti: meglio lasciare che il job di
-// riconciliazione notturna (rete di sicurezza, dati sempre completi)
-// recuperi questa prenotazione al giro successivo, piuttosto che creare
-// un ospite vuoto adesso.
+// webhook direttamente.
 router.post('/webhook/bookings', webhookRateLimit, async (req, res) => {
   const payloadGrezzo = req.body || {};
   const bookingWebhook = payloadGrezzo.booking || {};
@@ -65,29 +95,38 @@ router.post('/webhook/bookings', webhookRateLimit, async (req, res) => {
       await scriviWebhookLog(payloadGrezzo, 'payload senza booking.id o booking.roomId');
       return res.status(200).json({ ricevuto: true });
     }
-
-    let bookingCompleto;
-    try {
-      const risultati = await beds24Client.getBookings({ id: [bookingWebhook.id] });
-      bookingCompleto = risultati[0];
-    } catch (errArricchimento) {
-      await scriviWebhookLog(payloadGrezzo, `arricchimento GET /bookings fallito: ${errArricchimento.message}`);
-      return res.status(200).json({ ricevuto: true });
-    }
-
-    if (!bookingCompleto) {
-      await scriviWebhookLog(payloadGrezzo, `GET /bookings non ha restituito la prenotazione ${bookingWebhook.id}`);
-      return res.status(200).json({ ricevuto: true });
-    }
-
-    await processaBooking(bookingCompleto);
-    await scriviWebhookLog(payloadGrezzo, null);
+    await elaboraNotificaBooking(bookingWebhook.id, payloadGrezzo);
     res.status(200).json({ ricevuto: true });
   } catch (err) {
-    console.error('beds24 webhook — errore elaborazione:', err.message);
+    console.error('beds24 webhook (POST) — errore elaborazione:', err.message);
     await scriviWebhookLog(payloadGrezzo, err.message);
     // 200 comunque: non vogliamo che Beds24 ripeta la stessa chiamata in
     // loop per un errore nostro — l'errore resta tracciato in webhook_log.
+    res.status(200).json({ ricevuto: true });
+  }
+});
+
+// GET /api/beds24/webhook/bookings?bookid=...&status=... — il formato
+// REALE delle notifiche booking webhook di Beds24 per questa proprietà,
+// confermato il 02/09/2026 dal supporto Beds24 tramite i loro log lato
+// server (non un'ipotesi): una GET con bookid/status in query string,
+// niente corpo. Ignoriamo deliberatamente "status" dalla query string e
+// ci affidiamo sempre al dato fresco da GET /bookings tramite
+// elaboraNotificaBooking — stessa prudenza della route POST qui sopra:
+// non fidarsi di un valore che potrebbe essere superato da un evento
+// successivo arrivato nel frattempo.
+router.get('/webhook/bookings', webhookRateLimit, async (req, res) => {
+  const payloadGrezzo = { bookid: req.query.bookid, status: req.query.status };
+  try {
+    if (!req.query.bookid) {
+      await scriviWebhookLog(payloadGrezzo, 'notifica GET senza bookid');
+      return res.status(200).json({ ricevuto: true });
+    }
+    await elaboraNotificaBooking(req.query.bookid, payloadGrezzo);
+    res.status(200).json({ ricevuto: true });
+  } catch (err) {
+    console.error('beds24 webhook (GET) — errore elaborazione:', err.message);
+    await scriviWebhookLog(payloadGrezzo, err.message);
     res.status(200).json({ ricevuto: true });
   }
 });

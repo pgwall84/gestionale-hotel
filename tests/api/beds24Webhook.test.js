@@ -60,6 +60,59 @@ describe('POST /api/beds24/webhook/bookings', () => {
   });
 });
 
+describe('GET /api/beds24/webhook/bookings', () => {
+  afterEach(async () => {
+    jest.restoreAllMocks();
+    await pool.query(`DELETE FROM webhook_log WHERE fonte = 'beds24'`);
+    await pool.query(`DELETE FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999778'`);
+  });
+
+  test('formato reale Beds24 (bookid/status in query, nessun corpo): arricchisce con GET /bookings e logga bookid/status', async () => {
+    const bookingCompleto = {
+      id: 999778, roomId: 88889, arrival: '2026-12-05', departure: '2026-12-06',
+      numAdult: 1, numChild: 0, firstName: 'Test', lastName: 'WebhookGet',
+      email: 'webhookget.beds24test@example.com', phone: null, status: 'confirmed',
+    };
+    const getBookingsSpy = jest.spyOn(beds24Client, 'getBookings').mockResolvedValue([bookingCompleto]);
+
+    const risposta = await request(app)
+      .get('/api/beds24/webhook/bookings')
+      .query({ bookid: 999778, status: 'new' });
+
+    expect(risposta.status).toBe(200);
+    expect(getBookingsSpy).toHaveBeenCalledWith({ id: ['999778'] });
+    const log = await pool.query(`SELECT * FROM webhook_log WHERE fonte = 'beds24' ORDER BY id DESC LIMIT 1`);
+    expect(log.rows).toHaveLength(1);
+    expect(log.rows[0].payload_raw.bookid).toBe('999778');
+    expect(log.rows[0].payload_raw.status).toBe('new');
+    // roomId 88889 non è mappato → finisce in coda, con i dati ospite veri.
+    const coda = await pool.query(`SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999778'`);
+    expect(coda.rows).toHaveLength(1);
+    expect(coda.rows[0].payload_raw.email).toBe('webhookget.beds24test@example.com');
+  });
+
+  test('se GET /bookings di arricchimento fallisce, non processa e non crea ospiti vuoti', async () => {
+    jest.spyOn(beds24Client, 'getBookings').mockRejectedValue(new Error('rete non raggiungibile'));
+
+    const risposta = await request(app)
+      .get('/api/beds24/webhook/bookings')
+      .query({ bookid: 999778, status: 'new' });
+
+    expect(risposta.status).toBe(200);
+    const log = await pool.query(`SELECT errore FROM webhook_log WHERE fonte = 'beds24' ORDER BY id DESC LIMIT 1`);
+    expect(log.rows[0].errore).toMatch(/arricchimento/);
+    const coda = await pool.query(`SELECT * FROM beds24_prenotazioni_da_revisionare WHERE external_booking_id = '999778'`);
+    expect(coda.rows).toHaveLength(0);
+  });
+
+  test('risponde 200 anche senza bookid, senza andare in crash', async () => {
+    const risposta = await request(app).get('/api/beds24/webhook/bookings').query({ status: 'new' });
+    expect(risposta.status).toBe(200);
+    const log = await pool.query(`SELECT errore FROM webhook_log WHERE fonte = 'beds24' ORDER BY id DESC LIMIT 1`);
+    expect(log.rows[0].errore).toMatch(/bookid/);
+  });
+});
+
 describe('GET /api/beds24/da-revisionare — permessi', () => {
   test('senza token → 401', async () => {
     const risposta = await request(app).get('/api/beds24/da-revisionare');
