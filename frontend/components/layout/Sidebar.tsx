@@ -39,7 +39,7 @@ import {
   CalendarDays, BookOpen, Car, Archive, Settings,
   Clock, LogOut, LogIn, ChefHat, BedDouble,
   Euro, Gift, Building2, Contact, ShieldCheck, Menu as MenuIcon, X, Mail, Send, FileCode,
-  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3, CalendarRange, FileBarChart,
+  Wrench, Receipt, KeyRound, Search, Home, Thermometer, BarChart3, CalendarRange, FileBarChart, Link2,
 } from 'lucide-react';
 import { useAuth } from '@/context/AuthContext';
 
@@ -185,6 +185,7 @@ const SEZIONI_MENU = [
       { href: '/impostazioni/camere', icona: Building2, testo: 'Camere', ruoli: AT },
       { href: '/impostazioni/tassa-soggiorno', icona: Euro, testo: 'Tassa di soggiorno', ruoli: AT },
       { href: '/impostazioni/alloggiati', icona: ShieldCheck, testo: 'Alloggiati Web', ruoli: AT },
+      { href: '/impostazioni/beds24', icona: Link2, testo: 'Beds24', ruoli: AT },
       { href: '/impostazioni/email', icona: Mail, testo: 'Testi email', ruoli: AT },
       { href: '/impostazioni/catalogo-addebiti', icona: Receipt, testo: 'Catalogo addebiti', ruoli: AT },
       { href: '/impostazioni/haccp', icona: Thermometer, testo: 'HACCP', ruoli: AT },

@@ -105,7 +105,7 @@ export default function PaginaTariffe() {
     try {
       const [resTipi, resCanali, resPeriodi, resTariffe, resRegole, resSupplementi] = await Promise.all([
         api.get('/tipi-camera'),
-        api.get('/canali-ota'),
+        api.get('/canali-ota?canale=beds24'),
         api.get('/periodi-stagionali'),
         api.get('/tariffe'),
         api.get('/tariffe-derivate/derivazione'),
@@ -419,7 +419,10 @@ function RigaCanaleOta({ riga, pari, ultima, puoScrivere, onCambiato, onErrore, 
   async function salva() {
     setSalvataggio(true);
     try {
-      await api.put(`/canali-ota/${riga.tipo_camera_id}`, { canale: 'beds24', codice_esterno: codice || null });
+      await api.put(`/canali-ota/${riga.tipo_camera_id}`, {
+        canale: 'beds24', codice_esterno: codice || null,
+        unita_esposte: riga.unita_esposte, maggiorazione_percentuale: riga.maggiorazione_percentuale,
+      });
       onSuccesso('Codice canale salvato.');
       onCambiato();
     } catch (err) {
