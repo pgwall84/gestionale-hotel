@@ -130,3 +130,39 @@ describe('GET /api/beds24/da-revisionare — permessi', () => {
     expect(Array.isArray(risposta.body)).toBe(true);
   });
 });
+
+describe('GET/PUT /api/beds24/config', () => {
+  afterEach(async () => {
+    await pool.query(`UPDATE beds24_config SET orizzonte_invio_tariffe_fino_a = NULL WHERE id = 1`);
+  });
+
+  test('senza token → 401', async () => {
+    const res = await request(app).get('/api/beds24/config');
+    expect(res.status).toBe(401);
+  });
+
+  test('receptionist → 403 sulla PUT (configurazione riservata ad admin/titolare)', async () => {
+    const res = await request(app)
+      .put('/api/beds24/config')
+      .set(authHeader.receptionist())
+      .send({ orizzonte_invio_tariffe_fino_a: '2027-01-06' });
+    expect(res.status).toBe(403);
+  });
+
+  test('titolare: PUT salva la data, GET la restituisce', async () => {
+    const risPut = await request(app)
+      .put('/api/beds24/config')
+      .set(authHeader.titolare())
+      .send({ orizzonte_invio_tariffe_fino_a: '2027-01-06' });
+    expect(risPut.status).toBe(200);
+
+    const risGet = await request(app).get('/api/beds24/config').set(authHeader.receptionist());
+    expect(risGet.status).toBe(200);
+    expect(risGet.body.orizzonte_invio_tariffe_fino_a).toBe('2027-01-06');
+  });
+
+  test('PUT senza data → 400', async () => {
+    const res = await request(app).put('/api/beds24/config').set(authHeader.titolare()).send({});
+    expect(res.status).toBe(400);
+  });
+});

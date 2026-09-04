@@ -165,4 +165,51 @@ router.patch('/da-revisionare/:id/risolvi', verificaToken, richiedeAzione('beds2
   }
 });
 
+// GET /api/beds24/config — stato configurazione invio (orizzonte tariffe,
+// ultima sincronizzazione). Accessibile a: admin, titolare, receptionist
+// (consultazione, stesso criterio di beds24/lettura già in uso per la
+// coda di revisione).
+router.get('/config', verificaToken, richiedeAzione('beds24', 'lettura'), async (req, res) => {
+  try {
+    const risultato = await pool.query(
+      `SELECT orizzonte_invio_tariffe_fino_a, ultima_sincronizzazione_at FROM beds24_config WHERE id = 1`
+    );
+    const riga = risultato.rows[0] || {};
+    res.json({
+      orizzonte_invio_tariffe_fino_a: riga.orizzonte_invio_tariffe_fino_a
+        ? new Date(riga.orizzonte_invio_tariffe_fino_a).toISOString().slice(0, 10)
+        : null,
+      ultima_sincronizzazione_at: riga.ultima_sincronizzazione_at || null,
+    });
+  } catch (err) {
+    console.error('GET /api/beds24/config error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+});
+
+// PUT /api/beds24/config — imposta l'orizzonte di invio tariffe (data di
+// fine stagione, aggiornata a mano — nessun avanzamento automatico in
+// questa fase, vedi spec). Decisione commerciale, non operativa —
+// riservata ad admin/titolare (shared/ruoli.js, azione 'configurazione'
+// sotto beds24, aggiunta apposta il 04/09/2026: a differenza di
+// 'scrittura', qui la receptionist non è inclusa).
+router.put('/config', verificaToken, richiedeAzione('beds24', 'configurazione'), async (req, res) => {
+  const { orizzonte_invio_tariffe_fino_a } = req.body;
+  if (!orizzonte_invio_tariffe_fino_a) {
+    return res.status(400).json({ error: 'orizzonte_invio_tariffe_fino_a obbligatorio.' });
+  }
+  try {
+    await pool.query(
+      `INSERT INTO beds24_config (id, orizzonte_invio_tariffe_fino_a, updated_at)
+       VALUES (1, $1, now())
+       ON CONFLICT (id) DO UPDATE SET orizzonte_invio_tariffe_fino_a = EXCLUDED.orizzonte_invio_tariffe_fino_a, updated_at = now()`,
+      [orizzonte_invio_tariffe_fino_a]
+    );
+    res.json({ ok: true });
+  } catch (err) {
+    console.error('PUT /api/beds24/config error:', err);
+    res.status(500).json({ error: 'Errore interno' });
+  }
+});
+
 module.exports = router;

@@ -163,9 +163,15 @@ const PERMESSI_SEZIONI = {
   // Beds24 (Modulo 2.3, Fase 1) — lettura/risoluzione anche a
   // receptionist: è chi crea a mano la prenotazione mancante e chiude la
   // riga in coda, stesso ruolo operativo di chi gestisce il check-in.
+  // 'configurazione' (Fase 2/3, 04/09/2026): orizzonte di invio tariffe
+  // (data di fine stagione) — decisione commerciale, non operativa,
+  // stesso criterio già usato per tassa_soggiorno. Riservata ad
+  // admin/titolare, a differenza di 'lettura'/'scrittura' che includono
+  // la receptionist.
   beds24: {
-    lettura:   [A, T, R],
-    scrittura: [A, T, R],
+    lettura:        [A, T, R],
+    scrittura:      [A, T, R],
+    configurazione: [A, T],
   },
 
   // Tassa di soggiorno (Modulo 2.4, Fase 2A) — lettura/scrittura (calcolo e
