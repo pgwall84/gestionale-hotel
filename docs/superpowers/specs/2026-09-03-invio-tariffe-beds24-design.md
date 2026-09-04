@@ -194,9 +194,21 @@ resto del batch.
   documentazione pubblica mostra solo `minStay`/`price1`) — da verificare
   sullo Swagger reale con le credenziali di Marco prima di scrivere il
   client, stesso procedimento già seguito per `getBookings` in Fase 1.
-- Se Beds24 fattura anche per piano tariffario oltre che per unità/camera
-  (rilevante per la scelta di avere 2 piani — B&B e Mezza Pensione — invece
-  di 1) — da chiarire con Beds24/Eleni prima o durante il piano.
+- ~~Se Beds24 fattura anche per piano tariffario oltre che per
+  unità/camera~~ — **Risolto (04/09/2026)**: la pagina Account > Billing
+  di Marco mostra la fatturazione mensile scomposta in Monthly Account
+  Fee, Monthly Sub Account Fee, Properties (per rooms/proprietà), Channel
+  Management (per link) e Private Label Booking Domain — nessuna voce
+  legata a piano tariffario/rate plan. Avere 2 piani (B&B, Mezza
+  Pensione) sulla stessa tipologia camera non comporta costi aggiuntivi.
+  Nota operativa emersa dallo stesso controllo, da verificare prima del
+  piano: la voce "Properties" mostra oggi 8 rooms fatturate, mentre il
+  vincolo di business (sezione Contesto) assume 5 unità (una per
+  tipologia, numero già confermato su Setup → Room Types). Da chiarire
+  se le 8 sono camere fisiche singole non ancora consolidate nelle 5
+  tipologie pooled, o se il consolidamento a 5 unità è un prerequisito
+  operativo su Beds24 da fare prima che `unita_esposte` abbia effetto
+  sui costi reali.
 - Indice univoco su `planning_tariffe_giorni` con `canale` nullable — la
   semantica esatta (indice parziale vs standard) va verificata in fase di
   piano, non solo descritta qui.
