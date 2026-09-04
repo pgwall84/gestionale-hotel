@@ -231,7 +231,7 @@ async function prezzoBasePerNotteConPlanning(baseTipoCameraId, dataArrivo, dataP
     pool.query(
       `SELECT data, prezzo_notte FROM planning_tariffe_giorni
        WHERE tipo_camera_id = $1 AND trattamento = 'bb' AND prezzo_notte IS NOT NULL
-         AND data >= $2 AND data < $3`,
+         AND canale IS NULL AND data >= $2 AND data < $3`,
       [baseTipoCameraId, dataArrivo, dataPartenza]
     ),
   ]);
@@ -343,10 +343,19 @@ async function calcolaTariffaPerTrattamentiConPlanning(tipoCameraId, dataArrivo,
   const giorni = nottiCamera.map(n => isoData(n.notte));
   const prezzoCameraPerNotte = new Map(nottiCamera.map(n => [isoData(n.notte), n.prezzo_notte]));
 
+  // canale IS NULL (04/09/2026, Modulo 2.3): questa funzione è il motore
+  // di prenotazione DIRETTO (booking pubblico, prenotazioni interne) — deve
+  // leggere solo le righe di default, mai un'eccezione impostata per un
+  // canale specifico (es. 'beds24'), altrimenti un prezzo pensato solo per
+  // quel canale finirebbe applicato anche a chi prenota direttamente. Bug
+  // reale trovato da Marco (test 'un override canale=beds24 NON influenza
+  // il prezzo calcolato per il motore diretto'): senza questo filtro,
+  // overridePerChiave indicizzava entrambe le righe (NULL e 'beds24') sulla
+  // stessa chiave trattamento|data e l'ultima letta vinceva a caso.
   const overrideResult = await pool.query(
     `SELECT trattamento, data, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell
      FROM planning_tariffe_giorni
-     WHERE tipo_camera_id = $1 AND data >= $2 AND data < $3`,
+     WHERE tipo_camera_id = $1 AND canale IS NULL AND data >= $2 AND data < $3`,
     [tipoCameraId, dataArrivo, dataPartenza]
   );
   const overridePerChiave = new Map(overrideResult.rows.map(r => [`${r.trattamento}|${isoData(r.data)}`, r]));
