@@ -48,36 +48,61 @@ function aggiungiGiorno(dataIso) {
 }
 
 // GET /api/planning-tariffe/griglia?tipo_camera_id=&data_da=&data_a=
+// canale (04/09/2026, Modulo 2.3): quando 'beds24', la griglia mostra
+// SOLO bb/mezza_pensione (le OTA non gestiscono pensione_completa, vedi
+// spec) e ogni cella riceve anche eccezione_canale — true se esiste una
+// riga specifica per quel canale, diversa dal default. Precedenza di
+// lettura: riga NULL come base, poi la riga del canale richiesto (se
+// esiste) la sovrascrive per la stessa chiave — stessa logica di merge di
+// calcolaPrezziRestrizioniBeds24Range (beds24PrezziDisponibilita.js).
 async function griglia(req, res) {
-  const { tipo_camera_id, data_da, data_a } = req.query;
+  const { tipo_camera_id, data_da, data_a, canale } = req.query;
   if (!tipo_camera_id || !data_da || !data_a) {
     return res.status(400).json({ errore: 'tipo_camera_id, data_da e data_a sono obbligatori.' });
   }
   if (data_a < data_da) {
     return res.status(400).json({ errore: 'data_a deve essere successiva o uguale a data_da.' });
   }
+  const canaleRichiesto = canale === 'beds24' ? 'beds24' : null;
+  const trattamentiDaMostrare = canaleRichiesto === 'beds24'
+    ? TRATTAMENTI.filter(t => t !== 'pensione_completa')
+    : TRATTAMENTI;
   try {
     const dataFineEsclusiva = aggiungiGiorno(data_a);
 
     const [prezziCamera, overrideResult] = await Promise.all([
       calcolaPrezzoCameraPerNotteConPlanning(tipo_camera_id, data_da, dataFineEsclusiva),
       pool.query(
-        `SELECT trattamento, data, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell
+        `SELECT trattamento, data, canale, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell
          FROM planning_tariffe_giorni
-         WHERE tipo_camera_id = $1 AND data BETWEEN $2 AND $3`,
-        [tipo_camera_id, data_da, data_a]
+         WHERE tipo_camera_id = $1 AND data BETWEEN $2 AND $3
+           AND (canale IS NULL OR canale = $4)`,
+        [tipo_camera_id, data_da, data_a, canaleRichiesto]
       ),
     ]);
 
-    const overridePerChiave = new Map(overrideResult.rows.map(r => [`${r.trattamento}|${isoData(r.data)}`, r]));
+    const overridePerChiave = new Map();
+    for (const r of overrideResult.rows.filter(r => r.canale === null)) {
+      overridePerChiave.set(`${r.trattamento}|${isoData(r.data)}`, r);
+    }
+    const eccezioniPerChiave = new Set();
+    if (canaleRichiesto) {
+      for (const r of overrideResult.rows.filter(r => r.canale === canaleRichiesto)) {
+        const chiave = `${r.trattamento}|${isoData(r.data)}`;
+        overridePerChiave.set(chiave, r);
+        eccezioniPerChiave.add(chiave);
+      }
+    }
+
     const prezzoCameraPerNotte = new Map(prezziCamera.map(n => [isoData(n.notte), n.prezzo_notte]));
     const giorni = [...prezzoCameraPerNotte.keys()].sort();
     const righe = {};
 
-    for (const trattamento of TRATTAMENTI) {
+    for (const trattamento of trattamentiDaMostrare) {
       righe[trattamento] = {};
       for (const di of giorni) {
-        const override = overridePerChiave.get(`${trattamento}|${di}`);
+        const chiave = `${trattamento}|${di}`;
+        const override = overridePerChiave.get(chiave);
         let prezzoCalcolato = prezzoCameraPerNotte.get(di);
         if (trattamento !== 'bb' && prezzoCalcolato != null) {
           const supplemento = await calcolaSupplementoTrattamento(tipo_camera_id, di, aggiungiGiorno(di), trattamento, 2, []);
@@ -92,6 +117,7 @@ async function griglia(req, res) {
           chiuso_arrivo: override?.chiuso_arrivo ?? false,
           chiuso_partenza: override?.chiuso_partenza ?? false,
           stop_sell: override?.stop_sell ?? false,
+          eccezione_canale: eccezioniPerChiave.has(chiave),
         };
       }
     }

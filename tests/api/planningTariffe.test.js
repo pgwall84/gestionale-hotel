@@ -54,3 +54,35 @@ describe('Blindatura motore diretto — canale IS NULL (Modulo 2.3)', () => {
     await db.query(`DELETE FROM planning_tariffe_giorni WHERE tipo_camera_id = $1 AND canale = 'beds24'`, [tipoCameraTestId]);
   });
 });
+
+describe('GET /api/planning-tariffe/griglia — supporto canale (Modulo 2.3)', () => {
+  test('con canale=beds24 esclude pensione_completa e segnala le eccezioni', async () => {
+    const db = getPool();
+    await db.query(
+      `INSERT INTO planning_tariffe_giorni (tipo_camera_id, trattamento, data, canale, prezzo_notte)
+       VALUES ($1, 'bb', '2099-06-12', 'beds24', 250)`,
+      [tipoCameraTestId]
+    );
+
+    const risposta = await request(app)
+      .get(`/api/planning-tariffe/griglia?tipo_camera_id=${tipoCameraTestId}&data_da=2099-06-12&data_a=2099-06-12&canale=beds24`)
+      .set(authHeader.titolare());
+
+    expect(risposta.status).toBe(200);
+    expect(risposta.body.righe.pensione_completa).toBeUndefined();
+    expect(risposta.body.righe.bb['2099-06-12'].prezzo).toBe(250);
+    expect(risposta.body.righe.bb['2099-06-12'].eccezione_canale).toBe(true);
+
+    await db.query(`DELETE FROM planning_tariffe_giorni WHERE tipo_camera_id = $1 AND canale = 'beds24'`, [tipoCameraTestId]);
+  });
+
+  test('senza canale (comportamento invariato) include pensione_completa e non ha eccezione_canale', async () => {
+    const risposta = await request(app)
+      .get(`/api/planning-tariffe/griglia?tipo_camera_id=${tipoCameraTestId}&data_da=2099-06-13&data_a=2099-06-13`)
+      .set(authHeader.titolare());
+
+    expect(risposta.status).toBe(200);
+    expect(risposta.body.righe.pensione_completa).toBeDefined();
+    expect(risposta.body.righe.bb['2099-06-13'].eccezione_canale).toBe(false);
+  });
+});
