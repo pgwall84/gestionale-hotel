@@ -111,3 +111,46 @@ describe('beds24Client — getBookings', () => {
     expect(urlSecondaChiamata.searchParams.get('page')).toBe('2');
   });
 });
+
+describe('beds24Client — pushCalendario', () => {
+  afterEach(async () => {
+    await pool.query('DELETE FROM beds24_config');
+    jest.restoreAllMocks();
+  });
+
+  test('invia POST /inventory/rooms/calendar col token e restituisce risposta + crediti rimanenti', async () => {
+    await pool.query(
+      `INSERT INTO beds24_config (id, refresh_token, token, token_scade_at)
+       VALUES (1, 'rt_fittizio', 'token_valido', NOW() + INTERVAL '1 hour')`
+    );
+    const fetchSpy = jest.spyOn(global, 'fetch').mockResolvedValue({
+      ok: true,
+      json: async () => ([{ success: true, new: {}, modified: { field: 'numAvail' }, errors: [], warnings: [], info: [] }]),
+      headers: new Map([
+        ['x-fiveminlimit-remaining', '450'],
+      ]),
+    });
+
+    const voci = [{ roomId: 999888, calendar: [{ from: '2026-10-01', to: '2026-10-02', numAvail: 2 }] }];
+    const risultato = await beds24Client.pushCalendario(voci);
+
+    expect(risultato.ok).toBe(true);
+    expect(fetchSpy).toHaveBeenCalledTimes(1);
+    const [url, opzioni] = fetchSpy.mock.calls[0];
+    expect(String(url)).toContain('/inventory/rooms/calendar');
+    expect(opzioni.method).toBe('POST');
+    expect(opzioni.headers.token).toBe('token_valido');
+    expect(JSON.parse(opzioni.body)).toEqual(voci);
+  });
+
+  test('lancia un errore chiaro se la risposta HTTP non è ok (errore di trasporto)', async () => {
+    await pool.query(
+      `INSERT INTO beds24_config (id, refresh_token, token, token_scade_at)
+       VALUES (1, 'rt_fittizio', 'token_valido', NOW() + INTERVAL '1 hour')`
+    );
+    jest.spyOn(global, 'fetch').mockResolvedValue({ ok: false, status: 503 });
+
+    await expect(beds24Client.pushCalendario([{ roomId: 1, calendar: [] }]))
+      .rejects.toThrow('POST /inventory/rooms/calendar fallita: HTTP 503');
+  });
+});

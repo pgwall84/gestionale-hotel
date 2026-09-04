@@ -144,4 +144,34 @@ async function getBookings({ modifiedFrom, modifiedTo, status, id } = {}) {
   return tutte;
 }
 
-module.exports = { scambiaInviteCode, getToken, getBookings };
+// Scrive disponibilità/prezzi/restrizioni su Beds24. `voci` è già nella
+// forma sparsa richiesta dall'API (solo i campi da cambiare per ogni
+// intervallo di date) — la costruzione dei valori (mappatura override,
+// prezzi price1/price2) è responsabilità del chiamante
+// (beds24PrezziDisponibilita.js), non di questo client.
+// Non lancia per un success:false nel corpo — solo per errori di
+// trasporto (rete, HTTP non-2xx). Un elemento con errors[] non vuoto è
+// normale amministrazione (es. camera chiusa che rifiuta un prezzo) e va
+// gestito dal chiamante via beds24_invio_log, non da un throw qui.
+async function pushCalendario(voci) {
+  const token = await getToken();
+  const risposta = await fetch(`${BASE_URL}/inventory/rooms/calendar`, {
+    method: 'POST',
+    headers: { token, 'Content-Type': 'application/json' },
+    body: JSON.stringify(voci),
+  });
+  if (!risposta.ok) {
+    throw new Error(`POST /inventory/rooms/calendar fallita: HTTP ${risposta.status}`);
+  }
+  const corpo = await risposta.json();
+  const creditiHeader = risposta.headers?.get
+    ? risposta.headers.get('x-fiveminlimit-remaining')
+    : null;
+  return {
+    ok: true,
+    risposta: corpo,
+    creditiRimanenti: creditiHeader !== null && creditiHeader !== undefined ? Number(creditiHeader) : null,
+  };
+}
+
+module.exports = { scambiaInviteCode, getToken, getBookings, pushCalendario };
