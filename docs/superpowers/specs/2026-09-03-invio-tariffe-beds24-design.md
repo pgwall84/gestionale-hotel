@@ -1,7 +1,7 @@
 # Design — Invio tariffe/disponibilità/restrizioni a Beds24 (Modulo 2.3, Fase 2/3)
 
 Data: 03/09/2026
-Stato: approvato da Marco in sessione di brainstorming. In attesa di piano di implementazione (writing-plans).
+Stato: approvato da Marco in sessione di brainstorming, incognite tecniche chiuse e mappatura restrizioni/prezzi confermata il 04/09/2026. Pronto per writing-plans.
 
 ## Contesto
 
@@ -169,8 +169,7 @@ per `chiuso_arrivo`/`chiuso_partenza`/`stop_sell` come i nostri. Ha un
 unico campo enum `override` per camera/giorno:
 `none | blackout | exception | noCheckIn | noCheckOut | noCheckInOrCheckOut`.
 
-Mappatura verso Beds24 (in attesa di conferma finale di Marco sulla
-precedenza — vedi "Incognite ancora aperte"):
+Mappatura verso Beds24 (precedenza confermata da Marco il 04/09/2026):
 - `stop_sell = true` → `override: "blackout"` (precedenza massima —
   ignora gli altri due flag)
 - `chiuso_arrivo = true` e `chiuso_partenza = true` (stop_sell false) →
@@ -247,10 +246,9 @@ resto del batch.
   `[{roomId, calendar: [{from, to, ...soli campi da cambiare}]}]`.
   Disponibilità = `numAvail`. Min/max stay = `minStay`/`maxStay`.
   Restrizioni arrivo/partenza/stop-sell = campo unico `override` (enum
-  — vedi sezione "Calcolo restrizioni" sopra, mappatura in attesa di
-  conferma di Marco sulla precedenza). Risposta con `errors`/`warnings`
-  strutturati per campo e header di rate limiting a crediti — vedi
-  "Gestione errori".
+  — vedi sezione "Calcolo restrizioni" sopra, precedenza confermata da
+  Marco). Risposta con `errors`/`warnings` strutturati per campo e
+  header di rate limiting a crediti — vedi "Gestione errori".
 - ~~Cosa rappresentano `price1`...`price16`~~ — **Risolto (04/09/2026)**:
   Marco ha verificato su Beds24 Setup → Prices → Daily Price Rules —
   nessuna regola configurata su questo account, quindi nessun significato
