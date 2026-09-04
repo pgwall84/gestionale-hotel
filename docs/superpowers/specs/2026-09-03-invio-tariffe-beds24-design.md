@@ -150,6 +150,17 @@ per tipo_camera/notte — stessa fonte dati del sito, nessuna duplicazione
 di logica di pricing. Il prezzo inviato a Beds24 è
 `prezzo_base * (1 + maggiorazione_percentuale / 100)`.
 
+Mappatura sui 16 slot prezzo di Beds24 (`price1`...`price16` sul
+calendario): confermato che non hanno un significato fisso imposto
+dall'API — sono slot liberi, popolabili anche via un pannello Beds24
+("Daily Price Rules") che nessuno ha mai configurato su questo account.
+Decisione: `price1` = B&B, `price2` = Mezza Pensione, `price3`...
+`price16` non usati. **Vincolo operativo**: non configurare mai regole
+automatiche di "Daily Price Rules" su `price1`/`price2` in Beds24 — quel
+pannello genera prezzi derivati lato Beds24 e andrebbe in conflitto
+silenzioso con il push del gestionale, che deve restare l'unica fonte di
+verità su questi due slot.
+
 ## Calcolo restrizioni
 
 Confermato su Swagger (04/09/2026, sezione Request/Response di
@@ -240,13 +251,12 @@ resto del batch.
   conferma di Marco sulla precedenza). Risposta con `errors`/`warnings`
   strutturati per campo e header di rate limiting a crediti — vedi
   "Gestione errori".
-- **Ancora aperta**: cosa rappresentano `price1`...`price16` (16 slot di
-  prezzo per camera/giorno, tipo `number`, nessuna descrizione su
-  Swagger) — non possiamo assumere che siano i nostri 2 piani tariffari
-  (B&B, Mezza Pensione). Da verificare da Marco su Beds24 Setup → Rooms
-  → pricing di una delle 5 tipologie reali, guardando le etichette degli
-  slot di prezzo nell'interfaccia (ospiti vs piani tariffari). Blocca la
-  sezione "Calcolo prezzo" finché non è chiarito.
+- ~~Cosa rappresentano `price1`...`price16`~~ — **Risolto (04/09/2026)**:
+  Marco ha verificato su Beds24 Setup → Prices → Daily Price Rules —
+  nessuna regola configurata su questo account, quindi nessun significato
+  preesistente da rispettare. Mappatura decisa: `price1` = B&B, `price2`
+  = Mezza Pensione — vedi "Calcolo prezzo" per il vincolo operativo
+  associato (non configurare regole automatiche su quegli slot).
 - ~~Se Beds24 fattura anche per piano tariffario oltre che per
   unità/camera~~ — **Risolto (04/09/2026)**: la pagina Account > Billing
   di Marco mostra la fatturazione mensile scomposta in Monthly Account
