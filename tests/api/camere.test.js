@@ -9,7 +9,16 @@ const app     = require('../../backend/app');
 const { authHeader, creaToken } = require('../helpers/auth');
 const { getPool, chiudiPool } = require('../helpers/db');
 
-const OGGI = new Date().toISOString().split('T')[0];
+// Data locale, non toISOString() (UTC): questo test invia OGGI a un
+// endpoint che ora calcola il proprio fallback in locale (camereController
+// oggiLocale, fix 04/09/2026) e confronta contro CURRENT_DATE di Postgres
+// (anch'esso locale, tz Europe/Berlin) — un OGGI in UTC si sfasava da
+// entrambi per ~2 ore ogni notte (22:00-24:00 UTC = 00:00-02:00 CEST).
+function dataLocaleOggi() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+const OGGI = dataLocaleOggi();
 let primaCamera; // id della prima camera reale nel DB
 
 beforeAll(async () => {

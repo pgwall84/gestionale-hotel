@@ -41,6 +41,18 @@ const CALCOLO_FERMATA = `
 
 const pool = require('../config/db');
 
+// Data locale odierna come 'YYYY-MM-DD', senza passare da toISOString()
+// (converte in UTC: nella finestra 22:00-24:00 UTC — 00:00-02:00 CEST — il
+// giorno UTC è ancora ieri rispetto al calendario locale, quindi i vari
+// `new Date().toISOString().split('T')[0]` di questo file restituivano la
+// data sbagliata per ~2 ore ogni notte). Stesso pattern già corretto altrove
+// nel progetto — vedi timbratureController.js fmtDataLocale,
+// dashboardController.js oggiLocale — bug segnalato da Marco 04/09/2026.
+function oggiLocale() {
+  const d = new Date();
+  return `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+}
+
 // GET /api/camere?data=2026-06-28
 // Ritorna tutte le 21 camere con il loro stato per la data richiesta.
 // Se per una camera non esiste ancora un record, viene restituito con arrivo/partenza = false.
@@ -61,7 +73,7 @@ const pool = require('../config/db');
 // NON vanno filtrate allo stesso modo: uno storico deve restare leggibile
 // anche se la camera è stata disattivata nel frattempo.
 async function lista(req, res) {
-  const data = req.query.data || new Date().toISOString().split('T')[0];
+  const data = req.query.data || oggiLocale();
   const soloAttive = req.query.tutte !== 'true';
   try {
     const result = await pool.query(`
@@ -154,7 +166,7 @@ async function aggiornaTipo(req, res) {
 // prima (GET /api/camere), cosi il frontend non deve distinguere le due fonti.
 async function aggiornaStato(req, res) {
   const { camera_id, data, note } = req.body;
-  const dataRecord = data || new Date().toISOString().split('T')[0];
+  const dataRecord = data || oggiLocale();
   if (!camera_id) return res.status(400).json({ errore: 'camera_id obbligatorio.' });
   try {
     await pool.query(`
@@ -185,7 +197,7 @@ async function aggiornaStato(req, res) {
 // POST /api/camere/pronta — la cameriera marca una camera come pronta/non pronta
 async function segnaPronte(req, res) {
   const { camera_id, data, pronta } = req.body;
-  const dataRecord = data || new Date().toISOString().split('T')[0];
+  const dataRecord = data || oggiLocale();
   if (!camera_id) return res.status(400).json({ errore: 'camera_id obbligatorio.' });
   try {
     // Crea il record se non esiste, altrimenti aggiorna solo il campo pronta
@@ -208,7 +220,7 @@ async function segnaPronte(req, res) {
 // Ritorna solo le camere con arrivo (fermata) o partenza oggi, calcolati da
 // soggiorni come in lista()/aggiornaStato() — vedi commento in cima al file.
 async function oggi(req, res) {
-  const data = new Date().toISOString().split('T')[0];
+  const data = oggiLocale();
   try {
     const result = await pool.query(`
       SELECT c.numero, c.nome,

@@ -477,7 +477,14 @@ async function scaricaRicevutaGiorno(dataStr) {
   // Finestra ammessa dal servizio (manuale, pag. 17): "Ultimi 30gg escluso
   // il giorno corrente" — validato qui PRIMA di contattare WS_ALLOGGIATI,
   // per dare un errore chiaro invece di un ErroreDes generico dal servizio.
-  const oggi = new Date(new Date().toISOString().slice(0, 10) + 'T00:00:00');
+  // Costruito da getFullYear/getMonth/getDate (calendario LOCALE), non da
+  // toISOString() (UTC): nella finestra 22:00-24:00 UTC (00:00-02:00 CEST)
+  // il giorno UTC è ancora ieri, quindi la vecchia versione trattava una
+  // ricevuta di ieri come "di oggi" (rifiutata) e una di 31 giorni fa come
+  // dentro il limite dei 30 (finestra non applicata) — bug reale segnalato
+  // da Marco 04/09/2026, non solo un problema del test.
+  const adesso = new Date();
+  const oggi = new Date(adesso.getFullYear(), adesso.getMonth(), adesso.getDate());
   const data = new Date(`${dataStr}T00:00:00`);
   const giorniFa = Math.round((oggi - data) / 86400000);
   if (giorniFa <= 0) {
