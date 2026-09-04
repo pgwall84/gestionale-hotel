@@ -116,3 +116,35 @@ describe('PUT /api/canali-ota/:tipoCameraId', () => {
     expect(res.body.codice_esterno).toBeNull();
   });
 });
+
+// ─── unita_esposte / maggiorazione_percentuale (Modulo 2.3, Fase 2/3) ─────────
+
+describe('PUT /api/canali-ota/:tipoCameraId — unita_esposte e maggiorazione_percentuale', () => {
+  test('salva unita_esposte e maggiorazione_percentuale insieme al codice esterno (canale beds24)', async () => {
+    const res = await request(app)
+      .put(`/api/canali-ota/${tipoCameraId}`)
+      .set(authHeader.titolare())
+      .send({ canale: 'beds24', codice_esterno: '777003', unita_esposte: 3, maggiorazione_percentuale: 12.5 });
+
+    expect(res.status).toBe(200);
+    expect(res.body.unita_esposte).toBe(3);
+    expect(Number(res.body.maggiorazione_percentuale)).toBe(12.5);
+  });
+
+  test('unita_esposte negativo → 400', async () => {
+    const res = await request(app)
+      .put(`/api/canali-ota/${tipoCameraId}`)
+      .set(authHeader.titolare())
+      .send({ canale: 'beds24', unita_esposte: -1 });
+    expect(res.status).toBe(400);
+  });
+
+  test('unita_esposte assente/vuoto → resta null (nessun tetto oltre la disponibilità fisica)', async () => {
+    const res = await request(app)
+      .put(`/api/canali-ota/${tipoCameraId}`)
+      .set(authHeader.titolare())
+      .send({ canale: 'beds24', unita_esposte: '', maggiorazione_percentuale: 5 });
+    expect(res.status).toBe(200);
+    expect(res.body.unita_esposte).toBeNull();
+  });
+});

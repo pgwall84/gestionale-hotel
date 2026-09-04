@@ -19,7 +19,7 @@ async function lista(req, res) {
   try {
     const result = await pool.query(
       `SELECT tc.id AS tipo_camera_id, tc.nome AS tipo_camera_nome,
-              $1::VARCHAR AS canale, tcc.codice_esterno, tcc.updated_at
+              $1::VARCHAR AS canale, tcc.codice_esterno, tcc.unita_esposte, tcc.maggiorazione_percentuale, tcc.updated_at
        FROM tipi_camera tc
        LEFT JOIN tipi_camera_canali tcc ON tcc.tipo_camera_id = tc.id AND tcc.canale = $1
        ORDER BY tc.nome`,
@@ -41,15 +41,31 @@ async function upsert(req, res) {
   const codiceEsterno = req.body.codice_esterno && String(req.body.codice_esterno).trim()
     ? String(req.body.codice_esterno).trim()
     : null;
+  const unitaEsposte = req.body.unita_esposte === undefined || req.body.unita_esposte === null || req.body.unita_esposte === ''
+    ? null
+    : Number(req.body.unita_esposte);
+  const maggiorazionePercentuale = req.body.maggiorazione_percentuale === undefined || req.body.maggiorazione_percentuale === null
+    ? 0
+    : Number(req.body.maggiorazione_percentuale);
+
+  if (unitaEsposte !== null && (Number.isNaN(unitaEsposte) || unitaEsposte < 0)) {
+    return res.status(400).json({ error: 'unita_esposte deve essere un intero non negativo o vuoto.' });
+  }
+  if (Number.isNaN(maggiorazionePercentuale) || maggiorazionePercentuale < 0) {
+    return res.status(400).json({ error: 'maggiorazione_percentuale deve essere un numero non negativo.' });
+  }
+
   try {
     const result = await pool.query(
-      `INSERT INTO tipi_camera_canali (tipo_camera_id, canale, codice_esterno, updated_at)
-       VALUES ($1, $2, $3, now())
+      `INSERT INTO tipi_camera_canali (tipo_camera_id, canale, codice_esterno, unita_esposte, maggiorazione_percentuale, updated_at)
+       VALUES ($1, $2, $3, $4, $5, now())
        ON CONFLICT (tipo_camera_id, canale) DO UPDATE SET
          codice_esterno = EXCLUDED.codice_esterno,
+         unita_esposte = EXCLUDED.unita_esposte,
+         maggiorazione_percentuale = EXCLUDED.maggiorazione_percentuale,
          updated_at     = now()
        RETURNING *`,
-      [req.params.tipoCameraId, canale, codiceEsterno]
+      [req.params.tipoCameraId, canale, codiceEsterno, unitaEsposte, maggiorazionePercentuale]
     );
     res.json(result.rows[0]);
   } catch (err) {
