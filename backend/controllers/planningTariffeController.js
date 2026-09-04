@@ -139,13 +139,23 @@ async function griglia(req, res) {
 // l'elenco di TUTTI i giorni fuori range se non confermato, log override
 // (bulk, una sola riga in audit_log) se confermato.
 async function aggiorna(req, res) {
-  const { tipo_camera_id, trattamento, data_da, data_a, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell, confermato } = req.body;
+  const { tipo_camera_id, trattamento, data_da, data_a, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell, confermato, canale } = req.body;
+  // canale (04/09/2026, Modulo 2.3): 'beds24' o assente/qualunque altro
+  // valore normalizzato a NULL (default, comportamento invariato) — stessa
+  // normalizzazione già usata in beds24PrezziDisponibilita.js/griglia() qui
+  // sopra.
+  const canaleNormalizzato = canale === 'beds24' ? 'beds24' : null;
 
   if (!tipo_camera_id || !trattamento || !data_da || !data_a) {
     return res.status(400).json({ errore: 'tipo_camera_id, trattamento, data_da e data_a sono obbligatori.' });
   }
   if (!TRATTAMENTI.includes(trattamento)) {
     return res.status(400).json({ errore: 'Trattamento non valido.' });
+  }
+  // Le OTA collegate tramite Beds24 non gestiscono un terzo pasto separato
+  // — solo bb/mezza_pensione, stessa esclusione già applicata in griglia().
+  if (canaleNormalizzato === 'beds24' && trattamento === 'pensione_completa') {
+    return res.status(400).json({ errore: 'Pensione Completa non è disponibile per il canale Beds24 (le OTA non la supportano).' });
   }
   if (data_a < data_da) {
     return res.status(400).json({ errore: 'data_a deve essere successiva o uguale a data_da.' });
@@ -184,15 +194,22 @@ async function aggiorna(req, res) {
     try {
       await client.query('BEGIN');
       for (const di of giorni) {
+        // ON CONFLICT su (tipo_camera_id, trattamento, data, (COALESCE(canale, '')))
+        // (04/09/2026): la migration 059 ha sostituito il vecchio vincolo a
+        // 3 colonne con un indice su questa espressione, per permettere una
+        // riga default (canale NULL) e una riga eccezione beds24 sulla
+        // stessa chiave — l'ON CONFLICT deve ripetere l'espressione
+        // identica a quella dell'indice, non solo i nomi colonna, altrimenti
+        // Postgres non lo riconosce come target valido.
         await client.query(
-          `INSERT INTO planning_tariffe_giorni (tipo_camera_id, trattamento, data, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell)
-           VALUES ($1, $2, $3, $4, $5, COALESCE($6, false), COALESCE($7, false), COALESCE($8, false))
-           ON CONFLICT (tipo_camera_id, trattamento, data) DO UPDATE SET
-             prezzo_notte    = CASE WHEN $9  THEN planning_tariffe_giorni.prezzo_notte    ELSE $4 END,
-             min_stay        = CASE WHEN $10 THEN planning_tariffe_giorni.min_stay        ELSE $5 END,
-             chiuso_arrivo   = CASE WHEN $11 THEN planning_tariffe_giorni.chiuso_arrivo   ELSE $6 END,
-             chiuso_partenza = CASE WHEN $12 THEN planning_tariffe_giorni.chiuso_partenza ELSE $7 END,
-             stop_sell       = CASE WHEN $13 THEN planning_tariffe_giorni.stop_sell       ELSE $8 END,
+          `INSERT INTO planning_tariffe_giorni (tipo_camera_id, trattamento, data, canale, prezzo_notte, min_stay, chiuso_arrivo, chiuso_partenza, stop_sell)
+           VALUES ($1, $2, $3, $9, $4, $5, COALESCE($6, false), COALESCE($7, false), COALESCE($8, false))
+           ON CONFLICT (tipo_camera_id, trattamento, data, (COALESCE(canale, ''))) DO UPDATE SET
+             prezzo_notte    = CASE WHEN $10 THEN planning_tariffe_giorni.prezzo_notte    ELSE $4 END,
+             min_stay        = CASE WHEN $11 THEN planning_tariffe_giorni.min_stay        ELSE $5 END,
+             chiuso_arrivo   = CASE WHEN $12 THEN planning_tariffe_giorni.chiuso_arrivo   ELSE $6 END,
+             chiuso_partenza = CASE WHEN $13 THEN planning_tariffe_giorni.chiuso_partenza ELSE $7 END,
+             stop_sell       = CASE WHEN $14 THEN planning_tariffe_giorni.stop_sell       ELSE $8 END,
              updated_at      = now()`,
           [
             tipo_camera_id, trattamento, di,
@@ -201,6 +218,7 @@ async function aggiorna(req, res) {
             chiuso_arrivo === undefined ? null : !!chiuso_arrivo,
             chiuso_partenza === undefined ? null : !!chiuso_partenza,
             stop_sell === undefined ? null : !!stop_sell,
+            canaleNormalizzato,
             prezzo_notte === undefined,
             min_stay === undefined,
             chiuso_arrivo === undefined,
