@@ -150,6 +150,31 @@ per tipo_camera/notte — stessa fonte dati del sito, nessuna duplicazione
 di logica di pricing. Il prezzo inviato a Beds24 è
 `prezzo_base * (1 + maggiorazione_percentuale / 100)`.
 
+## Calcolo restrizioni
+
+Confermato su Swagger (04/09/2026, sezione Request/Response di
+`POST /inventory/rooms/calendar`): Beds24 non ha campi booleani separati
+per `chiuso_arrivo`/`chiuso_partenza`/`stop_sell` come i nostri. Ha un
+unico campo enum `override` per camera/giorno:
+`none | blackout | exception | noCheckIn | noCheckOut | noCheckInOrCheckOut`.
+
+Mappatura verso Beds24 (in attesa di conferma finale di Marco sulla
+precedenza — vedi "Incognite ancora aperte"):
+- `stop_sell = true` → `override: "blackout"` (precedenza massima —
+  ignora gli altri due flag)
+- `chiuso_arrivo = true` e `chiuso_partenza = true` (stop_sell false) →
+  `override: "noCheckInOrCheckOut"`
+- solo `chiuso_arrivo = true` → `override: "noCheckIn"`
+- solo `chiuso_partenza = true` → `override: "noCheckOut"`
+- nessuno dei tre → `override: "none"`
+
+Questa è una perdita di espressività accettata consapevolmente: il
+nostro schema permette combinazioni che Beds24 non può rappresentare
+(es. stop_sell insieme a chiuso_arrivo restano indistinguibili lato
+Beds24 — entrambe diventano `blackout`). Non è un problema per il
+diretto (che legge le righe originali, non passa da questa
+traduzione).
+
 ## Frontend
 
 La vista canale Beds24 nel planning tariffe mostra solo B&B e Mezza
@@ -162,6 +187,23 @@ interazione (come si crea/rimuove un'eccezione) da definire in fase di
 piano con mockup, non in questo documento.
 
 ## Gestione errori
+
+Confermato su Swagger (04/09/2026): Beds24 fattura le chiamate API in
+crediti su finestre di 5 minuti, esposti negli header di risposta
+(`X-FiveMinCreditLimit`, `X-FiveMinCreditLimit-Remaining`,
+`X-FiveMinCreditLimit-ResetsIn`, `X-RequestCost`). Il job periodico
+tariffe, che invia per 5 tipologie × tutto l'orizzonte stagionale, deve
+leggere questi header e rallentare (o mettere in coda) quando si
+avvicina al limite, altrimenti rischia di perdere invii proprio nel
+batch pensato come rete di sicurezza. Il push disponibilità immediato,
+essendo un evento singolo per prenotazione, è meno a rischio ma va
+comunque contato nello stesso budget di crediti.
+
+La risposta del `POST` restituisce anche `errors[]`/`warnings[]`/`info[]`
+strutturati per campo (`action`, `field`, `message`), non un messaggio
+generico — il log va scritto usando questi campi così com'è, non
+appiattito in una stringa unica: è più facile da leggere e da correlare
+in futuro con la riga di `planning_tariffe_giorni` che l'ha generato.
 
 Un invio fallito (rete, errore Beds24, token scaduto non rinnovabile) non
 deve bloccare silenziosamente: va sempre loggato con l'errore specifico
@@ -189,11 +231,22 @@ resto del batch.
 
 ## Incognite ancora aperte
 
-- Formato esatto del body di `POST /inventory/rooms/calendar` (nomi campi
-  per disponibilità, stop-sell, chiuso arrivo/partenza — la
-  documentazione pubblica mostra solo `minStay`/`price1`) — da verificare
-  sullo Swagger reale con le credenziali di Marco prima di scrivere il
-  client, stesso procedimento già seguito per `getBookings` in Fase 1.
+- ~~Formato esatto del body di `POST /inventory/rooms/calendar`~~ —
+  **Risolto (04/09/2026)** via Swagger reale: payload sparso
+  `[{roomId, calendar: [{from, to, ...soli campi da cambiare}]}]`.
+  Disponibilità = `numAvail`. Min/max stay = `minStay`/`maxStay`.
+  Restrizioni arrivo/partenza/stop-sell = campo unico `override` (enum
+  — vedi sezione "Calcolo restrizioni" sopra, mappatura in attesa di
+  conferma di Marco sulla precedenza). Risposta con `errors`/`warnings`
+  strutturati per campo e header di rate limiting a crediti — vedi
+  "Gestione errori".
+- **Ancora aperta**: cosa rappresentano `price1`...`price16` (16 slot di
+  prezzo per camera/giorno, tipo `number`, nessuna descrizione su
+  Swagger) — non possiamo assumere che siano i nostri 2 piani tariffari
+  (B&B, Mezza Pensione). Da verificare da Marco su Beds24 Setup → Rooms
+  → pricing di una delle 5 tipologie reali, guardando le etichette degli
+  slot di prezzo nell'interfaccia (ospiti vs piani tariffari). Blocca la
+  sezione "Calcolo prezzo" finché non è chiarito.
 - ~~Se Beds24 fattura anche per piano tariffario oltre che per
   unità/camera~~ — **Risolto (04/09/2026)**: la pagina Account > Billing
   di Marco mostra la fatturazione mensile scomposta in Monthly Account
