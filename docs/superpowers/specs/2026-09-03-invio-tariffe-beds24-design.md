@@ -201,14 +201,14 @@ resto del batch.
   Management (per link) e Private Label Booking Domain — nessuna voce
   legata a piano tariffario/rate plan. Avere 2 piani (B&B, Mezza
   Pensione) sulla stessa tipologia camera non comporta costi aggiuntivi.
-  Nota operativa emersa dallo stesso controllo, da verificare prima del
-  piano: la voce "Properties" mostra oggi 8 rooms fatturate, mentre il
-  vincolo di business (sezione Contesto) assume 5 unità (una per
-  tipologia, numero già confermato su Setup → Room Types). Da chiarire
-  se le 8 sono camere fisiche singole non ancora consolidate nelle 5
-  tipologie pooled, o se il consolidamento a 5 unità è un prerequisito
-  operativo su Beds24 da fare prima che `unita_esposte` abbia effetto
-  sui costi reali.
+  Nota operativa emersa dallo stesso controllo, **risolta (04/09/2026)**:
+  la voce "Properties" mostrava 8 rooms fatturate contro le 5 tipologie
+  realmente in vendita. Marco ha verificato su Setup → Room Types: sono
+  5 tipologie reali più 3 room template vuoti e non collegati a nessun
+  canale (la voce "Channel Management" conta infatti già solo 5 links).
+  Non è un prerequisito del modulo né tocca `tipi_camera_canali` — è
+  spreco puro, indipendente da questo design, da eliminare su Beds24
+  quando Marco vuole (azione operativa, fuori da questa spec).
 - Indice univoco su `planning_tariffe_giorni` con `canale` nullable — la
   semantica esatta (indice parziale vs standard) va verificata in fase di
   piano, non solo descritta qui.
