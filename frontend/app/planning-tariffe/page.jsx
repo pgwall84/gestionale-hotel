@@ -102,6 +102,12 @@ export default function PaginaPlanningTariffe() {
   const [tipiCamera, setTipiCamera] = useState([]);
   const [modo, setModo] = useState('14gg');
   const [ancora, setAncora] = useState(() => new Date());
+  // Selettore canale (04/09/2026, Modulo 2.3, Fase 2/3): 'diretto' mostra
+  // le righe di default (canale IS NULL), 'beds24' mostra la vista con le
+  // eventuali eccezioni impostate per quel canale — nessuna riga scritta
+  // in beds24 tocca mai quella di default, vedi backend
+  // (planningTariffeController.js, Task 9).
+  const [canale, setCanale] = useState('diretto'); // 'diretto' | 'beds24'
   // griglie: { [tipoCameraId]: { giorni, righe } } — una chiamata per
   // tipologia, in parallelo, stesso endpoint per-tipologia di prima
   // (nessuna modifica al backend: il merge "tutte le tipologie insieme" è
@@ -181,12 +187,22 @@ export default function PaginaPlanningTariffe() {
   const giorniIso = cols.map(iso);
   const dataDa = giorniIso[0];
   const dataA = giorniIso[giorniIso.length - 1];
+  // Le OTA collegate tramite Beds24 non gestiscono Pensione Completa —
+  // stessa esclusione già applicata lato backend (griglia()/aggiorna() in
+  // planningTariffeController.js, Task 9). Usata per il rendering delle
+  // righe, il drawer bulk-edit e la propagazione a colonna; NON per la
+  // validazione dell'input restata su TRATTAMENTI (edit inline/popover
+  // restrizioni non passano mai un trattamento arbitrario, sempre quello
+  // della riga cliccata — che con canale=beds24 non può già essere
+  // pensione_completa, dato che quella riga non è renderizzata).
+  const trattamentiVisibili = canale === 'beds24' ? TRATTAMENTI.filter(tr => tr.id !== 'pensione_completa') : TRATTAMENTI;
 
   const caricaGriglie = useCallback(async () => {
     if (tipiCamera.length === 0) return;
     setCaricamento(true);
     try {
       const parametri = new URLSearchParams({ data_da: dataDa, data_a: dataA });
+      if (canale === 'beds24') parametri.set('canale', 'beds24');
       const risultati = await Promise.all(tipiCamera.map(async t => {
         const p = new URLSearchParams(parametri);
         p.set('tipo_camera_id', String(t.id));
@@ -199,13 +215,13 @@ export default function PaginaPlanningTariffe() {
     } finally {
       setCaricamento(false);
     }
-  }, [tipiCamera, dataDa, dataA]);
+  }, [tipiCamera, dataDa, dataA, canale]);
 
   useEffect(() => { caricaGriglie(); }, [caricaGriglie]);
 
   function cellaDati(tipoId, trattamento, di) {
     return griglie[tipoId]?.righe?.[trattamento]?.[di]
-      || { prezzo: null, sovrascritto: false, min_stay: null, chiuso_arrivo: false, chiuso_partenza: false, stop_sell: false };
+      || { prezzo: null, sovrascritto: false, min_stay: null, chiuso_arrivo: false, chiuso_partenza: false, stop_sell: false, eccezione_canale: false };
   }
 
   // ── Salvataggio con gestione 409 (alert bloccante-superabile, come nei
@@ -236,7 +252,7 @@ export default function PaginaPlanningTariffe() {
   // ── Doppio click prezzo ─────────────────────────────────────────────
   async function salvaPrezzoGiorno(tipoId, trattamento, data, prezzo) {
     const ok = await salvaConConferma(
-      { tipo_camera_id: tipoId, trattamento, data_da: data, data_a: data, prezzo_notte: prezzo },
+      { tipo_camera_id: tipoId, trattamento, data_da: data, data_a: data, prezzo_notte: prezzo, canale: canale === 'beds24' ? 'beds24' : undefined },
       v => `Il prezzo ${prezzo}€ esce dal range dichiarato (${v[0]?.minimo ?? '—'}–${v[0]?.massimo ?? '—'}€). Confermi comunque?`
     );
     if (ok) {
@@ -256,6 +272,7 @@ export default function PaginaPlanningTariffe() {
       chiuso_arrivo: formRestrizioni.chiuso_arrivo,
       chiuso_partenza: formRestrizioni.chiuso_partenza,
       stop_sell: formRestrizioni.stop_sell,
+      canale: canale === 'beds24' ? 'beds24' : undefined,
     });
     if (ok) { setPopoverRestrizioni(null); caricaGriglie(); }
   }
@@ -265,7 +282,7 @@ export default function PaginaPlanningTariffe() {
     const ultima = ultimaModifica[chiaveRiga(tipoId, trattamento)];
     if (!ultima) return;
     const ok = await salvaConConferma(
-      { tipo_camera_id: tipoId, trattamento, data_da: dataDa, data_a: dataA, prezzo_notte: ultima.valore },
+      { tipo_camera_id: tipoId, trattamento, data_da: dataDa, data_a: dataA, prezzo_notte: ultima.valore, canale: canale === 'beds24' ? 'beds24' : undefined },
       v => `${v.length} giorno/i su questa riga escono dal range dichiarato per il cartellino. Confermi comunque?`
     );
     setMenuPropaga(null);
@@ -274,11 +291,16 @@ export default function PaginaPlanningTariffe() {
   async function propagaColonna(tipoId, trattamento) {
     const ultima = ultimaModifica[chiaveRiga(tipoId, trattamento)];
     if (!ultima) return;
+    const canaleBody = canale === 'beds24' ? 'beds24' : undefined;
     const esiti = [];
-    for (const tr of TRATTAMENTI) {
+    // trattamentiVisibili, non TRATTAMENTI: con canale=beds24 pensione_completa
+    // non è selezionabile in questa vista e il backend la rifiuta con 400 (non
+    // 409) — il ramo sotto gestisce solo il 409, un 400 qui interromperebbe
+    // silenziosamente la propagazione dopo i primi trattamenti già scritti.
+    for (const tr of trattamentiVisibili) {
       try {
         await api.patch('/planning-tariffe', {
-          tipo_camera_id: tipoId, trattamento: tr.id, data_da: ultima.dataIso, data_a: ultima.dataIso, prezzo_notte: ultima.valore,
+          tipo_camera_id: tipoId, trattamento: tr.id, data_da: ultima.dataIso, data_a: ultima.dataIso, prezzo_notte: ultima.valore, canale: canaleBody,
         });
       } catch (err) {
         if (err.response?.status === 409) esiti.push(tr.id);
@@ -290,7 +312,7 @@ export default function PaginaPlanningTariffe() {
         for (const trId of esiti) {
           await api.patch('/planning-tariffe', {
             tipo_camera_id: tipoId, trattamento: trId, data_da: ultima.dataIso, data_a: ultima.dataIso,
-            prezzo_notte: ultima.valore, confermato: true,
+            prezzo_notte: ultima.valore, confermato: true, canale: canaleBody,
           });
         }
       }
@@ -373,7 +395,7 @@ export default function PaginaPlanningTariffe() {
 
     const conViolazioni = [];
     for (const { tipoId, trattamento } of combinazioni) {
-      const body = { tipo_camera_id: tipoId, trattamento, data_da: drawerForm.dataInizio, data_a: drawerForm.dataFine, confermato: false };
+      const body = { tipo_camera_id: tipoId, trattamento, data_da: drawerForm.dataInizio, data_a: drawerForm.dataFine, confermato: false, canale: canale === 'beds24' ? 'beds24' : undefined };
       if (campiSelezionati.includes('prezzo')) body.prezzo_notte = Number(drawerForm.valori.prezzo);
       if (campiSelezionati.includes('min_stay')) body.min_stay = drawerForm.valori.min_stay === '' || drawerForm.valori.min_stay == null ? null : Number(drawerForm.valori.min_stay);
       if (campiSelezionati.includes('chiuso_arrivo')) body.chiuso_arrivo = !!drawerForm.valori.chiuso_arrivo;
@@ -421,6 +443,21 @@ export default function PaginaPlanningTariffe() {
                     className="text-xs font-medium px-3 py-1.5 rounded-md"
                     style={modo === 'mese' ? { background: 'white', color: 'var(--hotel-navy)' } : { color: 'var(--muted-foreground)' }}>
               Mese
+            </button>
+          </div>
+          {/* Selettore canale (Modulo 2.3, Fase 2/3) — stesso stile del
+              toggle 14gg/Mese qui sopra. Cambiare canale ricarica la
+              griglia (canale nelle dipendenze di caricaGriglie). */}
+          <div className="inline-flex rounded-lg p-0.5" style={{ background: '#EDEFF2' }}>
+            <button onClick={() => setCanale('diretto')}
+                    className="text-xs font-medium px-3 py-1.5 rounded-md"
+                    style={canale === 'diretto' ? { background: 'white', color: 'var(--hotel-navy)' } : { color: 'var(--muted-foreground)' }}>
+              Diretto
+            </button>
+            <button onClick={() => setCanale('beds24')}
+                    className="text-xs font-medium px-3 py-1.5 rounded-md"
+                    style={canale === 'beds24' ? { background: 'white', color: 'var(--hotel-navy)' } : { color: 'var(--muted-foreground)' }}>
+              Beds24
             </button>
           </div>
           <button onClick={() => setAncora(a => aggiungiGiorni(a, modo === '14gg' ? -14 : -30))}
@@ -492,7 +529,7 @@ export default function PaginaPlanningTariffe() {
                         {t.nome}
                       </td>
                     </tr>
-                    {!tipChiusa && TRATTAMENTI.map(tr => {
+                    {!tipChiusa && trattamentiVisibili.map(tr => {
                       const chiave = chiaveRiga(tipoId, tr.id);
                       const trattChiuso = collassatiTrattamento.has(chiave);
                       return (
@@ -550,6 +587,10 @@ export default function PaginaPlanningTariffe() {
                                       ) : (
                                         <span style={{ color: cella.sovrascritto ? 'var(--foreground)' : 'var(--muted-foreground)' }}>
                                           {cella.prezzo != null ? `${cella.prezzo} €` : '—'}
+                                          {cella.eccezione_canale && (
+                                            <span title="Eccezione specifica per il canale Beds24 — diversa dal prezzo di default"
+                                                  style={{ display: 'inline-block', width: '5px', height: '5px', borderRadius: '50%', background: 'var(--hotel-navy)', marginLeft: '3px', verticalAlign: 'middle' }} />
+                                          )}
                                         </span>
                                       )}
                                     </td>
@@ -631,6 +672,11 @@ export default function PaginaPlanningTariffe() {
         <span className="flex items-center gap-1.5">
           <i style={{ width: '10px', height: '10px', borderRadius: '3px', background: 'var(--status-red-bg)', display: 'inline-block' }} /> stop-sell (chiusa alla vendita)
         </span>
+        {canale === 'beds24' && (
+          <span className="flex items-center gap-1.5">
+            <i style={{ width: '5px', height: '5px', borderRadius: '50%', background: 'var(--hotel-navy)', display: 'inline-block' }} /> eccezione specifica per Beds24 (diversa dal prezzo di default)
+          </span>
+        )}
       </div>
 
       {/* Popover restrizioni — position:fixed, esce dal clipping della tabella */}
@@ -723,7 +769,7 @@ export default function PaginaPlanningTariffe() {
               <div className="mb-4">
                 <label className="block text-xs font-medium mb-1.5">Trattamento</label>
                 <div className="flex gap-1.5 flex-wrap">
-                  {TRATTAMENTI.map(tr => (
+                  {trattamentiVisibili.map(tr => (
                     <button key={tr.id} onClick={() => toggleDrawerSet('trattamenti', tr.id)}
                             className="text-xs px-3 py-1.5 rounded-full"
                             style={drawerForm.trattamenti.has(tr.id) ? { background: 'var(--hotel-navy)', color: 'white' } : { border: '1px solid var(--border)' }}>
