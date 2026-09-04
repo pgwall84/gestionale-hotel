@@ -7,8 +7,17 @@
 // Accessibile solo internamente (nessuna route la espone direttamente).
 
 const pool = require('../config/db');
+const { pushDisponibilitaImmediata } = require('../lib/beds24PushDisponibilita');
 
 const CANALE_ORIGINE = 'beds24';
+
+// Le colonne date di Postgres arrivano come oggetti Date via pg — booking.arrival/
+// departure invece sono già stringhe ISO dal payload Beds24. Serve un'unica
+// conversione per poter fare min/max tra le due provenienze quando si calcola
+// il range da ripubblicare su pushDisponibilitaImmediata.
+function isoData(valore) {
+  return valore instanceof Date ? valore.toISOString().slice(0, 10) : String(valore);
+}
 
 // Crea l'ospite se non esiste (match su email quando presente, altrimenti
 // crea sempre) — solo nome+cognome, coerente con la creazione rapida già
@@ -80,7 +89,7 @@ async function processaBooking(booking) {
     const externalBookingId = String(booking.id);
 
     const esistente = await client.query(
-      `SELECT p.id AS prenotazione_id, s.id AS soggiorno_id, s.camera_id
+      `SELECT p.id AS prenotazione_id, s.id AS soggiorno_id, s.camera_id, s.data_arrivo, s.data_partenza
        FROM prenotazioni p JOIN soggiorni s ON s.prenotazione_id = p.id
        WHERE p.canale_origine = $1 AND p.external_booking_id = $2`,
       [CANALE_ORIGINE, externalBookingId]
@@ -124,6 +133,7 @@ async function processaBooking(booking) {
         await client.query(`UPDATE soggiorni SET cancellato = true, updated_at = now() WHERE id = $1`, [riga.soggiorno_id]);
         await client.query(`UPDATE prenotazioni SET stato = 'interrotta', updated_at = now() WHERE id = $1`, [riga.prenotazione_id]);
         await client.query('COMMIT');
+        await pushDisponibilitaImmediata(tipoCameraId, isoData(riga.data_arrivo), isoData(riga.data_partenza));
         return { esito: 'cancellata' };
       }
 
@@ -133,6 +143,12 @@ async function processaBooking(booking) {
         [riga.soggiorno_id, booking.arrival, booking.departure, (booking.numAdult || 1) + (booking.numChild || 0), ospiteId]
       );
       await client.query('COMMIT');
+      // Ripubblica l'unione vecchio+nuovo range: se le date sono cambiate,
+      // sia i giorni liberati sia quelli ora occupati vanno rispecchiati su
+      // Beds24, non solo i nuovi.
+      const dataArrivoUnione = isoData(riga.data_arrivo) < booking.arrival ? isoData(riga.data_arrivo) : booking.arrival;
+      const dataPartenzaUnione = isoData(riga.data_partenza) > booking.departure ? isoData(riga.data_partenza) : booking.departure;
+      await pushDisponibilitaImmediata(tipoCameraId, dataArrivoUnione, dataPartenzaUnione);
       return { esito: 'aggiornata' };
     }
 
@@ -162,6 +178,7 @@ async function processaBooking(booking) {
     );
 
     await client.query('COMMIT');
+    await pushDisponibilitaImmediata(tipoCameraId, booking.arrival, booking.departure);
     return { esito: 'creata' };
   } catch (err) {
     await client.query('ROLLBACK');

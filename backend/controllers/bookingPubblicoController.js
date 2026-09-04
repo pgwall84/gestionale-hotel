@@ -17,6 +17,18 @@ const pool = require('../config/db');
 const { calcolaTariffaPerTrattamentiConPlanning, calcolaTariffaConPlanning } = require('./planningTariffeController');
 const { gestisciConflittoCamera } = require('../utils/erroriDb');
 const { providerAttivo, nomeProviderAttivo } = require('../lib/payments');
+// Push disponibilità immediato verso Beds24 (Modulo 2.3, Fase 2/3,
+// 04/09/2026): qualunque punto di questo controller che crea, libera o
+// sposta un soggiorno diretto deve rispecchiare subito la disponibilità
+// su Beds24 — stesso principio già applicato lato beds24SyncController.js
+// per le prenotazioni in arrivo dai canali OTA. Best-effort: non lancia
+// mai, vedi beds24PushDisponibilita.js.
+const { pushDisponibilitaImmediata } = require('../lib/beds24PushDisponibilita');
+// Le colonne data_arrivo/data_partenza tornano da pg come oggetti Date —
+// stesso helper già in uso in beds24SyncController.js per la stessa ragione.
+function isoData(valore) {
+  return valore instanceof Date ? valore.toISOString().slice(0, 10) : String(valore);
+}
 
 const CANALE_ORIGINE_BOOKING_ENGINE = 'sito_diretto';
 const MINUTI_VALIDITA_HOLD = 15;
@@ -274,12 +286,16 @@ async function prenota(req, res) {
     // (backend/jobs/scadenzaHoldBookingEngine.js) — qui è solo una
     // garanzia aggiuntiva per non far fallire inutilmente una richiesta
     // arrivata tra due esecuzioni del cron.
-    await client.query(
+    // RETURNING (04/09/2026): serve a sapere QUALI tipo_camera_id/date sono
+    // state liberate da questo sweep, per ripubblicare la disponibilità su
+    // Beds24 dopo il COMMIT — vedi pushDisponibilitaImmediata più sotto.
+    const holdScadutiLiberati = await client.query(
       `UPDATE soggiorni s SET cancellato = true
        FROM prenotazioni p
        WHERE s.prenotazione_id = p.id
          AND p.canale_origine = $1 AND p.stato = 'opzione'
-         AND p.data_scadenza_opzione < NOW() AND s.cancellato = false`,
+         AND p.data_scadenza_opzione < NOW() AND s.cancellato = false
+       RETURNING s.tipo_camera_venduto_id, s.data_arrivo, s.data_partenza`,
       [CANALE_ORIGINE_BOOKING_ENGINE]
     );
     await client.query(
@@ -416,6 +432,18 @@ async function prenota(req, res) {
     // non avere due percorsi diversi a seconda del provider attivo.
     await client.query('COMMIT');
 
+    // Push disponibilità immediato (Modulo 2.3, Fase 2/3) — sempre dopo il
+    // commit, mai dentro la transazione. Due motivi distinti per cui la
+    // disponibilità è cambiata: (a) lo sweep sopra ha liberato camere di
+    // hold scaduti di altri clienti, su tipo_camera_id potenzialmente
+    // diversi da quello appena prenotato; (b) questa prenotazione ha appena
+    // occupato una camera del tipo richiesto. Best-effort, non blocca mai
+    // la risposta al cliente.
+    for (const riga of holdScadutiLiberati.rows) {
+      await pushDisponibilitaImmediata(riga.tipo_camera_venduto_id, isoData(riga.data_arrivo), isoData(riga.data_partenza));
+    }
+    await pushDisponibilitaImmediata(tipo_camera_id, data_arrivo, data_partenza);
+
     let risultatoPagamento;
     try {
       risultatoPagamento = await providerAttivo().avviaPagamento({
@@ -431,6 +459,12 @@ async function prenota(req, res) {
       try {
         await client.query(`UPDATE prenotazioni SET stato = 'interrotta', updated_at = NOW() WHERE id = $1`, [prenotazione.id]);
         await client.query(`UPDATE soggiorni SET cancellato = true WHERE prenotazione_id = $1`, [prenotazione.id]);
+        // La camera appena liberata da questo cleanup va ripubblicata su
+        // Beds24 come gli altri due casi sopra — queste query girano già
+        // fuori transazione (il COMMIT è avvenuto prima del tentativo di
+        // pagamento), quindi il push avviene subito dopo, non dopo un
+        // secondo COMMIT che qui non esiste.
+        await pushDisponibilitaImmediata(tipo_camera_id, data_arrivo, data_partenza);
       } catch (cleanupErr) {
         console.error(`prenotazione ${prenotazione.id}: cleanup dopo fallimento avvio pagamento — errore imprevisto:`, cleanupErr.message);
       }

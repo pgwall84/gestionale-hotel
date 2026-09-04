@@ -16,6 +16,12 @@ const { getPool, chiudiPool } = require('../helpers/db');
 const { authHeader } = require('../helpers/auth');
 const { PERCENTUALE_CAPARRA } = require('../../backend/controllers/bookingPubblicoController');
 
+// Push disponibilità immediato (Modulo 2.3, Fase 2/3, 04/09/2026): mockato
+// per non tentare mai una vera chiamata di rete verso Beds24 durante
+// questa suite — stesso principio già in uso in tests/api/beds24Sync.test.js.
+jest.mock('../../backend/lib/beds24PushDisponibilita', () => ({ pushDisponibilitaImmediata: jest.fn() }));
+const { pushDisponibilitaImmediata } = require('../../backend/lib/beds24PushDisponibilita');
+
 const SUFFISSO = `_${Date.now().toString().slice(-6)}`;
 let tipoCameraTestId;
 let cameraTestId;
@@ -250,6 +256,27 @@ describe('POST /api/booking-pubblico/prenota', () => {
     const soggiorno = await db.query('SELECT num_ospiti, composizione_ospiti FROM soggiorni WHERE prenotazione_id = $1', [res.body.prenotazione_id]);
     expect(soggiorno.rows[0].num_ospiti).toBe(2);
     expect(soggiorno.rows[0].composizione_ospiti).toEqual({ adulti: 1, bambini_eta: [5] });
+  });
+  test('una prenotazione diretta andata a buon fine ripubblica la disponibilità su Beds24', async () => {
+    pushDisponibilitaImmediata.mockClear();
+
+    const res = await request(app)
+      .post('/api/booking-pubblico/prenota')
+      .send({
+        tipo_camera_id: tipoCameraTestId,
+        data_arrivo: '2099-07-15',
+        data_partenza: '2099-07-17',
+        nome: 'Beds24',
+        cognome: 'Push',
+        email: `beds24push${SUFFISSO}@example.com`,
+      });
+
+    expect(res.status).toBe(201);
+    prenotazioniCreate.push(res.body.prenotazione_id);
+
+    // tipoCameraTestId, non l'id della camera fisica: pushDisponibilitaImmediata
+    // ragiona per tipo camera venduto, coerente col resto del modulo 2.3.
+    expect(pushDisponibilitaImmediata).toHaveBeenCalledWith(tipoCameraTestId, '2099-07-15', '2099-07-17');
   });
 
   test('400 se la composizione ospiti supera la capienza massima del tipo camera', async () => {

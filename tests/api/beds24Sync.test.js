@@ -1,4 +1,10 @@
 // tests/api/beds24Sync.test.js
+// pushDisponibilitaImmediata è mockata: processaBooking la chiama sempre
+// dopo ogni commit (Task 8, Fase 2/3), ma questi test verificano solo la
+// scrittura su prenotazioni/soggiorni — una vera chiamata di rete verso
+// Beds24 qui sarebbe fuori scope e rallenterebbe la suite senza motivo.
+jest.mock('../../backend/lib/beds24PushDisponibilita', () => ({ pushDisponibilitaImmediata: jest.fn() }));
+
 const pool = require('../../backend/config/db');
 const { processaBooking } = require('../../backend/controllers/beds24SyncController');
 
