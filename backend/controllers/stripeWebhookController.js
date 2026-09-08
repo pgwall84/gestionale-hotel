@@ -15,7 +15,7 @@
 const pool = require('../config/db');
 const stripe = require('../lib/stripeClient');
 const { confermaPrenotazione } = require('../lib/prenotazioni/confermaPrenotazione');
-const { inviaConfermaPrenotazione, inviaInvitoPreCheckin, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
+const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
 
 async function webhook(req, res) {
   const firma = req.headers['stripe-signature'];
@@ -63,8 +63,22 @@ async function webhook(req, res) {
     // 'scaduta' (pagamento arrivato dopo i 15 minuti): rimborso automatico
     // senza provare a far rivivere la prenotazione (la camera potrebbe
     // essere già stata riassegnata).
-    await pool.query(`UPDATE pagamenti SET stato = 'rimborsato' WHERE id = $1`, [risultato.pagamentoId]);
-    await stripe.refunds.create({ payment_intent: paymentIntent.id });
+    try {
+      await pool.query(`UPDATE pagamenti SET stato = 'rimborsato' WHERE id = $1`, [risultato.pagamentoId]);
+      await stripe.refunds.create({ payment_intent: paymentIntent.id });
+    } catch (err) {
+      // BUGFIX 07/09/2026 — prima questo blocco non aveva try/catch, a
+      // differenza di tutti gli altri nel file: un errore qui (DB o API
+      // Stripe) restava un'eccezione non gestita nell'handler async,
+      // rischiando di piantare l'intero processo invece di far ritentare
+      // Stripe con un 500. Il pagamento NON è ancora marcato 'rimborsato'
+      // in questo caso: serve intervento manuale sul rimborso.
+      console.error(
+        `[webhook stripe] rimborso automatico fallito per prenotazione ${prenotazioneId} (pagamento ${risultato.pagamentoId}, esito ${risultato.esito}) — richiede intervento manuale:`,
+        err.message
+      );
+      return res.status(500).json({ error: 'Errore interno' });
+    }
     if (risultato.esito === 'race') {
       console.error(
         `[webhook stripe] race cron/scadenza hold: prenotazione ${prenotazioneId} era già stata interrotta quando il pagamento è arrivato — rimborsato automaticamente, verificare manualmente lo stato della camera.`
@@ -107,9 +121,6 @@ async function webhook(req, res) {
   // prenotazioniController.aggiornaStato.
   inviaConfermaPrenotazione(prenotazioneId, { dettagliPagamento }).catch(err => {
     console.error('invio email conferma (booking pubblico) — errore imprevisto:', err.message);
-  });
-  inviaInvitoPreCheckin(prenotazioneId).catch(err => {
-    console.error('invio invito pre-checkin (booking pubblico) — errore imprevisto:', err.message);
   });
 
   res.status(200).json({ ricevuto: true });

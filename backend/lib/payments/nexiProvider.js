@@ -32,7 +32,12 @@ function avviaPagamento({ prenotazioneId, importoEuro }) {
   const amount = Math.round(importoEuro * 100);
   const transactionId = generaTransactionId(prenotazioneId);
   const timeStamp = Date.now();
-  const mac = macAvvioPagamento({ transactionId, amount, currency: 'EUR' });
+  // 978 = codice ISO 4217 numerico dell'EUR, unico valore ammesso da XPay per
+  // 'divisa' (specifiche tecniche XPay v20.4, pag. 175) — NON la stringa
+  // 'EUR'. Deve restare identico al valore usato in completaPagamento() per
+  // lo stesso ordine, altrimenti XPay risponde 'Dati non validi' (pag. 179).
+  const currency = 978;
+  const mac = macAvvioPagamento({ transactionId, amount, currency });
   const dominio = process.env.XPAY_BUILD_HOST || 'int-ecommerce.nexi.it';
 
   return {
@@ -46,7 +51,7 @@ function avviaPagamento({ prenotazioneId, importoEuro }) {
       timeStamp,
       mac,
       amount,
-      currency: 'EUR',
+      currency,
     },
   };
 }
@@ -54,7 +59,12 @@ function avviaPagamento({ prenotazioneId, importoEuro }) {
 async function completaPagamento({ transactionId, xpayNonce, importoEuro }) {
   const amount = Math.round(importoEuro * 100);
   const timeStamp = Date.now();
-  const mac = macPagaNonce({ transactionId, amount, currency: 'EUR', xpayNonce, timeStamp });
+  // Stesso 978 (non 'EUR') usato in avviaPagamento — deve coincidere,
+  // altrimenti XPay risponde 'Dati non validi' pur con MAC corretto (pag.
+  // 179 delle specifiche: codiceTransazione, importo, divisa e apiKey
+  // devono essere identici fra generazione xpayNonce e pagaNonce).
+  const currency = 978;
+  const mac = macPagaNonce({ transactionId, amount, currency, xpayNonce, timeStamp });
   const dominio = process.env.XPAY_BUILD_HOST || 'int-ecommerce.nexi.it';
 
   const risposta = await fetch(`https://${dominio}/ecomm/api/hostedPayments/pagaNonce`, {
@@ -64,7 +74,7 @@ async function completaPagamento({ transactionId, xpayNonce, importoEuro }) {
       apiKey: process.env.XPAY_BUILD_ALIAS,
       codiceTransazione: transactionId,
       importo: amount,
-      divisa: 'EUR',
+      divisa: currency,
       xpayNonce,
       timeStamp,
       mac,

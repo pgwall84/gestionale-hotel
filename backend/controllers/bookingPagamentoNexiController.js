@@ -9,7 +9,7 @@
 const pool = require('../config/db');
 const nexiProvider = require('../lib/payments/nexiProvider');
 const { confermaPrenotazione } = require('../lib/prenotazioni/confermaPrenotazione');
-const { inviaConfermaPrenotazione, inviaInvitoPreCheckin, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
+const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
 
 async function completaPagamentoNexi(req, res) {
   const { prenotazione_id: prenotazioneId, xpay_nonce: xpayNonce } = req.body || {};
@@ -58,9 +58,6 @@ async function completaPagamentoNexi(req, res) {
     if (risultato.esito === 'confermata') {
       inviaConfermaPrenotazione(prenotazioneId, {}).catch(err => {
         console.error('invio email conferma (booking pubblico, Nexi) — errore imprevisto:', err.message);
-      });
-      inviaInvitoPreCheckin(prenotazioneId).catch(err => {
-        console.error('invio invito pre-checkin (booking pubblico, Nexi) — errore imprevisto:', err.message);
       });
       return res.status(200).json({ confermato: true });
     }

@@ -404,7 +404,7 @@ async function inviaPromemoriaPreArrivo(prenotazioneId) {
     }
     await pool.query(
       `UPDATE prenotazioni SET email_promemoria_inviata_at = NOW()
-       ${linkPreCheckin ? ', pre_checkin_inviato_at = NOW()' : ''}
+       ${linkPreCheckin ? ", pre_checkin_inviato_at = NOW(), pre_checkin_origine = 'automatico'" : ''}
        WHERE id = $1`,
       [prenotazioneId]
     );
@@ -445,7 +445,7 @@ async function inviaInvitoPreCheckin(prenotazioneId) {
       console.error(`[email] invito pre check-in prenotazione ${prenotazioneId} non inviato:`, esito.errore);
       return { ok: false, motivo: esito.errore };
     }
-    await pool.query('UPDATE prenotazioni SET pre_checkin_inviato_at = NOW() WHERE id = $1', [prenotazioneId]);
+    await pool.query("UPDATE prenotazioni SET pre_checkin_inviato_at = NOW(), pre_checkin_origine = 'manuale' WHERE id = $1", [prenotazioneId]);
     return { ok: true, destinatario: destinatario.email };
   } catch (err) {
     console.error(`[email] invito pre check-in prenotazione ${prenotazioneId} — errore imprevisto:`, err.message);
