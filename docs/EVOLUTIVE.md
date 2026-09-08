@@ -216,7 +216,14 @@ appunti di sessioni precedenti, non ancora attuate — utili quando si
 riprendono i moduli 2.3/3.2/4.1):
   - ~~Channel manager: WuBook/WooDoo, ~21€/mese~~ — SUPERATO, vedi sotto
   - ~~Booking engine: WuBook Opzione 3, ~27€/mese~~ — SUPERATO, vedi sotto
-  - Pagamenti: Nexi (default) + Stripe (alternativa) — **non più "via WuBook"**, il booking engine diretto (sotto) usa già Stripe direttamente
+  - ~~Pagamenti: Nexi (default) + Stripe (alternativa)~~ — **SUPERATO,
+    corretto 08/09/2026**: non un default/alternativa, ma una strategia
+    COMBINATA decisa da Marco il 29/08/2026 (Stripe per ospiti extra-UE,
+    Nexi per ospiti UE). Non più "via WuBook" (confermato) — entrambi i
+    gateway integrati direttamente, integrazione Nexi costruita e
+    verificata end-to-end il 07/09/2026. Stato tecnico reale:
+    `gestionale-hotel/STATO_PROGETTO.md` sezione "Pagamenti Nexi XPay —
+    integrazione diretta".
   - Documenti commerciali: A-Cube API (sostituisce il registratore Hugin
     RT-K50 attuale, non integrabile via API)
   - Fatturazione B2B: Fatture in Cloud, da rivalutare con il commercialista
@@ -374,7 +381,11 @@ Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
     vedi voce dedicata "Modulo 2.6 — RIMOVCLI vs ROSS1000" più sotto.
   3.1 Integrazione A-Cube API corrispettivi (scontrini — sostituisce Hugin RT-K50)
   3.2 Fatturazione B2B (rivalutare A-Cube vs Fatture in Cloud con commercialista)
-  3.3 Pagamenti online Nexi + Stripe via WuBook
+  ✅ 3.3 Pagamenti online Nexi + Stripe — **corretto 08/09/2026**: non
+    via WuBook, integrazione diretta di entrambi i gateway (strategia
+    combinata Stripe extra-UE / Nexi UE, decisa 29/08/2026). Nexi
+    verificato end-to-end il 07/09/2026 — vedi `STATO_PROGETTO.md`
+    sezione "Pagamenti Nexi XPay — integrazione diretta".
   4.1 Booking engine (Next.js + WuBook API)
   4.2 Welcome Book digitale multilingua
   ✅ 5.1 Check-in/check-out digitale + housekeeping (03/08/2026)

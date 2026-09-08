@@ -28,8 +28,59 @@ pre-produzione incluso. Guida server: `docs/DEPLOY_VPS_NETCUP.md`.
 
 ## Fase 2B — Fiscale e pagamenti
 
-Non iniziata. 3.1 (A-Cube), 3.2 (fatturazione B2B), 3.3 (pagamenti
-Nexi/Stripe via WuBook) — dipendono in parte da 2.3.
+3.1 (A-Cube) e 3.2 (fatturazione B2B) non iniziate, dipendono in parte da
+2.3. **3.3 (pagamenti online) AGGIORNATO 08/09/2026 — non più "Nexi/Stripe
+via WuBook"**: il booking engine diretto (modulo 4.1, Fase 2C sotto) usa
+Stripe e Nexi direttamente, senza intermediari. Dettaglio tecnico completo
+nella sezione "Pagamenti Nexi XPay — integrazione diretta" più sotto.
+
+## Pagamenti Nexi XPay — integrazione diretta (modulo 3.3/4.1)
+
+Nexi ha attivato XPay Pro per Marco (canone zero, commissione 1,10% +
+0,24€ a operazione su carte, più 7,5€ una tantum e 2,5€/mese di
+commissione di acquiring, inclusiva nel programma Protection Plus).
+Decisione presa da Marco il 29/08/2026: strategia COMBINATA, non
+esclusiva — Stripe per ospiti extra-UE, Nexi per ospiti UE (aggiorna la
+vecchia riga "Nexi vs Stripe da confrontare e scegliere l'uno o
+l'altro" ancora presente in `docs/EVOLUTIVE.md`, non riscritta lì per lo
+stesso motivo per cui la correzione WuBook non ha riscritto
+`PIANO_MIGRAZIONE_DICEMBRE_2026.md` — trattare quella riga con cautela).
+
+**Integrazione tecnica (lato `sito-hotel`) costruita e verificata
+end-to-end il 07/09/2026**: flusso completo prenotazione → widget XPay
+Build (`components/booking/NexiPaymentStep.tsx`) → inserimento carta →
+3D Secure → nonce → completamento pagamento lato backend
+(`nexiProvider.js`) → conferma prenotazione + email, testato con esito
+positivo sia su carta accettata sia su carta di rifiuto. Tre bug reali
+trovati e corretti nella stessa sessione: valuta inviata come stringa
+'EUR' invece del numerico 978 richiesto dall'API ("Dati non validi"),
+doppio invio del nonce (XPay lo consegna sia via evento sia via
+`postMessage`, serviva una guardia anti-doppio-invio), nonce sbagliato
+durante la sfida 3D Secure (bug di nome campo + race tra i due canali di
+consegna, risolto rendendo l'evento `XPay_Nonce` l'unico canale
+attendibile). **`NexiPaymentStep.tsx` risulta ancora non committato
+(`git status` lo segna `??`, nuovo file)** — da committare.
+
+**Letta la documentazione ufficiale Nexi (specifiche tecniche XPay,
+v20.4) l'08/09/2026** su richiesta di Marco, per verificare campi
+mancanti e possibilità di pre-autorizzazione carta per scelte del
+gestore hotel. Trovate due strade distinte per un eventuale "blocco
+carta senza incassare subito": **"Incasso Senza Pensieri"**, un prodotto
+Nexi separato e dedicato all'hospitality (booking garantito con penale
+automatica, pre-autorizzazione a 28 giorni, rateizzazione) che richiede
+quasi certamente un'attivazione commerciale/tecnica separata con Nexi —
+non un parametro aggiungibile all'integrazione attuale; oppure il campo
+`TCONTAB` (incasso immediato/differito), disponibile dentro la stessa
+API JSON già integrata, che richiede solo un ticket al supporto tecnico
+Nexi per abilitare l'incasso differito sul profilo del terminale.
+Nessuna delle due implementata, solo verificate come disponibili. Resta
+anche una discrepanza aperta e non bloccante tra la doc (valuta lato
+widget documentata come stringa "EUR") e il codice (invia il numerico
+978, funzionante in tutti i test reali) — rischio di fragilità da
+tenere d'occhio, non da correggere ora. Dettaglio completo di bug,
+verifica e ricerca doc: piano
+`sito-hotel/docs/superpowers/plans/2026-09-06-nexi-frontend-integration.md`
+(Task 6) e memoria di progetto (`integrazione_nexi_xpay.md`).
 
 ## Fase 2C — Canale diretto
 
@@ -477,13 +528,11 @@ con una ricerca reale eseguita contro Postgres (non solo apertura pannello
   completare questo trasferimento va popolato il DB di produzione con
   tariffe/trattamenti/planning-tariffe reali, altrimenti il sito
   diventerebbe pubblico con prezzi non configurati.
-- Nexi: **AGGIORNATO 24/08/2026** — attivata XPay Pro (canone zero,
-  commissione 1,10% + 0,24€ a operazione su carte, più 7,5€ una tantum e
-  2,5€/mese di commissione di acquiring, inclusiva nel programma
-  Protection Plus). In attesa che Nexi invii i documenti al titolare;
-  dopo la ricezione arriveranno le specifiche tecniche di integrazione,
-  su cui basare la scelta finale tra Nexi e Stripe (vantaggio/comodità da
-  confrontare, non ancora deciso).
+- Nexi: **RISOLTO 08/09/2026** — non è più un item bloccato su terzi.
+  Decisione presa (29/08/2026, strategia combinata, non esclusiva) e
+  integrazione tecnica diretta costruita e verificata end-to-end
+  (07/09/2026). Dettaglio completo: sezione "Pagamenti Nexi XPay —
+  integrazione diretta" più sopra (Fase 2B).
 - Commercialista: 5 domande aperte (A-Cube sostitutivo Hugin? piano
   Fatture in Cloud reale? import automatico? account Aruba di chi?
   contratto dipendenti "a chiamata"?) — `docs/DOMANDE_APERTE_07-08-2026.md` §4.
