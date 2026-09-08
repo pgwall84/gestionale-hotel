@@ -22,11 +22,11 @@
   `docs/superpowers/plans/2026-08-30-beds24-integrazione-fase1.md`.
 - Beds24 Fase 2/3 (scrittura tariffe/disponibilità/restrizioni verso
   Beds24, punti 2-3 del modulo 2.3) — implementata e unita a `main` il
-  08/09/2026, 13 task, 1047/1047 test verdi. **Da fare in produzione**:
-  applicare le migration 056→059 (non ancora deployate). **Decisione di
-  Marco, non tecnica**: quando attivare la connessione
-  Beds24↔Booking.com nel pannello Beds24 — il prerequisito tecnico
-  (tariffe corrette inviate) c'è già.
+  08/09/2026, 13 task, 1047/1047 test verdi. Migration 056→059
+  **applicate in produzione (confermato da Marco, 08/09/2026)**. Resta
+  solo una **decisione di Marco, non tecnica**: quando attivare la
+  connessione Beds24↔Booking.com nel pannello Beds24 — il prerequisito
+  tecnico (tariffe corrette inviate) c'è già.
 
 - Rate limit pubblici di produzione (login 5, pre-checkin 30, booking 30
   ogni 15min) mai tarati su traffico reale — allargati solo in dev/test
@@ -53,21 +53,31 @@
 - Alloggiati Web Fase 2: sincronizzazione SOAP reale mai testata con
   credenziali vere — Marco deve compilarle in `.env` e provare
   "Sincronizza ora" in locale.
+- **PROMEMORIA per Marco (aggiunto 08/09/2026), nessuna azione tecnica
+  possibile da qui**: RIMOVCLI/ISTAT C/59 (modulo 2.6) — codice pronto e
+  verificato da settimane, resta solo da compilare/inviare il modulo di
+  adesione RIMOVCLI e inviare il primo file per la certificazione a
+  movimentoturistico.istat@regione.liguria.it.
 
 ## Evolutive da sviluppare (feature nuove, serve brainstorming dedicato)
 
-- Switch di provider di pagamento Stripe/Nexi (un solo gateway attivo
+- **BLOCCATO — non fare finché il sito con booking engine non è live in
+  produzione (anche solo con Stripe)** (nota di Marco, 08/09/2026):
+  switch di provider di pagamento Stripe/Nexi (un solo gateway attivo
   alla volta via `PAYMENT_PROVIDER` — il routing per nazionalità
   valutato il 29/08 è stato scartato da Marco il 02/09/2026, non serve
-  più raccogliere paese/residenza in `BookingWidget.tsx`): costruito e
+  più raccogliere paese/residenza in `BookingWidget.tsx`). Costruito e
   Nexi verificato end-to-end il 07/09/2026, **solo in locale/sandbox**.
-  Resta da fare: 3 dei 5 casi del checklist di verifica manuale (Task 9,
+  **Il motivo del blocco**: Nexi fornisce le credenziali di produzione
+  solo dopo che il sito è live con un booking engine funzionante — quindi
+  prima va fatto quello (anche restando su Stripe), poi si chiedono le
+  credenziali a Nexi, poi si riprende questo punto. Quando arriva quel
+  momento, restano da chiudere 3 dei 5 casi del checklist di verifica
+  manuale (Task 9,
   `docs/superpowers/plans/2026-09-02-payment-provider-switch.md`) senza
-  evidenza reale — flusso Stripe con `PAYMENT_PROVIDER=stripe`,
-  scenario di cutover a metà prenotazione, coerenza `.env.example`;
-  produzione resta su Stripe finché Nexi non fornisce credenziali reali
-  e Marco non decide il cutover; `NexiPaymentStep.tsx` (sito-hotel)
-  ancora non committato.
+  evidenza reale — flusso Stripe con `PAYMENT_PROVIDER=stripe`, scenario
+  di cutover a metà prenotazione, coerenza `.env.example`;
+  `NexiPaymentStep.tsx` (sito-hotel) ancora non committato.
 - Cron di scadenza automatica delle prenotazioni "Opzione" → "interrotta"
   dopo 24-48h (dipendenza nuova: node-cron).
 - Check-out anticipato / annullamento dopo il check-in — flusso non
