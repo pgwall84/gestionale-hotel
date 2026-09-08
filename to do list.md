@@ -6,7 +6,7 @@
 > aggiornato insieme agli altri documenti di progetto ad ogni sessione
 > in cui si chiude o si apre un punto.
 >
-> Ultimo aggiornamento: 30/08/2026.
+> Ultimo aggiornamento: 08/09/2026.
 
 ## Fix e verifiche da chiudere (piccole, non nuovo sviluppo)
 
@@ -14,12 +14,19 @@
   `main` il 30/08/2026: webhook + job notturno di riconciliazione,
   upsert idempotente con cancellazioni mai automatiche dopo il
   check-in, coda `beds24_prenotazioni_da_revisionare` per le
-  prenotazioni non assegnabili. Resta solo la verifica con credenziali
-  reali (invite code, scope `bookings`+`bookings-personal`, webhook
-  abilitato, nomi campo confermati contro un booking vero) — vedi Task
-  12 in `docs/superpowers/plans/2026-08-30-beds24-integrazione-fase1.md`.
-  Fuori scope per ora: scrittura disponibilità/prezzi verso Beds24
-  (punti 2-3 del modulo 2.3).
+  prenotazioni non assegnabili (**nessuna UI per questa coda**, solo
+  `GET/PATCH /api/beds24/da-revisionare`, mai costruita in Fase 1 né
+  dopo). Resta solo la verifica con credenziali reali (invite code,
+  scope `bookings`+`bookings-personal`, webhook abilitato, nomi campo
+  confermati contro un booking vero) — vedi Task 12 in
+  `docs/superpowers/plans/2026-08-30-beds24-integrazione-fase1.md`.
+- Beds24 Fase 2/3 (scrittura tariffe/disponibilità/restrizioni verso
+  Beds24, punti 2-3 del modulo 2.3) — implementata e unita a `main` il
+  08/09/2026, 13 task, 1047/1047 test verdi. **Da fare in produzione**:
+  applicare le migration 056→059 (non ancora deployate). **Decisione di
+  Marco, non tecnica**: quando attivare la connessione
+  Beds24↔Booking.com nel pannello Beds24 — il prerequisito tecnico
+  (tariffe corrette inviate) c'è già.
 
 - Rate limit pubblici di produzione (login 5, pre-checkin 30, booking 30
   ogni 15min) mai tarati su traffico reale — allargati solo in dev/test

@@ -301,13 +301,12 @@ JWT_SECRET
 JWT_REFRESH_SECRET
 ENCRYPTION_KEY
 # Future (Fase 2):
-WUBOOK_PROVIDER_KEY
+BEDS24_BASE_URL       # opzionale, default https://api.beds24.com/v2 — token/refresh restano in beds24_config (DB), non in .env
 ACUBE_API_KEY
 FATTURE_IN_CLOUD_CLIENT_ID
 FATTURE_IN_CLOUD_CLIENT_SECRET
 SENDGRID_API_KEY
-WEBHOOK_SECRET_WUBOOK
-WEBHOOK_SECRET_ACUBE
+WEBHOOK_SECRET_ACUBE  # Beds24 non firma i webhook in uscita (non documentato pubblicamente) — hmac_valido resta NULL, vedi routes/beds24.js
 ```
 
 ### Processo di sicurezza continuativo
@@ -366,7 +365,7 @@ ciascun modulo (bug trovati, decisioni prese, deviazioni dal piano):
 |----|--------|------|
 | 2.1 | Anagrafica ospiti completa | ✅ Fatto (senza OCR documenti; sezione Clienti `/clienti` aggiunta 01/08/2026 — nazionalità/documento codificati restano non editabili da UI fino al modulo 2.5) |
 | 2.2 | Planning camere — disponibilità (griglia + CRUD) + Tariffe, stagionalità, pacchetti all-inclusive | ✅ Fatto |
-| 2.3 | Integrazione channel manager OTA — webhook prenotazioni | Fase 1 (mappatura camere↔canale) ✅. **Fornitore Beds24, non più WuBook** (cambiato 19/08/2026) — spec non ancora scritta, vedi `STATO_PROGETTO.md` |
+| 2.3 | Integrazione channel manager OTA — webhook prenotazioni + invio tariffe/disponibilità/restrizioni | ✅ **Fase 1 e Fase 2/3 fatte** (Beds24, non più WuBook). Fase 1 (lettura prenotazioni OTA, webhook+riconciliazione) unita il 30/08/2026. Fase 2/3 (push tariffe/disponibilità/restrizioni verso Beds24, gestionale unica fonte di verità) unita il 08/09/2026 — 13 task, piano `docs/superpowers/plans/2026-09-04-invio-tariffe-beds24-plan.md`. **Da fare in produzione**: applicare le migration 056→059, non ancora deployate. **Decisione operativa di Marco, non tecnica**: attivare la connessione Beds24↔Booking.com quando vuole — vedi `STATO_PROGETTO.md` |
 | 2.4 | Tassa di soggiorno custom — calcolo per notte/ospite, report Comune | ✅ Fatto (formato export per il Comune di Lerici non ancora noto — Excel generico adattabile) |
 | 2.5 | Alloggiati Web — SOAP diretto a `WS_ALLOGGIATI` | Fase 1b ✅ Fatto. **Fase 2 (schedina + invio reale) già costruita e in uso controllato dal 13/08/2026** (Test validato dal vivo, invio dietro interruttore spento di default) — non "non iniziata", vedi `STATO_PROGETTO.md` |
 | 2.6 | ROSS1000/ISTAT flussi turistici — export mensile verso Regione Liguria | Fase 1 (XML) ✅ Fatto. **Fase 2 bloccata su un dubbio di canale (RIMOVCLI vs webservice), non su credenziali** — non toccare il generatore prima di risposta Regione Liguria, vedi `STATO_PROGETTO.md` e `docs/EVOLUTIVE.md` |
@@ -776,8 +775,10 @@ deve restare leggero). Cronologia sessione-per-sessione (bug trovati,
 decisioni prese, deviazioni dal piano): `docs/DIARIO_SESSIONI.md`.
 
 In sintesi: **Fase 1 chiusa** (deploy VPS in produzione, 09/08/2026).
-Fase 2A in corso — 2.1/2.2/2.4 fatti, 2.3 bloccato su sottoscrizione
-WuBook, 2.5 più avanti di quanto sembri (Fase 2 già in uso controllato),
+Fase 2A in corso — 2.1/2.2/2.4 fatti, 2.3 fatto (Fase 1 e Fase 2/3,
+Beds24 — resta da applicare in produzione la migration 056→059 e da
+decidere quando attivare Beds24↔Booking.com, azione di Marco), 2.5 più
+avanti di quanto sembri (Fase 2 già in uso controllato),
 2.6 bloccato su un dubbio di canale con Regione Liguria (non su
 credenziali). 4.1 (booking engine) costruito come "Booking Engine Diretto
 v2" ma non ancora verificato end-to-end. 4.2, 5.1, 5.2, 5.3 tutti fatti.

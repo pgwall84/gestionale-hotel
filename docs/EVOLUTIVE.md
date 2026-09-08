@@ -354,14 +354,13 @@ Tabella `camere` non tracciata da nessuna migration (scoperto 31/07/2026,
   della tabella reale trasformato in una migration retroattiva.
 
 Fase 2 (dopo go-live e test in produzione) — moduli non ancora avviati:
-  2.3 Integrazione channel manager OTA — la mappatura
-    tipo_camera.id ↔ canale ↔ codice_esterno è pronta (migration 020,
-    tabella tipi_camera_canali, UI in /tariffe — 31/07/2026), sostituisce il
-    vecchio appunto manuale in tipi_camera.note, resta valida a prescindere
-    dal fornitore. **Fornitore Beds24, non più WuBook** (cambiato 19/08/2026,
-    vedi correzione dedicata sopra in questo file). Restano da fare: spec
-    Beds24 (non ancora scritta), poi ricezione prenotazioni via webhook,
-    invio disponibilità/tariffe.
+  2.3 Integrazione channel manager OTA — ✅ **FATTO** (Fase 1 il
+    30/08/2026, Fase 2/3 l'08/09/2026 — vedi voce dedicata "Modulo 2.3 —
+    Beds24 Fase 2/3, stato all'08/09/2026" più sotto per il dettaglio e
+    i limiti noti). La mappatura tipo_camera.id ↔ canale ↔ codice_esterno
+    (migration 020, tabella tipi_camera_canali, UI in /tariffe —
+    31/07/2026) resta valida, estesa con unita_esposte e
+    maggiorazione_percentuale (migration 058).
   2.4 Tassa di soggiorno custom
   2.5 Alloggiati Web — Fase 2: NON PIÙ "non ancora avviato", superato
     dai fatti del 13/08/2026 — vedi voce dedicata "Modulo 2.5 — Fase 2,
@@ -2087,3 +2086,54 @@ Modulo 4.1 — Booking Engine, endpoint disponibilità mensile aggregata
     `lib/theme.ts`, libreria `react-day-picker`) — il piano di
     implementazione dovrà probabilmente essere spezzato in due, uno per
     repository.
+Modulo 2.3 — Beds24 Fase 2/3, stato all'08/09/2026: implementato e unito
+  a `main`, gestionale come unica fonte di verità per tariffe/
+  disponibilità/restrizioni verso Beds24 (push, mai il contrario).
+  ✅ Fatto: `planning_tariffe_giorni.canale` per eccezioni beds24-only
+  (NULL = tutti i canali, 'beds24' ha precedenza sulla riga NULL per
+  stessa tipo_camera/trattamento/data — motore diretto blindato a leggere
+  solo canale IS NULL, verificato con test dedicato), `unita_esposte`/
+  `maggiorazione_percentuale` per tipologia camera (Impostazioni▸Beds24,
+  nuova pagina), push disponibilità immediato agganciato a ogni
+  creazione/modifica/cancellazione soggiorno (diretto o Beds24, stessa
+  funzione per tutte le origini), job periodico tariffe ogni 3h
+  (`node-cron`, pattern identico alla riconciliazione notturna di Fase
+  1) su un orizzonte impostato a mano da Marco (`beds24_config.
+  orizzonte_invio_tariffe_fino_a`), mappatura restrizioni su enum
+  `override` di Beds24 (precedenza: stop_sell > entrambi chiuso_arrivo+
+  chiuso_partenza > singolo flag > none — perdita di espressività
+  accettata consapevolmente, il diretto non passa da questa traduzione),
+  log dedicato `beds24_invio_log` (successo/errore/saltato_rate_limit,
+  stesso principio prudente di `webhook_log` — un log fallito non blocca
+  mai il push). Rate-limit a crediti (header `X-FiveMinCreditLimit-*`):
+  il job interrompe il giro sotto soglia (50 crediti) invece di mettersi
+  in coda — decisione di piano esplicita, il giro successivo (3h dopo)
+  copre quanto rimasto indietro.
+  4 bug reali trovati e corretti durante l'implementazione (mai assunti,
+  sempre confermati con un test reale fallito prima del fix): motore
+  diretto che leggeva override canale=beds24 per errore (mancava `AND
+  canale IS NULL`); `ON CONFLICT` su `planning_tariffe_giorni` scritto
+  sui soli nomi colonna invece che sull'espressione `(tipo_camera_id,
+  trattamento, data, (COALESCE(canale, '')))` — dopo la migration 059
+  questo faceva fallire silenziosamente con 500 OGNI PATCH a
+  `/planning-tariffe`, non solo quelle beds24, il più grave dei quattro;
+  `propagaColonna` (frontend planning-tariffe) che iterava anche
+  pensione_completa con canale=beds24, rischiando un abort silenzioso a
+  metà propagazione; pagina `/tariffe` con GET canali-ota senza
+  `?canale=beds24` (leggeva righe wubook invece che beds24) e PUT che
+  sovrascriveva a vuoto unita_esposte/maggiorazione_percentuale.
+  Test finali: 1047/1047, 50/50 suite verdi.
+  **Aperto**: migration 056→059 non ancora applicate in produzione.
+  **Fuori scope per scelta esplicita dello spec, non dimenticato**:
+  attivazione della connessione Beds24↔Booking.com (decisione operativa
+  di Marco — il prerequisito tecnico, tariffe corrette inviate, ora
+  c'è), integrazione diretta con altre OTA, avanzamento automatico
+  dell'orizzonte stagionale, prezzo Beds24 manuale indipendente dal
+  diretto, sincronizzazione di ritorno da modifiche fatte a mano nel
+  pannello Beds24 (deciso già in Fase 1).
+  **Gap residuo, non di questo modulo ma della stessa integrazione**: la
+  coda `beds24_prenotazioni_da_revisionare` (Fase 1) non ha mai avuto
+  un'interfaccia frontend, solo `GET/PATCH /api/beds24/da-revisionare` —
+  se si popola, oggi la reception non ha modo di vederla dall'interfaccia.
+  Dettaglio tecnico completo (bug trovati, decisioni di piano, cronologia
+  task-per-task): `docs/DIARIO_SESSIONI.md`, voce 08/09/2026.

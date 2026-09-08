@@ -6756,3 +6756,64 @@ Consegna: `backend/controllers/anagraficaOspitiController.js`,
 `backend/routes/ospiti.js`, `frontend/app/clienti/page.jsx`,
 `docs/EVOLUTIVE.md`, `STATO_PROGETTO.md` e questo diario, scritti
 direttamente sul computer di Marco.
+### Beds24 Fase 2/3 — invio tariffe/disponibilità/restrizioni (08/09/2026)
+
+Piano a 13 task eseguito inline (`superpowers:executing-plans`), branch
+dedicato `feature/invio-tariffe-beds24`, TDD rigoroso: ogni test scritto
+prima del codice, verificato solo a livello di sintassi in questa
+sessione (`node --check`/`tsc --noEmit` — nessun accesso Postgres da
+Cowork), eseguito per davvero da Marco con output incollato prima di
+accettare qualunque "verde", nessun fix mai delegato a Marco.
+
+**Bug reali trovati e corretti** (mai assunti, sempre confermati da un
+test fallito prima del fix — dettaglio completo in `docs/EVOLUTIVE.md`,
+voce "Modulo 2.3 — Beds24 Fase 2/3"): motore diretto che leggeva
+override canale=beds24 (mancava `AND canale IS NULL` in
+`calcolaTariffaPerTrattamentiConPlanning`/`prezzoBasePerNotteConPlanning`);
+`ON CONFLICT` su `planning_tariffe_giorni` disallineato dall'indice
+espressione introdotto dalla migration 059 — bloccava con 500 OGNI PATCH
+a `/planning-tariffe` da quando la 059 era applicata, non solo quelle
+beds24, scoperto solo perché questo task ha aggiunto il primo test su
+quella rotta; `propagaColonna` (frontend) che iterava pensione_completa
+anche con canale=beds24; pagina `/tariffe` con GET canali-ota senza
+filtro canale e PUT che azzerava unita_esposte/maggiorazione_percentuale
+salvando da lì.
+
+**Consegna**: `backend/lib/beds24PushDisponibilita.js`,
+`backend/lib/beds24PrezziDisponibilita.js`,
+`backend/jobs/beds24InvioTariffe.js`, `backend/lib/beds24InvioLog.js`,
+`backend/controllers/planningTariffeController.js`,
+`backend/controllers/bookingPubblicoController.js`,
+`backend/controllers/beds24SyncController.js`,
+`frontend/app/planning-tariffe/page.jsx`,
+`frontend/app/impostazioni/beds24/page.jsx` (nuova),
+`frontend/app/tariffe/page.jsx`, `frontend/components/layout/Sidebar.tsx`,
+migration `database/migrations/058_beds24_config_invio.sql` e
+`059_planning_tariffe_canale.sql`, test in `tests/api/`, `tests/lib/`.
+Merge locale fast-forward su `main` (confermato da Marco via
+`AskUserQuestion`, accettando 6 fallimenti pre-esistenti/noti — i due
+bug di timezone sotto — come non bloccanti per la chiusura del branch).
+
+**Fix bug timezone, separato, direttamente su `main`** (richiesto da
+Marco dopo il merge): `camereController.js` e `alloggiatiController.js`
+usavano `new Date().toISOString()...` per "oggi", che calcola la data
+in UTC — un giorno indietro rispetto all'ora locale (Europe/Rome/CEST)
+per le due ore tra le 22:00 e le 24:00 UTC ogni notte. Corretto con lo
+stesso pattern di data locale già in uso altrove nel progetto
+(`dashboardController.js` `oggiLocale()`, `timbratureController.js`
+`fmtDataLocale()`). Verificato da Marco proprio dentro la finestra
+oraria critica (01:23 CEST / 23:23 UTC) — fix confermato attivo nel
+momento in cui avrebbe fallito. Test finali dopo entrambi i fix:
+1047/1047, 50/50 suite verdi.
+
+**Push**: `git push origin main` fallito da questa sessione (nessuna
+credenziale Git nella shell del device bridge) — pushato da Marco in
+locale, `7ae99dd..8735ad6`, 24 commit.
+
+**Aperto**: migration 056→059 non ancora applicate in produzione.
+Attivazione Beds24↔Booking.com resta decisione operativa di Marco (fuori
+scope per scelta esplicita dello spec, non dimenticata). Documenti di
+progetto aggiornati in questa stessa sessione: `CLAUDE.md` (tabella
+modulo 2.3, §16, env vars WuBook mai usate → Beds24), `STATO_PROGETTO.md`
+(riga 2.3), `to do list.md` (voce Beds24), `docs/EVOLUTIVE.md` (voce
+"moduli non ancora avviati" + voce dedicata), questo diario.
