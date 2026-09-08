@@ -56,9 +56,18 @@
 
 ## Evolutive da sviluppare (feature nuove, serve brainstorming dedicato)
 
-- Integrazione Nexi XPay Pro (Stripe extra-UE + Nexi UE) — brainstorming
-  aperto; tocca anche `sito-hotel/components/booking/BookingWidget.tsx`
-  per raccogliere paese/residenza dell'ospite.
+- Switch di provider di pagamento Stripe/Nexi (un solo gateway attivo
+  alla volta via `PAYMENT_PROVIDER` — il routing per nazionalità
+  valutato il 29/08 è stato scartato da Marco il 02/09/2026, non serve
+  più raccogliere paese/residenza in `BookingWidget.tsx`): costruito e
+  Nexi verificato end-to-end il 07/09/2026, **solo in locale/sandbox**.
+  Resta da fare: 3 dei 5 casi del checklist di verifica manuale (Task 9,
+  `docs/superpowers/plans/2026-09-02-payment-provider-switch.md`) senza
+  evidenza reale — flusso Stripe con `PAYMENT_PROVIDER=stripe`,
+  scenario di cutover a metà prenotazione, coerenza `.env.example`;
+  produzione resta su Stripe finché Nexi non fornisce credenziali reali
+  e Marco non decide il cutover; `NexiPaymentStep.tsx` (sito-hotel)
+  ancora non committato.
 - Cron di scadenza automatica delle prenotazioni "Opzione" → "interrotta"
   dopo 24-48h (dipendenza nuova: node-cron).
 - Check-out anticipato / annullamento dopo il check-in — flusso non

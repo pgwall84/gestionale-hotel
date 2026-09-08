@@ -39,12 +39,27 @@ nella sezione "Pagamenti Nexi XPay — integrazione diretta" più sotto.
 Nexi ha attivato XPay Pro per Marco (canone zero, commissione 1,10% +
 0,24€ a operazione su carte, più 7,5€ una tantum e 2,5€/mese di
 commissione di acquiring, inclusiva nel programma Protection Plus).
-Decisione presa da Marco il 29/08/2026: strategia COMBINATA, non
-esclusiva — Stripe per ospiti extra-UE, Nexi per ospiti UE (aggiorna la
-vecchia riga "Nexi vs Stripe da confrontare e scegliere l'uno o
-l'altro" ancora presente in `docs/EVOLUTIVE.md`, non riscritta lì per lo
-stesso motivo per cui la correzione WuBook non ha riscritto
-`PIANO_MIGRAZIONE_DICEMBRE_2026.md` — trattare quella riga con cautela).
+
+**Correzione 08/09/2026 (stessa sera, sulla mia stessa sezione di poco
+prima)**: qui sotto avevo scritto che la strategia decisa da Marco fosse
+quella "COMBINATA" del 29/08/2026 (Stripe per ospiti extra-UE, Nexi per
+ospiti UE in contemporanea). **Falso, verificato contro il codice e
+contro `docs/superpowers/specs/2026-09-02-payment-provider-switch-design.md`**:
+quella strategia combinata è stata **scartata esplicitamente da Marco il
+02/09/2026** ("Fuori scope, scartato esplicitamente da Marco il
+02/09/2026: routing simultaneo per origine carta... due motori attivi
+insieme. Un solo provider alla volta."). Quanto costruito è uno **switch
+globale**: `backend/lib/payments/index.js` legge `PAYMENT_PROVIDER`
+(env, `stripe` default o `nexi`, cambio = restart backend) e seleziona
+UN SOLO gateway attivo per TUTTE le prenotazioni insieme — non un
+instradamento per singolo ospite in base a nazionalità/paese (il gap sul
+campo paese/residenza mai raccolto in `BookingWidget.tsx`, quindi, non è
+più necessario per questo scopo — resta solo se serve per altri motivi,
+es. RIMOVCLI). In produzione la variabile non è ancora impostata (default
+`stripe`): Nexi risulta verificato solo in locale/sandbox
+(`backend/.env` di Marco ha `PAYMENT_PROVIDER=nexi` e credenziali
+`XPAY_BUILD_TEST_HOST`, non di produzione — Nexi non ha ancora fornito
+credenziali reali).
 
 **Integrazione tecnica (lato `sito-hotel`) costruita e verificata
 end-to-end il 07/09/2026**: flusso completo prenotazione → widget XPay
@@ -529,10 +544,12 @@ con una ricerca reale eseguita contro Postgres (non solo apertura pannello
   tariffe/trattamenti/planning-tariffe reali, altrimenti il sito
   diventerebbe pubblico con prezzi non configurati.
 - Nexi: **RISOLTO 08/09/2026** — non è più un item bloccato su terzi.
-  Decisione presa (29/08/2026, strategia combinata, non esclusiva) e
-  integrazione tecnica diretta costruita e verificata end-to-end
-  (07/09/2026). Dettaglio completo: sezione "Pagamenti Nexi XPay —
-  integrazione diretta" più sopra (Fase 2B).
+  Switch di provider costruito (`PAYMENT_PROVIDER`, un gateway alla
+  volta per tutte le prenotazioni — NON instradamento per ospite, vedi
+  correzione nella sezione "Pagamenti Nexi XPay" più sopra) e Nexi
+  verificato end-to-end (07/09/2026), solo in locale/sandbox — in
+  produzione resta su Stripe (default) finché Nexi non fornisce
+  credenziali reali e Marco non decide il cutover.
 - Commercialista: 5 domande aperte (A-Cube sostitutivo Hugin? piano
   Fatture in Cloud reale? import automatico? account Aruba di chi?
   contratto dipendenti "a chiamata"?) — `docs/DOMANDE_APERTE_07-08-2026.md` §4.
