@@ -15,7 +15,7 @@
 const pool = require('../config/db');
 const stripe = require('../lib/stripeClient');
 const { confermaPrenotazione } = require('../lib/prenotazioni/confermaPrenotazione');
-const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
+const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto, inviaNotificaPagamentoDuplicatoRimborsato } = require('../lib/emailPrenotazioni');
 
 async function webhook(req, res) {
   const firma = req.headers['stripe-signature'];
@@ -79,13 +79,25 @@ async function webhook(req, res) {
       );
       return res.status(500).json({ error: 'Errore interno' });
     }
+    // BUGFIX (16/09/2026, trovato testando manualmente il job di
+    // riconciliazione Nexi — stessa logica condivisa, stesso bug qui): il
+    // commento sopra (20/08) descrive solo il caso "cron ha già interrotto
+    // la prenotazione" — ma 'race' può anche voler dire che la prenotazione
+    // è già CONFERMATA da un altro pagamento, e questo è un doppio
+    // pagamento in ritardo. In quel caso l'ospite ha la prenotazione
+    // regolarmente confermata: mandargli "hold scaduto" è fuorviante.
+    // statoPrenotazione (da confermaPrenotazione.js) distingue i due casi.
+    const eDoppioPagamentoSuPrenotazioneConfermata = risultato.esito === 'race' && risultato.statoPrenotazione === 'confermata';
     if (risultato.esito === 'race') {
       console.error(
-        `[webhook stripe] race cron/scadenza hold: prenotazione ${prenotazioneId} era già stata interrotta quando il pagamento è arrivato — rimborsato automaticamente, verificare manualmente lo stato della camera.`
+        eDoppioPagamentoSuPrenotazioneConfermata
+          ? `[webhook stripe] doppio pagamento: prenotazione ${prenotazioneId} era già confermata da un altro pagamento — questo è stato rimborsato automaticamente.`
+          : `[webhook stripe] race cron/scadenza hold: prenotazione ${prenotazioneId} era già stata interrotta quando il pagamento è arrivato — rimborsato automaticamente, verificare manualmente lo stato della camera.`
       );
     }
-    inviaNotificaHoldScaduto(prenotazioneId).catch(err => {
-      console.error('invio notifica hold scaduto — errore imprevisto:', err.message);
+    const inviaMail = eDoppioPagamentoSuPrenotazioneConfermata ? inviaNotificaPagamentoDuplicatoRimborsato : inviaNotificaHoldScaduto;
+    inviaMail(prenotazioneId).catch(err => {
+      console.error('invio notifica esito rimborso — errore imprevisto:', err.message);
     });
     return res.status(200).json({ ricevuto: true, rimborsato: true });
   }

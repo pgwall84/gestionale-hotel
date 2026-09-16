@@ -59,7 +59,7 @@ const cron = require('node-cron');
 const pool = require('../config/db');
 const nexiProvider = require('../lib/payments/nexiProvider');
 const { confermaPrenotazione } = require('../lib/prenotazioni/confermaPrenotazione');
-const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto } = require('../lib/emailPrenotazioni');
+const { inviaConfermaPrenotazione, inviaNotificaHoldScaduto, inviaNotificaPagamentoDuplicatoRimborsato } = require('../lib/emailPrenotazioni');
 
 // Non interroghiamo un pagamento appena creato: il completamento sincrono
 // normale (bookingPagamentoNexiController.completaPagamentoNexi) è quasi
@@ -123,8 +123,18 @@ async function riconciliaPagamento(pagamento) {
       await pool.query(`UPDATE pagamenti SET stato = 'richiede_rimborso_manuale' WHERE id = $1`, [idPagamentoDaAggiornare]);
       console.error(`[riconciliazione nexi] storno automatico fallito per pagamento ${pagamentoId} (prenotazione ${prenotazioneId}) — richiede intervento manuale da backoffice Nexi:`, err.message);
     }
-    inviaNotificaHoldScaduto(prenotazioneId).catch(err => {
-      console.error('[riconciliazione nexi] invio notifica hold scaduto — errore imprevisto:', err.message);
+    // BUGFIX (16/09/2026, trovato testando manualmente questo job): 'race'
+    // copre sia "il cron ha già scaduto l'hold" (statoPrenotazione
+    // 'interrotta' — la mail "hold scaduto" è corretta) sia "la prenotazione
+    // è già confermata da un altro pagamento, questo è un doppio pagamento
+    // in ritardo" (statoPrenotazione 'confermata' — "hold scaduto" sarebbe
+    // fuorviante per un ospite con la prenotazione regolarmente confermata).
+    // 'scaduta' resta sempre hold scaduto per davvero. Vedi
+    // lib/prenotazioni/confermaPrenotazione.js per statoPrenotazione.
+    const eDoppioPagamentoSuPrenotazioneConfermata = risultato.esito === 'race' && risultato.statoPrenotazione === 'confermata';
+    const inviaMail = eDoppioPagamentoSuPrenotazioneConfermata ? inviaNotificaPagamentoDuplicatoRimborsato : inviaNotificaHoldScaduto;
+    inviaMail(prenotazioneId).catch(err => {
+      console.error('[riconciliazione nexi] invio notifica esito rimborso — errore imprevisto:', err.message);
     });
     return;
   }

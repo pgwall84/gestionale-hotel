@@ -38,7 +38,17 @@ async function confermaPrenotazione({ prenotazioneId, externalPaymentId }) {
       if (!pagamentoPendente.rows.length) {
         return { esito: 'gia_gestita' };
       }
-      return { esito: 'race', pagamentoId: pagamentoPendente.rows[0].id };
+      // BUGFIX (16/09/2026, trovato testando manualmente la riconciliazione
+      // Nexi): 'race' copriva due situazioni ben diverse senza distinguerle
+      // — il cron di scadenza hold ha già interrotto la prenotazione prima
+      // che questo pagamento arrivasse (stato qui sotto 'interrotta': "hold
+      // scaduto" è la mail corretta), OPPURE la prenotazione è già stata
+      // confermata da UN ALTRO pagamento e questo è un secondo tentativo in
+      // ritardo sulla stessa prenotazione (stato 'confermata': "hold
+      // scaduto" è fuorviante, l'ospite ha la prenotazione confermata).
+      // `statoPrenotazione` lascia decidere al chiamante (webhook Stripe,
+      // job Nexi) quale mail mandare — vedi lib/emailPrenotazioni.js.
+      return { esito: 'race', pagamentoId: pagamentoPendente.rows[0].id, statoPrenotazione: stato };
     }
 
     const scaduta = new Date(data_scadenza_opzione) < new Date();

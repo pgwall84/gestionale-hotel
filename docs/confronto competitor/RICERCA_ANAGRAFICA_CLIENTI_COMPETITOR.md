@@ -107,3 +107,90 @@ Verificato per correttezza, non solo i limiti:
 - RoomRaccoon — roomraccoon.com (guide PMS, integrazioni CRM)
 - Slope — slope.it (articoli CRM, importazione dati)
 - Prassi generale di settore — qualitando.com/guest-profile-management-hotel
+
+---
+
+## Parte 2 — Aggiornamento stato + acquisizione visiva dei dati (08/09/2026)
+
+> Richiesta di Marco: "l'anagrafica è ancora un po' scarna" — verificare lo
+> stato reale dei 7 punti sopra (non dato per scontato) e allargare la
+> ricerca competitor a un aspetto che la Parte 1 non copriva: **come i
+> concorrenti facilitano visivamente l'acquisizione dei dati**, non solo
+> quali dati hanno.
+
+### 2.1 — Stato reale dei 7 punti, verificato nel codice (non nella Parte 1)
+
+[Certo] 5 dei 7 gap della Parte 1 risultano **chiusi**, costruiti dopo
+questa ricerca ma non tornati a documentarla qui — la premessa "è ancora
+scarna" va quindi corretta su questo punto, anche se resta vera su altri
+due:
+
+1. Rilevamento/merge duplicati — **fatto**: `GET /api/ospiti/duplicati-sospetti`
+   (nome+cognome+data di nascita) e `POST /api/ospiti/:id/unisci` (merge
+   manuale, mai automatico, coerente con la policy "mai cancellazione").
+2. Totale speso esposto/ordinabile — **fatto**: campo `totale_speso` nel
+   `SELECT` di `GET /api/ospiti`, ordinabile via `?ordina=totale_speso`.
+3. Tag liberi sul cliente — **fatto**: `ospiti.tag TEXT[]`, aggiunta/rimozione
+   da `clienti/[id]/page.jsx`, filtro in lista con `<datalist>` di
+   autocomplete sui tag già usati.
+4. Flag VIP/blacklist — **fatto**: colonne dedicate, visibili in scheda.
+5. Allergie collegate all'anagrafica persistente — **fatto**: `ospiti.allergie`,
+   non più solo `ospiti_giornalieri.note_allergie`.
+6. **Ancora aperto**: promemoria compleanno. `data_nascita` c'è dal 2026-08,
+   nessun cron/notifica la usa — verificato, zero occorrenze di
+   "compleanno"/"birthday" nel backend.
+7. **Ancora aperto**: segmentazione dinamica per Marketing▸Offerte.
+   `offerteEmailController.js` accetta solo `destinatari: 'tutti'` o un
+   array di id scelti a mano — nessun filtro per tag/spesa/allergia, pur
+   avendo ORA tutti i dati per farlo (punto 2 e 3 sopra, mancanti ad
+   agosto, sono la base che serviva).
+
+### 2.2 — Come i concorrenti rendono facile *inserire* questi dati (nuovo)
+
+**Tag — Cloudbeds vs Hotel del Golfo**: in Cloudbeds i tag NON sono testo
+libero — un amministratore li predefinisce in Impostazioni, lo staff in
+scheda sceglie solo da un menu ("+", poi selezione, poi Salva). Hotel del
+Golfo fa l'opposto: testo libero con autocomplete sui tag già usati
+(`<datalist>`). Più flessibile, ma rischia frammentazione ("vip", "VIP",
+"Vip" come tre tag diversi) che Cloudbeds evita per costruzione — un
+gap concreto e piccolo da chiudere (case-insensitive + trim lato backend
+prima di salvare, o una vista "canonicalizza tag" in Impostazioni).
+
+**Deduplica — automatica vs assistita**: Cloudbeds fonde in automatico ogni
+notte (soglia di confidenza sopra il 90%, confronto nome+cognome+telefono+
+email+paese+indirizzo, fuzzy match tipo "John"/"Jon"), senza schermata di
+revisione per i casi sopra soglia — solo i casi dubbi restano a un merge
+manuale. Hotel del Golfo ha SOLO il percorso manuale (`duplicati-sospetti`
+suggerisce, un operatore deve sempre confermare `unisci`). Più prudente,
+ma più lavoro umano — probabilmente giusto così per una struttura di 20
+camere (il volume non giustifica un job notturno), ma vale la pena saperlo
+è una scelta, non un limite subito.
+
+**Il punto più concreto trovato — un canale già costruito e non
+sfruttato**: Duve/Akia/Canary Technologies (leader nel pre-arrival digital
+check-in) raccolgono proprio i dati che qui restano indietro — allergie,
+preferenze, orario di arrivo — con un form mobile via link SMS/email,
+passo-passo con barra di avanzamento, scansione documento con autofill,
+e tutto confluisce subito nel profilo ospite del PMS. **Hotel del Golfo
+ha già l'equivalente tecnico** (modulo 5.2, pre-checkin pubblico con OCR e
+form self-service, in uso reale dagli ospiti) — verificato ora nel codice:
+`preCheckinPubblicoController.js` non tocca mai `allergie`, non lo chiede.
+È l'unico gap dei 7 che si chiuderebbe quasi gratis: aggiungere un campo
+allergie/preferenze al form di pre-checkin già esistente e scriverlo su
+`ospiti.allergie` invece che lasciarlo assente, invece di costruire un
+canale di raccolta nuovo da zero.
+
+### 2.3 — Non affrontato qui
+
+- Nessuna proposta di UI per il promemoria compleanno o la segmentazione
+  Offerte — solo ricognizione, come nella Parte 1. Se Marco vuole
+  procedere, serve un brainstorming dedicato (schema, dove appare il
+  promemoria, motore di filtro per la segmentazione).
+- Non ricontrollato se `GET /api/ospiti/tag` normalizza già maiuscole/
+  minuscole prima del confronto — solo notato come gap potenziale dal
+  confronto con Cloudbeds, non verificato riga per riga.
+
+### Fonti aggiuntive (Parte 2)
+
+- Cloudbeds — Attribute Tagging (Tags), Guest Profile Deduplication Overview, Guest Profiles overview (myfrontdesk.cloudbeds.com, cloudbeds.com/articles/guest-profiles)
+- Hotel Tech Report — confronto contactless check-in (Duve, Akia, Canary Technologies), hoteltechreport.com/guest-experience/contactless-checkin

@@ -10,6 +10,21 @@
 
 ## Fix e verifiche da chiudere (piccole, non nuovo sviluppo)
 
+- **SCADENZA — entro fine settembre 2026**: Beds24 gira oggi su periodo
+  di prova gratuito, non su un piano a pagamento (confermato da Beds24
+  support, ticket riscontrato 09/09/2026: "without making a payment
+  until the end of this month"). Se non si converte a pagamento entro
+  fine mese, l'integrazione già in produzione (Fase 1+2/3, webhook/job
+  notturno/push tariffe) smette di funzionare. Decisione da prendere
+  prima, anche in base alla risposta di Digiside sotto.
+- **PROMEMORIA — in attesa di risposta (09/09/2026)**: mail inviata a
+  Digiside per il loro channel manager (integrazione API, OTA collegati,
+  funzionalità, costo, demo). Si valuta anche come alternativa italiana a
+  Beds24 (già in produzione) — nessuna decisione presa finché non
+  rispondono. Contestualmente da decidere se tenere o disdire il booking
+  engine Digiside (mai utilizzato, 500€/anno). Legato alla scadenza
+  Beds24 sopra: se Digiside non risponde in tempo, la scelta di default è
+  convertire Beds24 a pagamento.
 - Beds24 Fase 1 (lettura prenotazioni OTA) — implementata e unita a
   `main` il 30/08/2026: webhook + job notturno di riconciliazione,
   upsert idempotente con cancellazioni mai automatiche dopo il
@@ -61,6 +76,26 @@
 
 ## Evolutive da sviluppare (feature nuove, serve brainstorming dedicato)
 
+- Promemoria compleanno ospite — `ospiti.data_nascita` già raccolta (obbligo
+  Alloggiati Web), oggi non usata per nient'altro. Da progettare: dove
+  appare (dashboard reception? notifica push?), quanto in anticipo,
+  esclude gli ospiti senza consenso marketing o è indipendente da quello
+  (è servizio, non marketing attivo — da chiarire la base giuridica).
+  Identificato 08/09/2026, `docs/confronto competitor/
+  RICERCA_ANAGRAFICA_CLIENTI_COMPETITOR.md` Parte 2, punto 2.1.
+- Segmentazione dinamica per Marketing▸Offerte — oggi `destinatari` accetta
+  solo `'tutti'` o una lista scelta a mano (`offerteEmailController.js`).
+  Ora ci sono i dati per filtrare (tag, `totale_speso`, allergie) ma nessun
+  motore di filtro. Da progettare: query builder minimo (es. "tag contiene
+  X", "totale_speso >", "soggiornato tra due date") o poche segmentazioni
+  predefinite. Identificato 08/09/2026, stessa fonte, punto 2.1.
+- Allergie/preferenze raccolte via pre-checkin pubblico — `preCheckinPubblicoController.js`
+  non chiede mai `allergie`, il form (già in uso reale dagli ospiti, con OCR)
+  non scrive su `ospiti.allergie`. Gap più economico da chiudere dei tre:
+  aggiungere un campo al form esistente invece di un canale nuovo — verificare
+  comunque la base giuridica (dato sensibile, consenso esplicito diverso da
+  quello Alloggiati Web, vedi doc). Identificato 08/09/2026, stessa fonte,
+  punto 2.2.
 - **BLOCCATO — non fare finché il sito con booking engine non è live in
   produzione (anche solo con Stripe)** (nota di Marco, 08/09/2026):
   switch di provider di pagamento Stripe/Nexi (un solo gateway attivo

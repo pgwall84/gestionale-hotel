@@ -519,4 +519,42 @@ async function inviaNotificaHoldScaduto(prenotazioneId) {
   }
 }
 
-module.exports = { inviaConfermaPrenotazione, inviaPromemoriaPreArrivo, inviaRichiestaRecensione, inviaInvitoPreCheckin, inviaNotificaHoldScaduto };
+// Notifica di rimborso automatico per un DOPPIO pagamento sulla stessa
+// prenotazione (Booking Engine Diretto, 16/09/2026) — caso distinto da
+// "hold scaduto": qui la prenotazione risulta regolarmente confermata (da
+// un altro pagamento andato a buon fine), questo è un secondo tentativo di
+// pagamento arrivato in ritardo sulla stessa prenotazione e va solo
+// rimborsato, senza toccare la prenotazione. Introdotta insieme al campo
+// `statoPrenotazione` in lib/prenotazioni/confermaPrenotazione.js — prima
+// di questa fix, questo caso mandava per errore la stessa mail di "hold
+// scaduto", fuorviante per un ospite con la prenotazione già confermata.
+// Stessi principi delle altre funzioni di questo file: testo fisso (non in
+// Impostazioni ▸ Testi email, evento raro), escapeTesto sul nome ospite
+// (dato inserito da un visitatore anonimo nel form pubblico), best-effort
+// (non deve mai far fallire il chiamante).
+async function inviaNotificaPagamentoDuplicatoRimborsato(prenotazioneId) {
+  try {
+    const destinatario = await recuperaDestinatario(prenotazioneId);
+    if (!destinatario) {
+      console.error(`[email] notifica pagamento duplicato rimborsato ${prenotazioneId}: nessun destinatario disponibile`);
+      return { ok: false, motivo: 'Nessun destinatario con email trovato per questa prenotazione.' };
+    }
+    const oggetto = `${NOME_HOTEL} — rimborso di un pagamento duplicato`;
+    const corpo = `<p>Gentile ${escapeTesto(destinatario.nome)},</p>
+      <p>la sua prenotazione risulta regolarmente confermata. Abbiamo però rilevato un secondo addebito sulla stessa prenotazione (probabilmente dovuto a un doppio tentativo di pagamento) e lo abbiamo rimborsato automaticamente sulla stessa carta utilizzata.</p>
+      <p>Il rimborso comparirà sull'estratto conto entro alcuni giorni lavorativi, secondo i tempi della banca. Non è richiesta nessuna azione da parte sua.</p>
+      <p>Per qualunque dubbio può contattarci direttamente.</p>`;
+    const html = await involucroHtml(oggetto, corpo);
+    const esito = await inviaEmail({ destinatario: destinatario.email, oggetto, html });
+    if (!esito.ok) {
+      console.error(`[email] notifica pagamento duplicato rimborsato ${prenotazioneId} non inviata:`, esito.errore);
+      return { ok: false, motivo: esito.errore };
+    }
+    return { ok: true, destinatario: destinatario.email };
+  } catch (err) {
+    console.error(`[email] notifica pagamento duplicato rimborsato ${prenotazioneId} — errore imprevisto:`, err.message);
+    return { ok: false, motivo: err.message };
+  }
+}
+
+module.exports = { inviaConfermaPrenotazione, inviaPromemoriaPreArrivo, inviaRichiestaRecensione, inviaInvitoPreCheckin, inviaNotificaHoldScaduto, inviaNotificaPagamentoDuplicatoRimborsato };

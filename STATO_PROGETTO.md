@@ -19,7 +19,7 @@ pre-produzione incluso. Guida server: `docs/DEPLOY_VPS_NETCUP.md`.
 
 | Modulo | Stato reale | Dettaglio |
 |---|---|---|
-| 2.1 Anagrafica ospiti / CRM | ✅ Fatto, esteso 14-15/08 con VIP/blacklist/tag/dedup | diario 01/08, 14-15/08 |
+| 2.1 Anagrafica ospiti / CRM | ✅ Fatto, esteso 14-15/08 con VIP/blacklist/tag/dedup. **Aggiornato 08/09/2026**: 3 nuove evolutive identificate (promemoria compleanno, segmentazione dinamica Offerte, allergie/preferenze via pre-checkin) — vedi `to do list.md` e `docs/confronto competitor/RICERCA_ANAGRAFICA_CLIENTI_COMPETITOR.md` Parte 2 | diario 01/08, 14-15/08 |
 | 2.2 Planning + Tariffe/stagionalità | ✅ Fatto e verificato (74 test, 31/07) | diario 31/07 |
 | 2.3 Channel manager (OTA) | ✅ **Fase 1 + Fase 2/3 fatte e unite a `main`** (08/09/2026, 13 task — spec `docs/superpowers/specs/2026-09-03-invio-tariffe-beds24-design.md`, piano `docs/superpowers/plans/2026-09-04-invio-tariffe-beds24-plan.md`). Fase 1 (30/08): webhook prenotazioni + job notturno riconciliazione, coda `beds24_prenotazioni_da_revisionare` (**nessuna UI frontend per questa coda, solo rotte API** — gap di Fase 1 mai chiuso, non urgente finché resta vuota). Fase 2/3 (08/09): push tariffe/disponibilità/restrizioni verso Beds24 — gestionale come unica fonte di verità, `planning_tariffe_giorni.canale` per eccezioni beds24-only, `unita_esposte`/`maggiorazione_percentuale` per tipologia (Impostazioni▸Beds24), job periodico ogni 3h con soglia di rate-limit a crediti, push disponibilità immediato su ogni creazione/modifica/cancellazione soggiorno (diretto o Beds24). 4 bug reali trovati e corretti durante l'implementazione (il più grave: `ON CONFLICT` su `planning_tariffe_giorni` disallineato dalla migration 059, bloccava ogni PATCH a `/planning-tariffe` da quando la 059 era stata applicata in sviluppo). Test finali: 1047/1047, 50/50 suite verdi. Migration 056→059 **applicate in produzione (confermato da Marco, 08/09/2026)**. **Fuori scope per scelta, non dimenticato**: attivazione Beds24↔Booking.com (decisione operativa di Marco, prerequisito tecnico pronto), integrazione diretta con altre OTA, avanzamento automatico dell'orizzonte stagionale, prezzo Beds24 manuale indipendente dal diretto, sincronizzazione di ritorno da modifiche fatte a mano nel pannello Beds24 | `docs/superpowers/specs/2026-09-03-invio-tariffe-beds24-design.md`; `docs/superpowers/plans/2026-09-04-invio-tariffe-beds24-plan.md`; diario 08/09/2026 |
 | 2.4 Tassa di soggiorno | ✅ Fatto (01/08). Formato export Comune di Lerici ancora sconosciuto — export Excel generico nel frattempo | diario 01/08 |
@@ -513,6 +513,28 @@ con una ricerca reale eseguita contro Postgres (non solo apertura pannello
 
 ## Bloccato su terzi (mail inviate o da inviare, in attesa di risposta)
 
+- **Beds24 — scadenza periodo di prova, fine settembre 2026** (ticket
+  di Marco riscontrato 09/09/2026 da Lesley, supporto Beds24): "You can
+  use Beds24 without making a payment until the end of this month" —
+  l'integrazione reale (Fase 1+2/3, già in produzione con webhook/job
+  notturno/push tariffe) gira quindi oggi su un periodo di prova gratuito
+  che scade a fine mese, non su un piano già a pagamento. **Prima di fine
+  settembre 2026 serve una decisione**: convertire l'account Beds24 a
+  pagamento, oppure — se nel frattempo la risposta di Digiside sul loro
+  channel manager (vedi voce sotto) risultasse più conveniente — valutare
+  il passaggio. Rischio concreto se non si decide: l'integrazione smette
+  di funzionare a fine mese.
+- **Digiside (09/09/2026)**: mail inviata per chiedere dettagli tecnici e
+  di costo sul loro channel manager (integrazione API con gestionale
+  custom, OTA collegati, funzionalità, costo, demo/prova) — in attesa di
+  risposta. Nel frattempo si valuta anche il loro channel manager come
+  possibile alternativa italiana a Beds24 (già in produzione, modulo
+  2.3) — nessuna decisione presa, dipende dalla risposta. Contestualmente
+  Marco valuta se mantenere il booking engine Digiside (mai utilizzato,
+  500€/anno) o toglierlo del tutto. **Legata alla scadenza Beds24 sopra**:
+  se Digiside non risponde o non conviene prima di fine settembre, la
+  scelta di default resta convertire Beds24 a pagamento per non perdere
+  l'integrazione già funzionante.
 - 2.3: nessuna sottoscrizione WuBook da fare più — resta da scrivere la
   spec Beds24, nessuna mail ancora inviata a Beds24.
 - 2.5 Fase 2: Marco deve compilare le credenziali reali in `.env` e
