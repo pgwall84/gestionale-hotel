@@ -374,6 +374,16 @@ async function aggiorna(req, res) {
     if (!attuale.rows.length) {
       return res.status(404).json({ error: 'Fascia tariffaria non trovata.' });
     }
+    if (prezzo_notte !== undefined && prezzo_notte !== null && prezzo_notte !== '' && Number(prezzo_notte) <= 0) {
+      // BUGFIX (16/09/2026, segnalato dal tab Code): prima di questo controllo,
+      // `prezzo_notte || null` più sotto trattava 0 come "non inviato" (falsy in
+      // JS) — un PATCH con prezzo_notte:0 non falliva mai, lasciava semplicemente
+      // il prezzo precedente invariato senza avvisare nessuno. Stessa regola già
+      // applicata in crea() (riga ~327): il prezzo per notte deve essere > 0,
+      // quindi ora un tentativo di azzerarlo risponde 400 invece di sparire nel
+      // silenzio.
+      return res.status(400).json({ error: 'Il prezzo per notte deve essere maggiore di zero.' });
+    }
     const prezzoFinale = prezzo_notte !== undefined && prezzo_notte !== null ? Number(prezzo_notte) : Number(attuale.rows[0].prezzo_notte);
     const min = prezzo_minimo !== undefined ? (prezzo_minimo === null || prezzo_minimo === '' ? null : Number(prezzo_minimo)) : (attuale.rows[0].prezzo_minimo !== null ? Number(attuale.rows[0].prezzo_minimo) : null);
     const max = prezzo_massimo !== undefined ? (prezzo_massimo === null || prezzo_massimo === '' ? null : Number(prezzo_massimo)) : (attuale.rows[0].prezzo_massimo !== null ? Number(attuale.rows[0].prezzo_massimo) : null);
@@ -397,7 +407,8 @@ async function aggiorna(req, res) {
            updated_at     = now()
        WHERE id = $1
        RETURNING *`,
-      [req.params.id, nome_stagione || null, data_inizio || null, data_fine || null, prezzo_notte || null,
+      [req.params.id, nome_stagione || null, data_inizio || null, data_fine || null,
+       (prezzo_notte === undefined || prezzo_notte === null || prezzo_notte === '') ? null : Number(prezzo_notte),
        periodo_id === undefined, periodo_id === undefined ? null : periodo_id,
        prezzo_minimo === undefined, prezzo_minimo === undefined ? null : (prezzo_minimo === '' ? null : prezzo_minimo),
        prezzo_massimo === undefined, prezzo_massimo === undefined ? null : (prezzo_massimo === '' ? null : prezzo_massimo)]

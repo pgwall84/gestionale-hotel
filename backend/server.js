@@ -8,6 +8,7 @@ const { avviaJobInvioAlloggiatiWeb } = require('./jobs/invioAlloggiatiWeb');
 const { avviaJobScadenzaHoldBookingEngine } = require('./jobs/scadenzaHoldBookingEngine');
 const { avviaJobRiconciliazioneBeds24 } = require('./jobs/beds24Riconciliazione');
 const { avviaJobInvioTariffeBeds24 } = require('./jobs/beds24InvioTariffe');
+const { avviaJobRiconciliazioneNexi } = require('./jobs/nexiRiconciliazione');
 const PORT = process.env.PORT || 7001;
 
 app.listen(PORT, () => {
@@ -36,4 +37,11 @@ app.listen(PORT, () => {
   // Job periodico invio tariffe/restrizioni Beds24 (modulo 2.3, Fase 2/3,
   // 04/09/2026) — stesso motivo degli altri job, mai in app.js.
   avviaJobInvioTariffeBeds24();
+
+  // Job riconciliazione pagamenti Nexi (Booking Engine Diretto, 16/09/2026)
+  // — rete di sicurezza contro un pagamento Nexi riuscito ma mai arrivato
+  // a completaPagamentoNexi (XPay Build "pagamento base" non ha webhook,
+  // vedi jobs/nexiRiconciliazione.js). Stesso motivo degli altri job, mai
+  // in app.js.
+  avviaJobRiconciliazioneNexi();
 });
