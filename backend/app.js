@@ -99,8 +99,17 @@ const loginRateLimit = rateLimit({
   max: process.env.NODE_ENV === 'production' ? 5 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { errore: 'Troppi tentativi di accesso. Riprova tra 15 minuti.' },
   skipSuccessfulRequests: true,
+  // Osservabilità (16/09/2026): prima, quando il limite scattava,
+  // express-rate-limit rispondeva 429 in silenzio — nessun log lato
+  // server, quindi "tarare il valore sul traffico reale" (vedi
+  // STATO_PROGETTO.md, Rate limit pubblici) era impossibile per
+  // definizione: nessun dato su quando/se scattasse davvero. Handler
+  // esplicito: stessa risposta di prima, più un log con IP e orario.
+  handler: (req, res) => {
+    console.warn(`[rate-limit] login bloccato — IP ${req.ip}, ${new Date().toISOString()}`);
+    res.status(429).json({ errore: 'Troppi tentativi di accesso. Riprova tra 15 minuti.' });
+  },
 });
 
 // ─── Route ───────────────────────────────────────────────────────────────────

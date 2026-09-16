@@ -31,28 +31,47 @@ router.use(cors({
     : true,
 }));
 
-// Max 30 richieste per IP ogni 15 minuti IN PRODUZIONE. Allargato altrove
-// (test e sviluppo locale, 28/08/2026 — stesso principio applicato agli
-// altri due rate limit pubblici, login in app.js e pre-checkin in
-// preCheckinPubblico.js, per lo stesso motivo: i test manuali esaurivano
-// in fretta una quota pensata per il traffico reale). Il valore di
-// produzione (30) resta da verificare sul campo — vedi STATO_PROGETTO.md
-// sezione Rate limit pubblici.
-const bookingRateLimit = rateLimit({
+// BUGFIX/redesign (16/09/2026): un unico bucket da 30/15min copriva sia
+// le chiamate di sola lettura (disponibilita, disponibilita-mese,
+// configurazione, termini-cancellazione — invocate ad ogni cambio di
+// data/camera nel widget) sia le azioni sensibili (prenota,
+// completa-pagamento-nexi) — un ospite che si limita a guardare il
+// calendario può esaurire la quota prima di arrivare a pagare, l'esatto
+// opposto dello scopo del rate limit. Separato in due bucket: "lettura"
+// (permissivo) e "scrittura" (stretto, resta l'unico traffico che vale
+// davvero la pena limitare: crea hold reali e muove pagamenti). Entrambi
+// loggano quando bloccano davvero una richiesta — prima non c'era nessuna
+// visibilità lato server, quindi "tarare il valore sul traffico reale"
+// (STATO_PROGETTO.md, Rate limit pubblici) era impossibile per
+// definizione. Valore di "lettura" (120) è una stima ragionata, non
+// misurata — da rivedere con i primi log reali.
+const bookingLetturaRateLimit = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: process.env.NODE_ENV === 'production' ? 120 : 1000,
+  standardHeaders: true,
+  legacyHeaders: false,
+  handler: (req, res) => {
+    console.warn(`[rate-limit] booking lettura bloccato — IP ${req.ip}, path ${req.path}, ${new Date().toISOString()}`);
+    res.status(429).json({ error: 'Troppe richieste. Riprova tra qualche minuto.' });
+  },
+});
+
+const bookingScritturaRateLimit = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: process.env.NODE_ENV === 'production' ? 30 : 1000,
   standardHeaders: true,
   legacyHeaders: false,
-  message: { error: 'Troppe richieste. Riprova tra qualche minuto.' },
+  handler: (req, res) => {
+    console.warn(`[rate-limit] booking scrittura bloccato — IP ${req.ip}, path ${req.path}, ${new Date().toISOString()}`);
+    res.status(429).json({ error: 'Troppe richieste. Riprova tra qualche minuto.' });
+  },
 });
 
-router.use(bookingRateLimit);
-
-router.get('/disponibilita', ctrl.disponibilita);
-router.get('/disponibilita-mese', ctrl.disponibilitaMese);
-router.post('/prenota', ctrl.prenota);
-router.get('/termini-cancellazione', ctrl.terminiCancellazione);
-router.get('/configurazione', ctrl.configurazione);
-router.post('/completa-pagamento-nexi', ctrlPagamentoNexi.completaPagamentoNexi);
+router.get('/disponibilita', bookingLetturaRateLimit, ctrl.disponibilita);
+router.get('/disponibilita-mese', bookingLetturaRateLimit, ctrl.disponibilitaMese);
+router.post('/prenota', bookingScritturaRateLimit, ctrl.prenota);
+router.get('/termini-cancellazione', bookingLetturaRateLimit, ctrl.terminiCancellazione);
+router.get('/configurazione', bookingLetturaRateLimit, ctrl.configurazione);
+router.post('/completa-pagamento-nexi', bookingScritturaRateLimit, ctrlPagamentoNexi.completaPagamentoNexi);
 
 module.exports = router;
