@@ -545,6 +545,9 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
   const [testEmailEsito, setTestEmailEsito] = useState(null); // { tipo, ok, motivo?, destinatario? }
   const [preCheckinInCorso, setPreCheckinInCorso] = useState(false);
   const [preCheckinEsito, setPreCheckinEsito] = useState(null);
+  // Cancellazione con pagamento già incassato (migration 060, 17/09/2026) —
+  // vedi annullaPrenotazione() più sotto e ModalDecisionePagamentoCancellazione.
+  const [pagamentiDaDecidere, setPagamentiDaDecidere] = useState(null);
   // Riepilogo economico (14/08/2026) — endpoint separato da /prenotazioni/:id
   // perché aggrega tabelle diverse (soggiorni, addebiti_extra, tasse_soggiorno,
   // pagamenti); caricato in parallelo, un suo errore non deve bloccare il
@@ -703,9 +706,36 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
       onChiudi();
       onCambiato();
     } catch (err) {
+      // Pagamento già incassato su questa prenotazione (migration 060,
+      // 17/09/2026): il backend blocca la transizione finché non si decide
+      // esplicitamente rimborso/trattenuta con un motivo — vedi
+      // ModalDecisionePagamentoCancellazione più sotto. Stesso pattern già
+      // in uso per 'DATI_INCOMPLETI' sul check-in (apre un pannello dedicato
+      // invece di mostrare solo il testo dell'errore).
+      if (err.response?.data?.codice === 'PAGAMENTO_PRESENTE') {
+        setPagamentiDaDecidere(err.response.data.pagamenti);
+        setSalvataggio(false);
+        return;
+      }
       setErrore(err.message || 'Errore nell\'annullamento');
       setSalvataggio(false);
     }
+  }
+
+  // Seconda chiamata dopo la decisione presa in
+  // ModalDecisionePagamentoCancellazione — stesso endpoint di
+  // annullaPrenotazione(), stavolta con decisione_pagamento/motivo_pagamento
+  // valorizzati, quindi il backend applica la transizione invece di
+  // ribloccare con PAGAMENTO_PRESENTE.
+  async function annullaPrenotazioneConDecisione(decisione, motivo) {
+    await api.patch(`/prenotazioni/${prenotazioneId}/stato`, {
+      stato: 'interrotta',
+      decisione_pagamento: decisione,
+      motivo_pagamento: motivo,
+    });
+    setPagamentiDaDecidere(null);
+    onChiudi();
+    onCambiato();
   }
 
   // Aggiungi un'altra camera alla stessa prenotazione (15/08/2026) — riusa
@@ -1355,7 +1385,117 @@ function PannelloDettaglio({ prenotazioneId, elencoCamere, onChiudi, onCambiato 
         onCambiato={async () => { await carica(); onCambiato(); }}
       />
     )}
+
+    {pagamentiDaDecidere && (
+      <ModalDecisionePagamentoCancellazione
+        pagamenti={pagamentiDaDecidere}
+        onChiudi={() => setPagamentiDaDecidere(null)}
+        onDeciso={annullaPrenotazioneConDecisione}
+      />
+    )}
     </>
+  );
+}
+
+// ── Decisione pagamento su cancellazione (migration 060, 17/09/2026) ───────
+// Si apre quando annullaPrenotazione() riceve 400/PAGAMENTO_PRESENTE:
+// cancellare una prenotazione confermata E già pagata non deve più avvenire
+// in silenzio. Nessun rimborso automatico da qui (né Stripe né Nexi,
+// decisione esplicita del titolare) — solo il flag e il motivo, il rimborso
+// vero resta un'azione manuale da dashboard/backoffice.
+function ModalDecisionePagamentoCancellazione({ pagamenti, onChiudi, onDeciso }) {
+  const [decisione, setDecisione] = useState(null); // 'rimborso' | 'trattenuto'
+  const [motivo, setMotivo] = useState('');
+  const [salvataggio, setSalvataggio] = useState(false);
+  const [errore, setErrore] = useState(null);
+
+  const totale = pagamenti.reduce((somma, p) => somma + Number(p.importo), 0);
+
+  async function conferma() {
+    if (!decisione) {
+      setErrore('Scegli se rimborsare o trattenere l\'importo.');
+      return;
+    }
+    if (!motivo.trim()) {
+      setErrore('Il motivo è obbligatorio.');
+      return;
+    }
+    setSalvataggio(true);
+    setErrore(null);
+    try {
+      await onDeciso(decisione, motivo.trim());
+    } catch (err) {
+      setErrore(err.response?.data?.error || err.message || 'Errore nel salvataggio.');
+      setSalvataggio(false);
+    }
+  }
+
+  return (
+    <div className="fixed inset-0 z-[70] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.45)' }} onClick={onChiudi}>
+      <div className="w-full max-w-sm bg-white rounded-xl shadow-xl" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b">
+          <p className="font-semibold text-sm">Pagamento già incassato</p>
+          <button onClick={onChiudi} className="p-1 rounded-lg hover:bg-gray-100">
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-4 space-y-3">
+          <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+               style={{ background: 'var(--status-amber-bg)', color: 'var(--status-amber-text)' }}>
+            <AlertTriangle size={14} />
+            <span>
+              {pagamenti.length > 1 ? `${pagamenti.length} pagamenti` : 'Un pagamento'} già incassato per{' '}
+              <strong>€{totale.toFixed(2)}</strong>
+              {pagamenti.length === 1 && pagamenti[0].metodo ? ` (${pagamenti[0].metodo})` : ''}.
+              Prima di annullare, indica cosa fare con l&apos;importo.
+            </span>
+          </div>
+
+          {errore && (
+            <div className="flex items-center gap-2 rounded-lg px-3 py-2 text-xs"
+                 style={{ background: 'var(--status-red-bg)', color: 'var(--status-red-text)' }}>
+              <AlertTriangle size={14} /> {errore}
+            </div>
+          )}
+
+          <div className="flex gap-2">
+            <button type="button" onClick={() => setDecisione('rimborso')}
+                    className="flex-1 py-2 rounded-lg text-xs font-medium border"
+                    style={decisione === 'rimborso'
+                      ? { background: 'var(--status-blue-bg)', color: 'var(--status-blue-text)', borderColor: 'var(--status-blue-text)' }
+                      : {}}>
+              Rimborsa
+            </button>
+            <button type="button" onClick={() => setDecisione('trattenuto')}
+                    className="flex-1 py-2 rounded-lg text-xs font-medium border"
+                    style={decisione === 'trattenuto'
+                      ? { background: 'var(--status-graydark-bg)', color: 'var(--status-graydark-text)', borderColor: 'var(--status-graydark-text)' }
+                      : {}}>
+              Trattieni l&apos;importo
+            </button>
+          </div>
+
+          <div>
+            <label className="text-xs font-medium block mb-1">Motivo (obbligatorio)</label>
+            <textarea value={motivo} rows={2} onChange={(e) => setMotivo(e.target.value)}
+                      placeholder="Es. richiesta del cliente, doppia prenotazione, penale da contratto..."
+                      className="w-full border rounded-lg px-2 py-1.5 text-sm" />
+          </div>
+
+          <div className="flex gap-2 pt-1">
+            <button onClick={conferma} disabled={salvataggio}
+                    className="flex-1 rounded-lg py-2 text-sm font-medium text-white disabled:opacity-60"
+                    style={{ background: 'var(--status-red-text)' }}>
+              {salvataggio ? 'Annullamento...' : 'Conferma annullamento'}
+            </button>
+            <button onClick={onChiudi} className="flex-1 rounded-lg py-2 text-sm font-medium border">
+              Indietro
+            </button>
+          </div>
+        </div>
+      </div>
+    </div>
   );
 }
 
@@ -3443,6 +3583,16 @@ function WizardGruppo({ elencoCamere, onChiudi, onCreato }) {
       await api.patch(`/prenotazioni/${prenotazioneId}/stato`, { stato: 'interrotta' });
       setCamereGruppo(prev => prev.filter(c => c.prenotazione_id !== prenotazioneId));
     } catch (err) {
+      // Pagamento già incassato su questa camera (migration 060, 17/09/2026):
+      // qui non c'è (ancora) la stessa scelta rimborso/trattenuta di
+      // ModalDecisionePagamentoCancellazione — nessun form dedicato in
+      // questo wizard. Messaggio esplicito verso il pannello dettaglio
+      // (dove la decisione è già gestita) invece di un errore generico
+      // poco chiaro sul perché la rimozione è bloccata.
+      if (err.response?.data?.codice === 'PAGAMENTO_PRESENTE') {
+        setErroreCamera('Questa camera ha un pagamento già incassato — chiudi questa finestra e annullala dal pannello dettaglio prenotazione, dove puoi indicare se rimborsare o trattenere l\'importo.');
+        return;
+      }
       setErroreCamera(err.response?.data?.error || err.message || 'Errore nella rimozione della camera.');
     }
   }

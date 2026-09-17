@@ -758,6 +758,54 @@ async function aggiornaStato(req, res) {
       }
     }
 
+    // Gate cancellazione con pagamento (migration 060, 17/09/2026): prima di
+    // questo, confermata -> interrotta non toccava mai `pagamenti` — un
+    // pagamento 'completato' restava 'completato' per sempre anche su una
+    // prenotazione cancellata, senza nessuna traccia che servisse una
+    // decisione su un eventuale rimborso. Diverso e più subdolo del caso
+    // race/scaduta (migration 056), che almeno produce un
+    // 'richiede_rimborso_manuale' visibile — qui nessuno se ne accorgeva.
+    // Scope volutamente ristretto a QUESTA transizione: 'opzione' non può
+    // mai avere un pagamento 'completato' (vedi confermaPrenotazione.js,
+    // righe 66-70 — quello stato viene scritto solo insieme a
+    // prenotazioni.stato='confermata', nella stessa transazione), quindi
+    // opzione -> interrotta non ha nulla da controllare qui.
+    let pagamentiDaAggiornare = [];
+    if (statoAttuale === 'confermata' && statoRichiesto === 'interrotta') {
+      const pagamentiCompletati = await client.query(
+        `SELECT id, importo, metodo FROM pagamenti WHERE prenotazione_id = $1 AND stato = 'completato' FOR UPDATE`,
+        [req.params.id]
+      );
+      if (pagamentiCompletati.rows.length) {
+        const { decisione_pagamento: decisionePagamento, motivo_pagamento: motivoPagamento } = req.body;
+        const decisioneValida = decisionePagamento === 'rimborso' || decisionePagamento === 'trattenuto';
+        if (!decisioneValida || !motivoPagamento || !motivoPagamento.trim()) {
+          await client.query('ROLLBACK');
+          return res.status(400).json({
+            error: 'Questa prenotazione ha un pagamento già incassato — indica se va rimborsato o trattenuto, con un motivo.',
+            codice: 'PAGAMENTO_PRESENTE',
+            pagamenti: pagamentiCompletati.rows,
+          });
+        }
+        // Nessuna chiamata di rimborso automatica (né Stripe né Nexi, decisione
+        // di Marco 17/09/2026): sempre e solo un flag esplicito. Il rimborso
+        // vero, se scelto, resta un'azione manuale da dashboard/backoffice —
+        // stessa cautela già in vigore per Nexi dal caso race (nessuna
+        // integrazione di storno automatico).
+        pagamentiDaAggiornare = pagamentiCompletati.rows.map(p => p.id);
+        const nuovoStatoPagamento = decisionePagamento === 'rimborso' ? 'richiede_rimborso_manuale' : 'trattenuto';
+        await client.query(
+          `UPDATE pagamenti SET stato = $1, nota_cancellazione = $2 WHERE id = ANY($3::int[])`,
+          [nuovoStatoPagamento, motivoPagamento.trim(), pagamentiDaAggiornare]
+        );
+        await logAudit(req.utente.id, 'cancellazione_prenotazione_con_pagamento', 'prenotazioni', req.params.id, req, {
+          decisione: decisionePagamento,
+          motivo: motivoPagamento.trim(),
+          pagamenti: pagamentiDaAggiornare,
+        });
+      }
+    }
+
     const result = await client.query(
       `UPDATE prenotazioni SET stato = $1, updated_at = NOW() WHERE id = $2 RETURNING *`,
       [statoRichiesto, req.params.id]
